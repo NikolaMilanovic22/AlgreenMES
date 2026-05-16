@@ -28,21 +28,19 @@ public class GetOrdersMasterViewQueryHandler : IRequestHandler<GetOrdersMasterVi
             request.GetPage(), request.GetPageSize(), cancellationToken);
 
         // Pre-load category dependencies for all categories in the result set
+        // via a single batched query (was N+1 round-trips per distinct category).
         var categoryIds = result.Items
             .SelectMany(o => o.Items.Select(i => i.ProductCategoryId))
             .Distinct()
             .ToList();
-        var categoryDeps = new Dictionary<Guid, List<(Guid ProcessId, Guid DependsOnProcessId)>>();
-        foreach (var catId in categoryIds)
-        {
-            var cat = await _categoryRepository.GetByIdWithDetailsAsync(catId, cancellationToken);
-            if (cat?.Dependencies != null)
-            {
-                categoryDeps[catId] = cat.Dependencies
+        var categories = await _categoryRepository.GetByIdsWithDetailsAsync(categoryIds, cancellationToken);
+        var categoryDeps = categories
+            .Where(c => c.Dependencies != null)
+            .ToDictionary(
+                c => c.Id,
+                c => c.Dependencies
                     .Select(d => (d.ProcessId, d.DependsOnProcessId))
-                    .ToList();
-            }
-        }
+                    .ToList());
 
         return result.MapItems(o => MapToMasterView(o, categoryDeps));
     }

@@ -72,7 +72,12 @@ public class OrderRepository : IOrderRepository
 
     public async Task<IReadOnlyList<Order>> GetActiveOrdersWithProcessesAsync(Guid tenantId, CancellationToken cancellationToken = default)
     {
+        // AsSplitQuery() — same rationale as GetPagedWithProcessesAsync.
+        // Tablet /active and /queue endpoints walk this graph; without
+        // splitting the JOIN cardinality blows up across SubProcesses × Logs
+        // × SpecialRequests.
         return await _dbContext.Orders
+            .AsSplitQuery()
             .Include(o => o.Items)
                 .ThenInclude(i => i.Processes)
                     .ThenInclude(p => p.SubProcesses)
@@ -135,7 +140,16 @@ public class OrderRepository : IOrderRepository
 
     public async Task<PagedResult<Order>> GetPagedWithProcessesAsync(Guid tenantId, OrderStatus? status, OrderType? orderType, bool? isInvoiced, DateTime? dateFrom, DateTime? dateTo, string? search, string? sortBy, bool isDescending, int page, int pageSize, CancellationToken cancellationToken = default)
     {
+        // AsSplitQuery() avoids a cartesian explosion across the 4-level
+        // Items → Processes → SubProcesses → Logs include chain (which also
+        // pulls Attachments / ManualProcesses / ManualProcessDependencies).
+        // A single JOIN-everything query multiplies row counts by every
+        // collection size; splitting it sends one query per collection and
+        // hydrates the graph client-side. That's the EF-recommended fix for
+        // the MultipleCollectionIncludeWarning seen in startup logs and the
+        // main reason GET /api/orders/master-view averaged ~1.96s.
         var query = _dbContext.Orders
+            .AsSplitQuery()
             .Include(o => o.Items)
                 .ThenInclude(i => i.Processes)
                     .ThenInclude(p => p.SubProcesses)
