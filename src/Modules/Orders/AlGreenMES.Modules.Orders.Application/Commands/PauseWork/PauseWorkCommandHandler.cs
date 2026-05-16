@@ -26,6 +26,14 @@ public class PauseWorkCommandHandler : IRequestHandler<PauseWorkCommand, Unit>
             log.End();
             if (log.DurationMinutes.HasValue)
                 log.OrderItemSubProcess.AddDuration(log.DurationMinutes.Value);
+            // Stamp PausedByStationAt so ResumeStationCommandHandler can
+            // auto-resume on next login. Without this the sub-process logs
+            // get closed here before PauseStation runs, so PauseStation finds
+            // no open log to act on and never marks the sub-process — and
+            // ResumeStation has nothing to resume.
+            // Bojan testing 2026-05-16: sub-process processes failed to
+            // auto-resume because of this ordering.
+            log.OrderItemSubProcess.PauseByStation();
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
