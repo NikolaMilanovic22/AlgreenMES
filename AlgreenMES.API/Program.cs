@@ -223,6 +223,19 @@ public class Program
                 options.MaxBreadcrumbs = 100;
                 options.SetBeforeSend((sentryEvent, hint) =>
                 {
+                    // Drop business-rule exceptions: they're 4xx by design and
+                    // GlobalExceptionHandlerMiddleware already returns a structured
+                    // error to the client. Shipping them to Sentry just spams the
+                    // inbox with non-bugs (e.g. duplicate check-in, not-found,
+                    // forbidden, validation failures).
+                    if (sentryEvent.Exception is
+                        AlGreenMES.BuildingBlocks.Common.Exceptions.DomainException or
+                        AlGreenMES.BuildingBlocks.Common.Exceptions.ValidationException or
+                        AlGreenMES.BuildingBlocks.Common.Exceptions.NotFoundException or
+                        AlGreenMES.BuildingBlocks.Common.Exceptions.ForbiddenException)
+                    {
+                        return null;
+                    }
                     if (sentryEvent.Request?.Headers != null)
                     {
                         sentryEvent.Request.Headers.Remove("Authorization");
