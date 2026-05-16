@@ -211,7 +211,6 @@ public class Program
             var app = builder.Build();
 
             // Configure the HTTP request pipeline.
-            app.UseSerilogRequestLogging();
             app.UseSentryTracing();
             app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
 
@@ -225,9 +224,12 @@ public class Program
             app.UseAuthentication();
             app.UseAuthorization();
             // SerilogEnrichmentMiddleware pushes TenantId/UserId/RequestId/CorrelationId
-            // into Serilog LogContext FIRST so SentryEnrichmentMiddleware (and any logs
-            // emitted downstream) can see the enriched scope.
+            // into Serilog LogContext FIRST. UseSerilogRequestLogging then sits inside
+            // that scope so the per-request HTTP summary line carries the same
+            // properties (required for `grep '"TenantId":"<uuid>"'` to find all
+            // activity for a tenant across the log file).
             app.UseMiddleware<SerilogEnrichmentMiddleware>();
+            app.UseSerilogRequestLogging();
             app.UseMiddleware<SentryEnrichmentMiddleware>();
             app.MapControllers();
             app.MapHub<ProductionHub>("/hubs/production");
