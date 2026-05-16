@@ -1,3 +1,4 @@
+using AlGreenMES.BuildingBlocks.Common.Interceptors;
 using AlGreenMES.Modules.Orders.Application.Interfaces;
 using AlGreenMES.Modules.Orders.Domain.Repositories;
 using AlGreenMES.Modules.Orders.Infrastructure.Persistence;
@@ -25,7 +26,8 @@ public static class OrdersInfrastructureServiceRegistration
             CommandTimeout = 30
         }.ConnectionString;
 
-        services.AddDbContext<OrdersDbContext>(options =>
+        services.AddScoped<AuditableEntityInterceptor>();
+        services.AddDbContext<OrdersDbContext>((sp, options) =>
         {
             options.UseNpgsql(connectionString, npgsql =>
             {
@@ -35,6 +37,7 @@ public static class OrdersInfrastructureServiceRegistration
                     errorCodesToAdd: null);
             });
             options.UseSnakeCaseNamingConvention();
+            options.AddInterceptors(sp.GetRequiredService<AuditableEntityInterceptor>());
         });
 
         services.AddScoped<IOrdersUnitOfWork>(sp => sp.GetRequiredService<OrdersDbContext>());

@@ -1,3 +1,4 @@
+using AlGreenMES.BuildingBlocks.Common.Interceptors;
 using AlGreenMES.Modules.Production.Application.Interfaces;
 using AlGreenMES.Modules.Production.Domain.Repositories;
 using AlGreenMES.Modules.Production.Infrastructure.Persistence;
@@ -27,7 +28,8 @@ public static class ProductionInfrastructureServiceRegistration
         dataSourceBuilder.EnableDynamicJson();
         var dataSource = dataSourceBuilder.Build();
 
-        services.AddDbContext<ProductionDbContext>(options =>
+        services.AddScoped<AuditableEntityInterceptor>();
+        services.AddDbContext<ProductionDbContext>((sp, options) =>
         {
             options.UseNpgsql(dataSource, npgsql =>
             {
@@ -37,6 +39,7 @@ public static class ProductionInfrastructureServiceRegistration
                     errorCodesToAdd: null);
             });
             options.UseSnakeCaseNamingConvention();
+            options.AddInterceptors(sp.GetRequiredService<AuditableEntityInterceptor>());
         });
 
         services.AddScoped<IProductionUnitOfWork>(sp => sp.GetRequiredService<ProductionDbContext>());

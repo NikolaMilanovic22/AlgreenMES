@@ -1,3 +1,4 @@
+using AlGreenMES.BuildingBlocks.Common.Interceptors;
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using AlGreenMES.Modules.Tenancy.Domain.Repositories;
 using AlGreenMES.Modules.Tenancy.Infrastructure.Persistence;
@@ -23,7 +24,8 @@ public static class TenancyInfrastructureServiceRegistration
             CommandTimeout = 30
         }.ConnectionString;
 
-        services.AddDbContext<TenancyDbContext>(options =>
+        services.AddScoped<AuditableEntityInterceptor>();
+        services.AddDbContext<TenancyDbContext>((sp, options) =>
         {
             options.UseNpgsql(connectionString, npgsql =>
             {
@@ -33,6 +35,7 @@ public static class TenancyInfrastructureServiceRegistration
                     errorCodesToAdd: null);
             });
             options.UseSnakeCaseNamingConvention();
+            options.AddInterceptors(sp.GetRequiredService<AuditableEntityInterceptor>());
         });
 
         services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<TenancyDbContext>());

@@ -1,3 +1,4 @@
+using AlGreenMES.BuildingBlocks.Common.Interceptors;
 using AlGreenMES.Modules.Identity.Application.Interfaces;
 using AlGreenMES.Modules.Identity.Application.Services;
 using AlGreenMES.Modules.Identity.Domain.Repositories;
@@ -25,7 +26,8 @@ public static class IdentityInfrastructureServiceRegistration
             CommandTimeout = 30
         }.ConnectionString;
 
-        services.AddDbContext<IdentityDbContext>(options =>
+        services.AddScoped<AuditableEntityInterceptor>();
+        services.AddDbContext<IdentityDbContext>((sp, options) =>
         {
             options.UseNpgsql(connectionString, npgsql =>
             {
@@ -35,6 +37,7 @@ public static class IdentityInfrastructureServiceRegistration
                     errorCodesToAdd: null);
             });
             options.UseSnakeCaseNamingConvention();
+            options.AddInterceptors(sp.GetRequiredService<AuditableEntityInterceptor>());
         });
 
         services.AddScoped<IIdentityUnitOfWork>(sp => sp.GetRequiredService<IdentityDbContext>());
