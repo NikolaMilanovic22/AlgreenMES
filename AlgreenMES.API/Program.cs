@@ -61,12 +61,25 @@ public class Program
                         path: logPath,
                         rollingInterval: RollingInterval.Day,
                         retainedFileCountLimit: 30,
-                        shared: true)
-                    .WriteTo.Sentry(o =>
+                        shared: true);
+
+                // Only wire the Sentry sink when a DSN is configured — otherwise the
+                // sink calls SentrySdk.Init with a null DSN and throws on startup.
+                // UseSentry above handles its own no-op behavior gracefully; the
+                // Serilog sink does not.
+                var sentryDsn = context.Configuration["Sentry:Dsn"];
+                if (!string.IsNullOrWhiteSpace(sentryDsn))
+                {
+                    configuration.WriteTo.Sentry(o =>
                     {
+                        o.Dsn = sentryDsn;
+                        o.Environment = context.Configuration["Sentry:Environment"] ?? "development";
+                        o.Release = context.Configuration["Sentry:Release"];
+                        o.InitializeSdk = false;
                         o.MinimumBreadcrumbLevel = LogEventLevel.Information;
                         o.MinimumEventLevel = LogEventLevel.Error;
                     });
+                }
             });
 
             // Add services to the container.
