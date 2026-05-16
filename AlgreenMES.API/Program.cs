@@ -221,15 +221,51 @@ public class Program
 
             app.UseHttpsRedirection();
             app.UseCors(CorsPolicyName);
+            // UseSerilogRequestLogging sits OUTSIDE auth so it captures every
+            // response — including 401/403 short-circuits from UseAuthorization.
+            // EnrichDiagnosticContext pulls tenant/user/correlation from
+            // HttpContext at log-time (auth has populated HttpContext.User by
+            // then). SerilogEnrichmentMiddleware later pushes the same values
+            // into LogContext so any logger.X() calls in controllers also see
+            // them.
+            app.UseSerilogRequestLogging(options =>
+            {
+                options.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
+                {
+                    var correlationId = httpContext.Request.Headers["X-Correlation-Id"].FirstOrDefault()
+                        ?? httpContext.Response.Headers["X-Correlation-Id"].FirstOrDefault();
+                    if (!string.IsNullOrEmpty(correlationId))
+                    {
+                        diagnosticContext.Set("CorrelationId", correlationId);
+                    }
+                    if (httpContext.User.Identity?.IsAuthenticated == true)
+                    {
+                        try
+                        {
+                            var tenantService = httpContext.RequestServices.GetService<ITenantService>();
+                            var tenantId = tenantService?.GetCurrentTenantId();
+                            if (tenantId.HasValue && tenantId.Value != Guid.Empty)
+                            {
+                                diagnosticContext.Set("TenantId", tenantId.Value);
+                            }
+                        }
+                        catch { /* tenant not resolvable */ }
+                        try
+                        {
+                            var userService = httpContext.RequestServices.GetService<ICurrentUserService>();
+                            var userId = userService?.GetCurrentUserId();
+                            if (userId.HasValue && userId.Value != Guid.Empty)
+                            {
+                                diagnosticContext.Set("UserId", userId.Value);
+                            }
+                        }
+                        catch { /* user not resolvable */ }
+                    }
+                };
+            });
             app.UseAuthentication();
             app.UseAuthorization();
-            // SerilogEnrichmentMiddleware pushes TenantId/UserId/RequestId/CorrelationId
-            // into Serilog LogContext FIRST. UseSerilogRequestLogging then sits inside
-            // that scope so the per-request HTTP summary line carries the same
-            // properties (required for `grep '"TenantId":"<uuid>"'` to find all
-            // activity for a tenant across the log file).
             app.UseMiddleware<SerilogEnrichmentMiddleware>();
-            app.UseSerilogRequestLogging();
             app.UseMiddleware<SentryEnrichmentMiddleware>();
             app.MapControllers();
             app.MapHub<ProductionHub>("/hubs/production");
