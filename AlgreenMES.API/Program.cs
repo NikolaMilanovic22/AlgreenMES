@@ -286,14 +286,15 @@ public class Program
             app.MapHub<ProductionHub>("/hubs/production");
 
             // Health endpoints — anonymous, sanitized JSON (no stack traces / no
-            // connection strings). Reachable by UptimeRobot for liveness/readiness.
-            app.MapHealthChecks("/health/live", new HealthCheckOptions
+            // connection strings). Mounted under /api/* so the existing nginx
+            // proxy rule routes them to the backend without config changes.
+            app.MapHealthChecks("/api/health/live", new HealthCheckOptions
             {
                 Predicate = check => check.Tags.Contains("live"),
                 ResponseWriter = WriteHealthResponse,
                 AllowCachingResponses = false
             });
-            app.MapHealthChecks("/health/ready", new HealthCheckOptions
+            app.MapHealthChecks("/api/health/ready", new HealthCheckOptions
             {
                 Predicate = check => check.Tags.Contains("ready"),
                 ResponseWriter = WriteHealthResponse,
