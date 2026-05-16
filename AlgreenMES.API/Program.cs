@@ -17,10 +17,13 @@ using Microsoft.EntityFrameworkCore;
 using Mapster;
 using MapsterMapper;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
 using Serilog.Events;
 using Serilog.Formatting.Compact;
+using System.Text.Json;
 
 namespace AlgreenMES.API;
 
@@ -158,6 +161,18 @@ public class Program
             builder.Services.AddSingleton(TypeAdapterConfig.GlobalSettings);
             builder.Services.AddScoped<IMapper, ServiceMapper>();
 
+            // Health checks (Sprint 3.3).
+            // /health/live   = self  → "process is running" (UptimeRobot liveness)
+            // /health/ready  = "live" + postgres → "ready to serve traffic"
+            var dbConnectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+            builder.Services.AddHealthChecks()
+                .AddCheck("self", () => HealthCheckResult.Healthy(), tags: new[] { "live", "ready" })
+                .AddNpgSql(
+                    connectionString: dbConnectionString!,
+                    name: "postgres",
+                    failureStatus: HealthStatus.Unhealthy,
+                    tags: new[] { "ready", "db" });
+
             // CORS
             const string CorsPolicyName = "AlgreenMesCors";
 
@@ -270,6 +285,21 @@ public class Program
             app.MapControllers();
             app.MapHub<ProductionHub>("/hubs/production");
 
+            // Health endpoints — anonymous, sanitized JSON (no stack traces / no
+            // connection strings). Reachable by UptimeRobot for liveness/readiness.
+            app.MapHealthChecks("/health/live", new HealthCheckOptions
+            {
+                Predicate = check => check.Tags.Contains("live"),
+                ResponseWriter = WriteHealthResponse,
+                AllowCachingResponses = false
+            });
+            app.MapHealthChecks("/health/ready", new HealthCheckOptions
+            {
+                Predicate = check => check.Tags.Contains("ready"),
+                ResponseWriter = WriteHealthResponse,
+                AllowCachingResponses = false
+            });
+
             // Auto-migrate on startup
             {
                 using var migrationScope = app.Services.CreateScope();
@@ -297,6 +327,24 @@ public class Program
         {
             Log.CloseAndFlush();
         }
+    }
+
+    private static Task WriteHealthResponse(HttpContext context, HealthReport report)
+    {
+        context.Response.ContentType = "application/json";
+        var payload = JsonSerializer.Serialize(new
+        {
+            status = report.Status.ToString(),
+            totalDuration = report.TotalDuration.TotalMilliseconds,
+            checks = report.Entries.Select(e => new
+            {
+                name = e.Key,
+                status = e.Value.Status.ToString(),
+                duration = e.Value.Duration.TotalMilliseconds,
+                error = e.Value.Exception?.Message
+            })
+        });
+        return context.Response.WriteAsync(payload);
     }
 
     private static void EnsureLogDirectoryExists(string logPath)
