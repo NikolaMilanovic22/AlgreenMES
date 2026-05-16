@@ -130,9 +130,33 @@ public class Program
             });
         });
 
+        // Sentry — error tracking with per-tenant/user tagging (Sprint 3.1).
+        // DSN/environment/release come from appsettings.{env}.json (or env vars
+        // with Sentry__Dsn etc.). Empty DSN at runtime = SDK no-ops cleanly.
+        builder.WebHost.UseSentry(options =>
+        {
+            options.Dsn = builder.Configuration["Sentry:Dsn"];
+            options.Environment = builder.Configuration["Sentry:Environment"] ?? "development";
+            options.Release = builder.Configuration["Sentry:Release"];
+            options.TracesSampleRate = 0.1;
+            options.SendDefaultPii = false;
+            options.AttachStacktrace = true;
+            options.MaxBreadcrumbs = 100;
+            options.SetBeforeSend((sentryEvent, hint) =>
+            {
+                if (sentryEvent.Request?.Headers != null)
+                {
+                    sentryEvent.Request.Headers.Remove("Authorization");
+                    sentryEvent.Request.Headers.Remove("Cookie");
+                }
+                return sentryEvent;
+            });
+        });
+
         var app = builder.Build();
 
         // Configure the HTTP request pipeline.
+        app.UseSentryTracing();
         app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
 
         if (app.Environment.IsDevelopment())
@@ -144,6 +168,7 @@ public class Program
         app.UseCors(CorsPolicyName);
         app.UseAuthentication();
         app.UseAuthorization();
+        app.UseMiddleware<SentryEnrichmentMiddleware>();
         app.MapControllers();
         app.MapHub<ProductionHub>("/hubs/production");
 
