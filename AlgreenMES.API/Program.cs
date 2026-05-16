@@ -29,7 +29,7 @@ namespace AlgreenMES.API;
 
 public class Program
 {
-    public static async Task Main(string[] args)
+    public static async Task<int> Main(string[] args)
     {
         // Bootstrap logger — captures startup failures before the host is built.
         Log.Logger = new LoggerConfiguration()
@@ -37,6 +37,15 @@ public class Program
             .Enrich.FromLogContext()
             .WriteTo.Console(new CompactJsonFormatter())
             .CreateBootstrapLogger();
+
+        // --migrate: apply pending EF Core migrations for all 4 DbContexts then
+        // exit. Invoked by deploy.sh before the systemd service restart so
+        // migrations run as an explicit deploy step instead of a startup race
+        // (Sprint 3.4). Exits 0 on success, 1 on failure.
+        if (args.Contains("--migrate"))
+        {
+            return await RunMigrationsAsync(args);
+        }
 
         try
         {
@@ -301,15 +310,10 @@ public class Program
                 AllowCachingResponses = false
             });
 
-            // Auto-migrate on startup
-            {
-                using var migrationScope = app.Services.CreateScope();
-                var sp = migrationScope.ServiceProvider;
-                await sp.GetRequiredService<TenancyDbContext>().Database.MigrateAsync();
-                await sp.GetRequiredService<IdentityDbContext>().Database.MigrateAsync();
-                await sp.GetRequiredService<ProductionDbContext>().Database.MigrateAsync();
-                await sp.GetRequiredService<OrdersDbContext>().Database.MigrateAsync();
-            }
+            // Migrations no longer run on startup (Sprint 3.4) — deploy.sh
+            // invokes `dotnet AlgreenMES.API.dll --migrate` as an explicit step
+            // before restarting the service. In development, run migrations
+            // manually: `dotnet run --project AlgreenMES.API -- --migrate`.
 
             // Seed demo data (testing phase — runs in all environments except Test)
             if (!app.Environment.IsEnvironment("Test"))
@@ -318,6 +322,7 @@ public class Program
             }
 
             app.Run();
+            return 0;
         }
         catch (Exception ex)
         {
@@ -328,6 +333,61 @@ public class Program
         {
             Log.CloseAndFlush();
         }
+    }
+
+    private static async Task<int> RunMigrationsAsync(string[] args)
+    {
+        try
+        {
+            var builder = WebApplication.CreateBuilder(args);
+            builder.Logging.ClearProviders();
+            builder.Logging.AddConsole();
+
+            // Only register what migrations need — same module wiring as the API
+            // so DbContext configuration (pooling, naming convention, retry) is
+            // identical between migration and runtime.
+            builder.Services.AddTenancyModule(builder.Configuration);
+            builder.Services.AddIdentityModule(builder.Configuration);
+            builder.Services.AddProductionModule(builder.Configuration);
+            builder.Services.AddOrdersModule(builder.Configuration);
+
+            var app = builder.Build();
+            using var scope = app.Services.CreateScope();
+            var sp = scope.ServiceProvider;
+
+            await ApplyMigrationsAsync<TenancyDbContext>(sp, "Tenancy");
+            await ApplyMigrationsAsync<IdentityDbContext>(sp, "Identity");
+            await ApplyMigrationsAsync<ProductionDbContext>(sp, "Production");
+            await ApplyMigrationsAsync<OrdersDbContext>(sp, "Orders");
+
+            Log.Information("All migrations applied successfully.");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Log.Fatal(ex, "Migration runner failed.");
+            return 1;
+        }
+        finally
+        {
+            Log.CloseAndFlush();
+        }
+    }
+
+    private static async Task ApplyMigrationsAsync<TDbContext>(IServiceProvider sp, string moduleName)
+        where TDbContext : DbContext
+    {
+        var db = sp.GetRequiredService<TDbContext>();
+        var pending = (await db.Database.GetPendingMigrationsAsync()).ToList();
+        if (pending.Count == 0)
+        {
+            Log.Information("{Module}: no pending migrations.", moduleName);
+            return;
+        }
+        Log.Information("{Module}: applying {Count} migration(s): {Pending}",
+            moduleName, pending.Count, string.Join(", ", pending));
+        await db.Database.MigrateAsync();
+        Log.Information("{Module}: applied {Count} migration(s).", moduleName, pending.Count);
     }
 
     private static Task WriteHealthResponse(HttpContext context, HealthReport report)

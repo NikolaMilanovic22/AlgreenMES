@@ -58,6 +58,12 @@ dotnet publish AlgreenMES.API/AlgreenMES.API.csproj -c Release -o ./publish
 echo "📦 Uploading to server ($TARGET → ${DEPLOY_USER}@${HOST}:$REMOTE_PATH)..."
 rsync -az --delete --exclude='appsettings.Production.json' --exclude='uploads/' -e "ssh ${SSH_KEY_ARG}" ./publish/ "${DEPLOY_USER}@${HOST}:$REMOTE_PATH"
 
+echo "🗄️  Applying database migrations..."
+if ! ssh ${SSH_KEY_ARG} "${DEPLOY_USER}@${HOST}" "cd ${REMOTE_PATH} && ASPNETCORE_ENVIRONMENT=Production dotnet AlgreenMES.API.dll --migrate"; then
+    echo "❌ Migration failed — aborting deploy. The new binaries are on disk but $SERVICE has NOT been restarted; the old process keeps serving traffic from its in-memory binary. Fix the migration and re-deploy."
+    exit 1
+fi
+
 echo "🔄 Restarting $SERVICE..."
 ssh ${SSH_KEY_ARG} "${DEPLOY_USER}@${HOST}" "systemctl restart $SERVICE"
 
