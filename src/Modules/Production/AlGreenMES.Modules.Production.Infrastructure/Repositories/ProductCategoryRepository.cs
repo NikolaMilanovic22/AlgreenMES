@@ -33,6 +33,22 @@ public class ProductCategoryRepository : IProductCategoryRepository
             .FirstOrDefaultAsync(c => c.Id == id, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<ProductCategory>> GetByIdsWithDetailsAsync(IEnumerable<Guid> ids, CancellationToken cancellationToken = default)
+    {
+        var idList = ids?.Distinct().ToList() ?? new List<Guid>();
+        if (idList.Count == 0) return Array.Empty<ProductCategory>();
+
+        return await _dbContext.ProductCategories
+            .Include(c => c.Processes)
+                .ThenInclude(p => p.Process)
+            .Include(c => c.Dependencies)
+                .ThenInclude(d => d.Process)
+            .Include(c => c.Dependencies)
+                .ThenInclude(d => d.DependsOnProcess)
+            .Where(c => idList.Contains(c.Id))
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyList<ProductCategory>> GetByTenantIdAsync(Guid tenantId, CancellationToken cancellationToken = default)
     {
         return await _dbContext.ProductCategories

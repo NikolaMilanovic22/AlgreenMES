@@ -7,6 +7,7 @@ public interface IProductCategoryRepository
 {
     Task<ProductCategory?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
     Task<ProductCategory?> GetByIdWithDetailsAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<ProductCategory>> GetByIdsWithDetailsAsync(IEnumerable<Guid> ids, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ProductCategory>> GetByTenantIdAsync(Guid tenantId, CancellationToken cancellationToken = default);
     Task AddAsync(ProductCategory category, CancellationToken cancellationToken = default);
     void Remove(ProductCategory category);
