@@ -35,16 +35,23 @@ public class PauseStationCommandHandler : IRequestHandler<PauseStationCommand>
                     var openLog = activeSub.GetOpenLog();
                     if (openLog != null)
                     {
+                        // Sub-process was actively running — close the log and
+                        // mark for auto-resume on next station login.
                         openLog.End();
                         if (openLog.DurationMinutes.HasValue)
                             activeSub.AddDuration(openLog.DurationMinutes.Value);
+                        activeSub.PauseByStation();
                     }
+                    // else: sub-process is InProgress but has no open log,
+                    // meaning a worker manually paused it. Leave alone.
                 }
             }
             else
             {
-                if (!process.PausedAt.HasValue)
-                    process.Pause();
+                // PauseByStation is a no-op when the process is already paused
+                // (manual pause), so manual pauses won't be marked for
+                // auto-resume.
+                process.PauseByStation();
             }
         }
 

@@ -33,6 +33,13 @@ public class OrderItemProcess : TenantEntity
 
     public DateTime? PausedAt { get; private set; }
     public DateTime? ResumedAt { get; private set; }
+    /// <summary>
+    /// When set, this process was paused by a tablet-station logout and
+    /// should auto-resume on the next ResumeStation call. Null means
+    /// either "not paused" or "paused manually by a worker" (which must
+    /// not auto-resume).
+    /// </summary>
+    public DateTime? PausedByStationAt { get; private set; }
 
     public DateTime CreatedAt { get; private set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; private set; }
@@ -181,6 +188,27 @@ public class OrderItemProcess : TenantEntity
         TotalDurationMinutes += sessionSeconds;
 
         PausedAt = DateTime.UtcNow;
+        PausedByStationAt = null; // manual pause — not auto-resumable on next login
+        ResumedAt = null;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Pause because the worker is logging out of the tablet station.
+    /// Sets PausedByStationAt so the next tablet login auto-resumes this
+    /// process. Skips if already paused (manually) — manual pauses must
+    /// NOT auto-resume.
+    /// </summary>
+    public void PauseByStation()
+    {
+        if (PausedAt.HasValue) return;
+
+        var sessionStart = ResumedAt ?? StartedAt ?? DateTime.UtcNow;
+        var sessionSeconds = (int)(DateTime.UtcNow - sessionStart).TotalSeconds;
+        TotalDurationMinutes += sessionSeconds;
+
+        PausedAt = DateTime.UtcNow;
+        PausedByStationAt = DateTime.UtcNow;
         ResumedAt = null;
         UpdatedAt = DateTime.UtcNow;
     }
@@ -230,6 +258,7 @@ public class OrderItemProcess : TenantEntity
             throw new DomainException("NOT_PAUSED", "Process is not paused.");
 
         PausedAt = null;
+        PausedByStationAt = null; // resumed — no longer eligible for auto-resume
         ResumedAt = DateTime.UtcNow;
         UpdatedAt = DateTime.UtcNow;
     }
