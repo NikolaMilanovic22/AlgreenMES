@@ -343,9 +343,18 @@ public class Program
             builder.Logging.ClearProviders();
             builder.Logging.AddConsole();
 
-            // Only register what migrations need — same module wiring as the API
-            // so DbContext configuration (pooling, naming convention, retry) is
-            // identical between migration and runtime.
+            // DbContexts depend on ICurrentUserService / ITenantService for
+            // tenant filtering and audit. Migrations don't actually exercise
+            // those filters but DI must still resolve the dependency graph.
+            // HttpContextAccessor returns a null context off the request path,
+            // which both services tolerate.
+            builder.Services.AddHttpContextAccessor();
+            builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
+            builder.Services.AddScoped<ITenantService, TenantService>();
+
+            // Same module wiring as the API so DbContext configuration
+            // (pooling, naming convention, retry) is identical between
+            // migration and runtime.
             builder.Services.AddTenancyModule(builder.Configuration);
             builder.Services.AddIdentityModule(builder.Configuration);
             builder.Services.AddProductionModule(builder.Configuration);
