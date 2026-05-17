@@ -35,7 +35,7 @@ public class ChangePasswordCommandHandler : IRequestHandler<ChangePasswordComman
         // role-gated and skips the current-password check.
         var callerUserId = _currentUser.GetCurrentUserId();
         if (request.UserId != callerUserId && !_currentUser.IsInRole("SuperAdmin"))
-            throw new DomainException("CHANGE_PASSWORD_NOT_SELF", "You can only change your own password.");
+            throw new ForbiddenException("CHANGE_PASSWORD_NOT_SELF", "You can only change your own password.");
 
         var user = await _userRepository.GetByIdAsync(request.UserId, cancellationToken)
             ?? throw new NotFoundException("User", request.UserId);

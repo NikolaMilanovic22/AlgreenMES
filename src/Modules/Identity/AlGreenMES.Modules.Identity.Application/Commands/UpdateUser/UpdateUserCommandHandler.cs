@@ -42,13 +42,13 @@ public class UpdateUserCommandHandler : IRequestHandler<UpdateUserCommand, UserD
         // locked to SuperAdmin mutations. Subsumes the older SuperAdmin grant
         // guard but the explicit check below stays as defense-in-depth.
         if (isRoleChange && !isCallerSuperAdmin)
-            throw new DomainException("FORBIDDEN_ROLE_CHANGE", "Only SuperAdmin can change a user's role.");
+            throw new ForbiddenException("FORBIDDEN_ROLE_CHANGE", "Only SuperAdmin can change a user's role.");
 
         // Belt-and-suspenders: block escalation to / demotion of SuperAdmin
         // by non-SuperAdmin (already covered above but kept explicit in case
         // F-7 is ever relaxed).
         if ((request.Role == UserRole.SuperAdmin || user.Role == UserRole.SuperAdmin) && !isCallerSuperAdmin)
-            throw new DomainException("FORBIDDEN_ROLE_ASSIGNMENT", "Only SuperAdmin can grant or revoke the SuperAdmin role.");
+            throw new ForbiddenException("FORBIDDEN_ROLE_ASSIGNMENT", "Only SuperAdmin can grant or revoke the SuperAdmin role.");
 
         // Sprint 3.0 F-1 — refuse to demote the last active Admin in a tenant.
         // Tenant lockout is the exact scenario that bit easy-mes (see

@@ -35,11 +35,11 @@ public class DeleteUserCommandHandler : IRequestHandler<DeleteUserCommand, Unit>
         // not delete their own row in a single click; demote first or have
         // another SuperAdmin do it.
         if (user.Id == callerUserId)
-            throw new DomainException("SELF_DELETE_FORBIDDEN", "You cannot delete your own user.");
+            throw new ForbiddenException("SELF_DELETE_FORBIDDEN", "You cannot delete your own user.");
 
         // Sprint 3.0 F-2b — only SuperAdmin can delete a SuperAdmin user.
         if (user.Role == UserRole.SuperAdmin && !isCallerSuperAdmin)
-            throw new DomainException("FORBIDDEN_SUPERADMIN_DELETE", "Only SuperAdmin can delete a SuperAdmin user.");
+            throw new ForbiddenException("FORBIDDEN_SUPERADMIN_DELETE", "Only SuperAdmin can delete a SuperAdmin user.");
 
         // Sprint 3.0 F-2c — refuse to delete the last active Admin in a tenant
         // (tenant lockout, same scenario as F-1).
