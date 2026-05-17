@@ -100,6 +100,13 @@ public class UserRepository : IUserRepository
         _dbContext.Users.Remove(user);
     }
 
+    public async Task<int> CountActiveByRoleAsync(Guid tenantId, UserRole role, CancellationToken cancellationToken = default)
+    {
+        return await _dbContext.Users
+            .Where(u => u.TenantId == tenantId && u.Role == role && u.IsActive)
+            .CountAsync(cancellationToken);
+    }
+
     public async Task<PagedResult<User>> GetPagedAsync(Guid tenantId, UserRole? role, bool? isActive, string? search, DateTime? createdFrom, DateTime? createdTo, string? sortBy, bool isDescending, int page, int pageSize, CancellationToken cancellationToken = default)
     {
         var query = _dbContext.Users.Include(u => u.UserProcesses).Where(u => u.TenantId == tenantId);
