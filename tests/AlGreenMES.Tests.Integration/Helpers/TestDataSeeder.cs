@@ -85,6 +85,15 @@ public static class TestDataSeeder
         Guid tenantId,
         UserRole role = UserRole.Admin)
     {
+        var (id, _, _) = await SeedAdditionalUserWithCredsAsync(factory, tenantId, role);
+        return id;
+    }
+
+    public static async Task<(Guid UserId, string Email, string Password)> SeedAdditionalUserWithCredsAsync(
+        AlgreenWebApplicationFactory factory,
+        Guid tenantId,
+        UserRole role = UserRole.Admin)
+    {
         using var scope = factory.Services.CreateScope();
         var sp = scope.ServiceProvider;
         var identityDb = sp.GetRequiredService<IdentityDbContext>();
@@ -95,7 +104,7 @@ public static class TestDataSeeder
             "Test", "User", role);
         identityDb.Users.Add(user);
         await identityDb.SaveChangesAsync();
-        return user.Id;
+        return (user.Id, email, DefaultPassword);
     }
 
     public static async Task<Guid> SeedOrderAsync(
