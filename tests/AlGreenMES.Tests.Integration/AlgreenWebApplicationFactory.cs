@@ -48,18 +48,18 @@ public class AlgreenWebApplicationFactory : WebApplicationFactory<Program>, IAsy
     {
         builder.UseEnvironment("Test");
 
-        builder.ConfigureAppConfiguration((context, config) =>
-        {
-            config.AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["ConnectionStrings:DefaultConnection"] = ConnectionString,
-                ["Cors:AllowedOrigins:0"] = "http://localhost:5173",
-                ["JwtSettings:Secret"] = TestJwtSecret,
-                ["JwtSettings:Issuer"] = TestJwtIssuer,
-                ["JwtSettings:Audience"] = TestJwtAudience,
-                ["JwtSettings:ExpirationMinutes"] = "60"
-            });
-        });
+        // UseSetting puts these into the host's settings dictionary which sits
+        // ABOVE appsettings.json in the configuration precedence chain. The
+        // previous ConfigureAppConfiguration.AddInMemoryCollection approach
+        // was being overridden by the API's own appsettings.json (default
+        // ConnectionStrings:DefaultConnection points at localhost:5432), so
+        // tests connected to that instead of the Testcontainers dynamic port.
+        builder.UseSetting("ConnectionStrings:DefaultConnection", ConnectionString);
+        builder.UseSetting("Cors:AllowedOrigins:0", "http://localhost:5173");
+        builder.UseSetting("JwtSettings:Secret", TestJwtSecret);
+        builder.UseSetting("JwtSettings:Issuer", TestJwtIssuer);
+        builder.UseSetting("JwtSettings:Audience", TestJwtAudience);
+        builder.UseSetting("JwtSettings:ExpirationMinutes", "60");
 
         // AddJwtBearer captures Secret/Issuer/Audience at builder time, before WAF's
         // in-memory config overrides take effect. PostConfigure pins the validation
