@@ -25,7 +25,13 @@ public class ReportingQueryService : IReportingQueryService
         _identityDb = identityDb;
     }
 
-    public async Task<ProcessAveragesDto> GetProcessAveragesAsync(Guid tenantId, CancellationToken cancellationToken = default)
+    public async Task<ProcessTimesDto> GetProcessTimesAsync(
+        Guid tenantId,
+        DateTime? from,
+        DateTime? to,
+        List<Guid>? productCategoryIds,
+        List<OrderType>? orderTypes,
+        CancellationToken cancellationToken = default)
     {
         var processes = await _productionDb.Processes
             .AsNoTracking()
@@ -34,42 +40,87 @@ public class ReportingQueryService : IReportingQueryService
             .Select(p => new { p.Id, p.Code, p.Name })
             .ToListAsync(cancellationToken);
 
-        var completedProcesses = await _ordersDb.OrderItemProcesses
+        var query = _ordersDb.OrderItemProcesses
             .AsNoTracking()
+            .Include(p => p.OrderItem)
+                .ThenInclude(oi => oi.Order)
             .Where(p => p.TenantId == tenantId
                 && p.Status == ProcessStatus.Completed
                 && p.Complexity.HasValue
-                && p.TotalDurationMinutes > 0)
-            .Select(p => new { p.ProcessId, p.Complexity, p.TotalDurationMinutes })
+                && p.TotalDurationMinutes > 0);
+
+        if (from.HasValue)
+        {
+            var fromUtc = DateTime.SpecifyKind(from.Value.Date, DateTimeKind.Utc);
+            query = query.Where(p => p.CompletedAt >= fromUtc);
+        }
+
+        if (to.HasValue)
+        {
+            var toUtc = DateTime.SpecifyKind(to.Value.Date.AddDays(1).AddTicks(-1), DateTimeKind.Utc);
+            query = query.Where(p => p.CompletedAt <= toUtc);
+        }
+
+        if (productCategoryIds is { Count: > 0 })
+            query = query.Where(p => productCategoryIds.Contains(p.OrderItem.ProductCategoryId));
+
+        if (orderTypes is { Count: > 0 })
+            query = query.Where(p => orderTypes.Contains(p.OrderItem.Order.OrderType));
+
+        // TotalDurationMinutes column actually stores seconds (misnamed) — divide by 60.
+        var rows = await query
+            .Select(p => new { p.ProcessId, p.Complexity, Seconds = p.TotalDurationMinutes })
             .ToListAsync(cancellationToken);
 
-        var grouped = completedProcesses
-            .GroupBy(p => new { p.ProcessId, p.Complexity })
-            .ToDictionary(
-                g => g.Key,
-                g => new ComplexityAverageDto(
-                    Math.Round(g.Average(x => x.TotalDurationMinutes), 1),
-                    g.Count()));
+        var grouped = rows
+            .GroupBy(r => new { r.ProcessId, r.Complexity })
+            .ToDictionary(g => g.Key, g => ComputeStats(g.Select(x => x.Seconds / 60.0).ToList()));
 
-        var result = new List<ProcessAverageItemDto>();
-
+        var result = new List<ProcessTimeItemDto>();
         foreach (var process in processes)
         {
-            var averages = new Dictionary<string, ComplexityAverageDto>();
-
+            var stats = new Dictionary<string, ComplexityStatsDto>();
             foreach (var complexity in Enum.GetValues<ComplexityType>())
             {
                 var key = new { ProcessId = process.Id, Complexity = (ComplexityType?)complexity };
-                if (grouped.TryGetValue(key, out var avg))
-                {
-                    averages[complexity.ToString()] = avg;
-                }
+                if (grouped.TryGetValue(key, out var s))
+                    stats[complexity.ToString()] = s;
             }
-
-            result.Add(new ProcessAverageItemDto(process.Id, process.Code, process.Name, averages));
+            result.Add(new ProcessTimeItemDto(process.Id, process.Code, process.Name, stats));
         }
 
-        return new ProcessAveragesDto(result);
+        return new ProcessTimesDto(result);
+    }
+
+    private static ComplexityStatsDto ComputeStats(List<double> values)
+    {
+        var n = values.Count;
+        var mean = values.Average();
+        var variance = values.Sum(x => (x - mean) * (x - mean)) / n;
+        var stdev = Math.Sqrt(variance);
+        var min = values.Min();
+        var max = values.Max();
+
+        double trimmedMean;
+        if (n == 1 || stdev == 0)
+        {
+            trimmedMean = mean;
+        }
+        else
+        {
+            var lower = mean - stdev;
+            var upper = mean + stdev;
+            var trimmed = values.Where(x => x >= lower && x <= upper).ToList();
+            trimmedMean = trimmed.Count > 0 ? trimmed.Average() : mean;
+        }
+
+        return new ComplexityStatsDto(
+            n,
+            Math.Round(mean, 2),
+            Math.Round(min, 2),
+            Math.Round(max, 2),
+            Math.Round(stdev, 2),
+            Math.Round(trimmedMean, 2));
     }
 
     public async Task<TimeTrackingReportDto> GetTimeTrackingReportAsync(
@@ -78,6 +129,9 @@ public class ReportingQueryService : IReportingQueryService
         DateTime? to,
         Guid? processId,
         ComplexityType? complexity,
+        string? orderNumber,
+        List<Guid>? productCategoryIds,
+        List<OrderType>? orderTypes,
         CancellationToken cancellationToken = default)
     {
         var processes = await _productionDb.Processes
@@ -85,10 +139,21 @@ public class ReportingQueryService : IReportingQueryService
             .Where(p => p.TenantId == tenantId)
             .ToDictionaryAsync(p => p.Id, p => new { p.Code, p.Name }, cancellationToken);
 
+        var categoryNames = await _productionDb.ProductCategories
+            .AsNoTracking()
+            .Where(c => c.TenantId == tenantId)
+            .ToDictionaryAsync(c => c.Id, c => c.Name, cancellationToken);
+
+        var subProcessNames = await _productionDb.SubProcesses
+            .AsNoTracking()
+            .Where(sp => sp.TenantId == tenantId)
+            .ToDictionaryAsync(sp => sp.Id, sp => sp.Name, cancellationToken);
+
         var query = _ordersDb.OrderItemProcesses
             .AsNoTracking()
             .Include(p => p.OrderItem)
                 .ThenInclude(oi => oi.Order)
+            .Include(p => p.SubProcesses)
             .Where(p => p.TenantId == tenantId
                 && p.Status == ProcessStatus.Completed
                 && p.TotalDurationMinutes > 0);
@@ -111,6 +176,18 @@ public class ReportingQueryService : IReportingQueryService
         if (complexity.HasValue)
             query = query.Where(p => p.Complexity == complexity.Value);
 
+        if (!string.IsNullOrWhiteSpace(orderNumber))
+        {
+            var pattern = $"%{orderNumber.Trim()}%";
+            query = query.Where(p => EF.Functions.ILike(p.OrderItem.Order.OrderNumber, pattern));
+        }
+
+        if (productCategoryIds is { Count: > 0 })
+            query = query.Where(p => productCategoryIds.Contains(p.OrderItem.ProductCategoryId));
+
+        if (orderTypes is { Count: > 0 })
+            query = query.Where(p => orderTypes.Contains(p.OrderItem.Order.OrderType));
+
         var data = await query
             .OrderByDescending(p => p.CompletedAt)
             .ToListAsync(cancellationToken);
@@ -118,10 +195,20 @@ public class ReportingQueryService : IReportingQueryService
         var items = data.Select(p =>
         {
             var proc = processes.GetValueOrDefault(p.ProcessId);
+            var categoryName = categoryNames.GetValueOrDefault(p.OrderItem?.ProductCategoryId ?? Guid.Empty, "—");
+            var subs = p.SubProcesses
+                .Where(sp => sp.TotalDurationMinutes > 0)
+                .Select(sp => new SubProcessTimeDto(
+                    sp.SubProcessId,
+                    subProcessNames.GetValueOrDefault(sp.SubProcessId, "Unknown"),
+                    sp.TotalDurationMinutes))
+                .ToList();
+
             return new TimeTrackingItemDto(
                 p.Id,
                 p.OrderItem?.Order?.OrderNumber ?? "—",
-                p.OrderItem?.ProductName ?? "—",
+                categoryName,
+                p.OrderItem?.Order?.OrderType.ToString() ?? "—",
                 p.ProcessId,
                 proc?.Code ?? "?",
                 proc?.Name ?? "Unknown",
@@ -129,19 +216,11 @@ public class ReportingQueryService : IReportingQueryService
                 p.Status.ToString(),
                 p.StartedAt,
                 p.CompletedAt,
-                p.TotalDurationMinutes);
+                p.TotalDurationMinutes,
+                subs);
         }).ToList();
 
-        var summary = items.Count > 0
-            ? new TimeTrackingSummaryDto(
-                items.Count,
-                Math.Round(items.Average(i => i.TotalDurationMinutes), 1),
-                items.Sum(i => i.TotalDurationMinutes),
-                items.Min(i => i.TotalDurationMinutes),
-                items.Max(i => i.TotalDurationMinutes))
-            : new TimeTrackingSummaryDto(0, 0, 0, 0, 0);
-
-        return new TimeTrackingReportDto(items, summary);
+        return new TimeTrackingReportDto(items);
     }
 
     public async Task<WorkerHoursReportDto> GetWorkerHoursReportAsync(

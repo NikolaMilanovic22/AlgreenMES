@@ -1,11 +1,17 @@
 namespace AlGreenMES.Modules.Orders.Application.DTOs.Reports;
 
-public record ProcessAveragesDto(List<ProcessAverageItemDto> Processes);
+public record ProcessTimesDto(List<ProcessTimeItemDto> Processes);
 
-public record ProcessAverageItemDto(
+public record ProcessTimeItemDto(
     Guid ProcessId,
     string ProcessCode,
     string ProcessName,
-    Dictionary<string, ComplexityAverageDto> Averages);
+    Dictionary<string, ComplexityStatsDto> Stats);
 
-public record ComplexityAverageDto(double AvgMinutes, int Count);
+public record ComplexityStatsDto(
+    int Count,
+    double AvgMinutes,
+    double MinMinutes,
+    double MaxMinutes,
+    double StdevMinutes,
+    double TrimmedMeanMinutes);

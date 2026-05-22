@@ -16,6 +16,14 @@ public class GetTimeTrackingQueryHandler : IRequestHandler<GetTimeTrackingQuery,
     public async Task<TimeTrackingReportDto> Handle(GetTimeTrackingQuery request, CancellationToken cancellationToken)
     {
         return await _reportingQueryService.GetTimeTrackingReportAsync(
-            request.TenantId, request.From, request.To, request.ProcessId, request.Complexity, cancellationToken);
+            request.TenantId,
+            request.From,
+            request.To,
+            request.ProcessId,
+            request.Complexity,
+            request.OrderNumber,
+            request.ProductCategoryIds,
+            request.OrderTypes,
+            cancellationToken);
     }
 }
