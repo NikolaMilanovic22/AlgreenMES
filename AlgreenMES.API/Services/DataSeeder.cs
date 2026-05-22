@@ -36,8 +36,12 @@ public static class DataSeeder
 
         var tenantId = tenant.Id;
 
+        // DataSeeder runs at startup with no HTTP context — every query against a tenant-scoped
+        // entity must IgnoreQueryFilters and pass tenantId explicitly.
+
         // 2. Get or create Admin User
-        var adminUser = await identityDb.Users.FirstOrDefaultAsync(u => u.Email == "admin@demo.com" && u.TenantId == tenantId);
+        var adminUser = await identityDb.Users.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(u => u.Email == "admin@demo.com" && u.TenantId == tenantId);
         if (adminUser == null)
         {
             var passwordHash = passwordHasher.HashPassword("Admin123!");
@@ -54,6 +58,7 @@ public static class DataSeeder
 
         // 3. Get or create Processes A-K
         var existingProcesses = await productionDb.Processes
+            .IgnoreQueryFilters()
             .Where(p => p.TenantId == tenantId)
             .ToListAsync();
 
@@ -95,6 +100,7 @@ public static class DataSeeder
 
         // 4. Get or create Product Category "Vrata Pivot" with all processes
         var pivotDoors = await productionDb.ProductCategories
+            .IgnoreQueryFilters()
             .Include(c => c.Processes)
             .Include(c => c.Dependencies)
             .FirstOrDefaultAsync(c => c.Name == "Vrata Pivot" && c.TenantId == tenantId);
@@ -126,7 +132,8 @@ public static class DataSeeder
         }
 
         // 5. Get or create Special Request Types
-        if (!await productionDb.SpecialRequestTypes.AnyAsync(s => s.Code == "PESK" && s.TenantId == tenantId))
+        if (!await productionDb.SpecialRequestTypes.IgnoreQueryFilters()
+            .AnyAsync(s => s.Code == "PESK" && s.TenantId == tenantId))
         {
             var peskarenje = SpecialRequestType.Create(tenantId, "PESK", "Peskarenje", "Dodaje proces peskarenja prije farbanja");
             productionDb.SpecialRequestTypes.Add(peskarenje);
@@ -170,6 +177,7 @@ public static class DataSeeder
         foreach (var (email, firstName, lastName, role, processCodes) in userDefs)
         {
             var user = await identityDb.Users
+                .IgnoreQueryFilters()
                 .Include(u => u.UserProcesses)
                 .FirstOrDefaultAsync(u => u.Email == email && u.TenantId == tenantId);
             if (user == null)
@@ -199,7 +207,8 @@ public static class DataSeeder
 
         foreach (var (name, start, end) in shiftDefs)
         {
-            if (!await identityDb.Shifts.AnyAsync(s => s.Name == name && s.TenantId == tenantId))
+            if (!await identityDb.Shifts.IgnoreQueryFilters()
+                .AnyAsync(s => s.Name == name && s.TenantId == tenantId))
             {
                 var shift = Shift.Create(tenantId, name, start, end);
                 identityDb.Shifts.Add(shift);
@@ -210,6 +219,7 @@ public static class DataSeeder
 
         // 8. Sub-Processes
         var processesWithSubs = await productionDb.Processes
+            .IgnoreQueryFilters()
             .Include(p => p.SubProcesses)
             .Where(p => p.TenantId == tenantId)
             .ToListAsync();
@@ -241,6 +251,7 @@ public static class DataSeeder
 
         // Reload processes with sub-processes to get IDs
         processesWithSubs = await productionDb.Processes
+            .IgnoreQueryFilters()
             .Include(p => p.SubProcesses)
             .Where(p => p.TenantId == tenantId)
             .ToListAsync();
@@ -248,6 +259,7 @@ public static class DataSeeder
         // 9. More Product Categories
         // "Vrata Standard" — A, B, D, E, F, G, H, I, J, K (skip C/CNC)
         var vrataStandard = await productionDb.ProductCategories
+            .IgnoreQueryFilters()
             .Include(c => c.Processes)
             .Include(c => c.Dependencies)
             .FirstOrDefaultAsync(c => c.Name == "Vrata Standard" && c.TenantId == tenantId);
@@ -271,6 +283,7 @@ public static class DataSeeder
 
         // "Prozori" — A, B, C, F, G, H, I, J, K
         var prozori = await productionDb.ProductCategories
+            .IgnoreQueryFilters()
             .Include(c => c.Processes)
             .Include(c => c.Dependencies)
             .FirstOrDefaultAsync(c => c.Name == "Prozori" && c.TenantId == tenantId);
@@ -296,11 +309,13 @@ public static class DataSeeder
         // 10. Orders with Items, Processes, Sub-Processes, and State Progression
         // =====================================================================
 
-        if (await ordersDb.Orders.AnyAsync(o => o.OrderNumber == "ORD-2026-001" && o.TenantId == tenantId))
+        if (await ordersDb.Orders.IgnoreQueryFilters()
+            .AnyAsync(o => o.OrderNumber == "ORD-2026-001" && o.TenantId == tenantId))
             return; // Orders already seeded — skip the rest
 
         // Reload all categories with their processes for order item creation
         var allCategories = await productionDb.ProductCategories
+            .IgnoreQueryFilters()
             .Include(c => c.Processes)
             .Where(c => c.TenantId == tenantId)
             .ToListAsync();

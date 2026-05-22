@@ -30,17 +30,22 @@ public class ResumeStationCommandHandler : IRequestHandler<ResumeStationCommand>
             {
                 var activeSub = process.SubProcesses
                     .FirstOrDefault(sp => sp.Status == SubProcessStatus.InProgress);
-                if (activeSub != null)
+                // Only auto-resume sub-processes that the station paused at
+                // logout. Manually paused sub-processes have no PausedByStationAt
+                // and stay paused.
+                if (activeSub != null && activeSub.PausedByStationAt.HasValue)
                 {
                     var openLog = activeSub.GetOpenLog();
                     if (openLog == null)
-                        activeSub.StartLog(request.UserId);
+                        activeSub.StartLog(request.UserId); // also clears PausedByStationAt
                 }
             }
             else
             {
-                if (process.PausedAt.HasValue)
-                    process.ResumeTimer();
+                // Only auto-resume processes paused by station logout —
+                // manually paused processes stay paused.
+                if (process.PausedByStationAt.HasValue && process.PausedAt.HasValue)
+                    process.ResumeTimer(); // also clears PausedByStationAt
             }
         }
 

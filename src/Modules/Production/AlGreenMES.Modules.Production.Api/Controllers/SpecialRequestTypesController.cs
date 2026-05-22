@@ -4,6 +4,7 @@ using AlGreenMES.Modules.Production.Application.Commands.CreateSpecialRequestTyp
 using AlGreenMES.Modules.Production.Application.Commands.DeactivateSpecialRequestType;
 using AlGreenMES.Modules.Production.Application.Commands.UpdateSpecialRequestType;
 using AlGreenMES.Modules.Production.Application.Queries.GetSpecialRequestTypes;
+using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -16,15 +17,16 @@ namespace AlGreenMES.Modules.Production.Api.Controllers;
 public class SpecialRequestTypesController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly ITenantService _tenantService;
 
-    public SpecialRequestTypesController(IMediator mediator)
+    public SpecialRequestTypesController(IMediator mediator, ITenantService tenantService)
     {
         _mediator = mediator;
+        _tenantService = tenantService;
     }
 
     [HttpGet]
     public async Task<IActionResult> GetSpecialRequestTypes(
-        [FromQuery] Guid tenantId,
         [FromQuery] bool? isActive,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
@@ -37,7 +39,7 @@ public class SpecialRequestTypesController : ControllerBase
     {
         var result = await _mediator.Send(new GetSpecialRequestTypesQuery
         {
-            TenantId = tenantId,
+            TenantId = _tenantService.GetCurrentTenantId(),
             IsActive = isActive,
             Page = page,
             PageSize = pageSize,
@@ -51,19 +53,19 @@ public class SpecialRequestTypesController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
     public async Task<IActionResult> CreateSpecialRequestType([FromBody] CreateSpecialRequestTypeRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
             new CreateSpecialRequestTypeCommand(
-                request.TenantId, request.Code, request.Name, request.Description,
+                _tenantService.GetCurrentTenantId(), request.Code, request.Name, request.Description,
                 request.AddsProcesses, request.RemovesProcesses, request.OnlyProcesses),
             cancellationToken);
-        return CreatedAtAction(nameof(GetSpecialRequestTypes), new { tenantId = result.TenantId }, result);
+        return CreatedAtAction(nameof(GetSpecialRequestTypes), routeValues: null, result);
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
     public async Task<IActionResult> UpdateSpecialRequestType(Guid id, [FromBody] UpdateSpecialRequestTypeRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -75,7 +77,7 @@ public class SpecialRequestTypesController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "SuperAdmin,Admin")]
     public async Task<IActionResult> DeactivateSpecialRequestType(Guid id, CancellationToken cancellationToken)
     {
         await _mediator.Send(new DeactivateSpecialRequestTypeCommand(id), cancellationToken);
@@ -83,7 +85,7 @@ public class SpecialRequestTypesController : ControllerBase
     }
 
     [HttpPost("{id:guid}/activate")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "SuperAdmin,Admin")]
     public async Task<IActionResult> ActivateSpecialRequestType(Guid id, CancellationToken cancellationToken)
     {
         await _mediator.Send(new ActivateSpecialRequestTypeCommand(id), cancellationToken);

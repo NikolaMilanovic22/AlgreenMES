@@ -3,6 +3,7 @@ using AlGreenMES.Modules.Orders.Application.DTOs;
 using AlGreenMES.Modules.Orders.Application.Interfaces;
 using AlGreenMES.Modules.Orders.Domain.Entities;
 using AlGreenMES.Modules.Orders.Domain.Repositories;
+using AlGreenMES.Modules.Production.Domain.Enums;
 using AlGreenMES.Modules.Production.Domain.Repositories;
 using Mapster;
 using MediatR;
@@ -56,6 +57,21 @@ public class CreateOrderCommandHandler : IRequestHandler<CreateOrderCommand, Ord
         if (request.CustomWarningDays.HasValue || request.CustomCriticalDays.HasValue)
             order.SetCustomWarningDays(request.CustomWarningDays, request.CustomCriticalDays);
 
+        // Manual processes — store on the order. When present, these REPLACE the
+        // per-item product-category processes during item creation below.
+        var hasManual = request.ManualProcesses is { Count: > 0 };
+        if (hasManual)
+        {
+            foreach (var mp in request.ManualProcesses!)
+                order.AddManualProcess(mp.ProcessId, mp.SequenceOrder, mp.DefaultComplexity);
+
+            if (request.ManualDependencies is { Count: > 0 })
+            {
+                foreach (var dep in request.ManualDependencies)
+                    order.AddManualDependency(dep.ProcessId, dep.DependsOnProcessId);
+            }
+        }
+
         // Add items if provided
         if (request.Items is { Count: > 0 })
         {
@@ -66,11 +82,22 @@ public class CreateOrderCommandHandler : IRequestHandler<CreateOrderCommand, Ord
 
                 var item = order.AddItem(itemInput.ProductCategoryId, itemInput.ProductName, itemInput.Quantity, itemInput.Notes);
 
-                foreach (var catProcess in category.Processes.OrderBy(p => p.SequenceOrder))
-                {
-                    var oip = item.AddProcess(catProcess.ProcessId, catProcess.DefaultComplexity);
+                // Pick the process source: manual list (if order's type allows + provided)
+                // or the product category's processes. The manual list is per-order, not
+                // per-item, so each item gets the same set.
+                IEnumerable<(Guid ProcessId, ComplexityType? Complexity)> processSource = hasManual
+                    ? order.ManualProcesses
+                        .OrderBy(p => p.SequenceOrder)
+                        .Select(p => (p.ProcessId, p.DefaultComplexity))
+                    : category.Processes
+                        .OrderBy(p => p.SequenceOrder)
+                        .Select(p => (p.ProcessId, p.DefaultComplexity));
 
-                    var process = await _processRepository.GetByIdWithSubProcessesAsync(catProcess.ProcessId, cancellationToken);
+                foreach (var (processId, complexity) in processSource)
+                {
+                    var oip = item.AddProcess(processId, complexity);
+
+                    var process = await _processRepository.GetByIdWithSubProcessesAsync(processId, cancellationToken);
                     if (process?.SubProcesses != null)
                     {
                         foreach (var sub in process.SubProcesses.Where(s => s.IsActive).OrderBy(s => s.SequenceOrder))

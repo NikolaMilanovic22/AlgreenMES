@@ -4,6 +4,7 @@ using AlGreenMES.Modules.Identity.Domain.Repositories;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace AlGreenMES.Modules.Orders.Api.Hubs;
 
@@ -11,10 +12,12 @@ namespace AlGreenMES.Modules.Orders.Api.Hubs;
 public class ProductionHub : Hub
 {
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ILogger<ProductionHub> _logger;
 
-    public ProductionHub(IServiceScopeFactory scopeFactory)
+    public ProductionHub(IServiceScopeFactory scopeFactory, ILogger<ProductionHub> logger)
     {
         _scopeFactory = scopeFactory;
+        _logger = logger;
     }
 
     public override async Task OnConnectedAsync()
@@ -50,9 +53,24 @@ public class ProductionHub : Hub
         await base.OnDisconnectedAsync(exception);
     }
 
-    public async Task JoinTenantGroup(string tenantId)
+    public async Task JoinTenantGroup()
     {
+        var tenantIdClaim = Context.User?.FindFirst("tenant_id")?.Value;
+
+        if (string.IsNullOrEmpty(tenantIdClaim) || !Guid.TryParse(tenantIdClaim, out var tenantId))
+        {
+            _logger.LogWarning(
+                "JoinTenantGroup rejected: missing or invalid tenant_id claim for connection {ConnectionId}",
+                Context.ConnectionId);
+            Context.Abort();
+            return;
+        }
+
         await Groups.AddToGroupAsync(Context.ConnectionId, $"tenant-{tenantId}");
+
+        _logger.LogInformation(
+            "Connection {ConnectionId} joined tenant group {TenantId}",
+            Context.ConnectionId, tenantId);
     }
 
     public async Task LeaveTenantGroup(string tenantId)

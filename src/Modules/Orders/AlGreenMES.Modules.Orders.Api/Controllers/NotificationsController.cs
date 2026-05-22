@@ -1,3 +1,4 @@
+using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using AlGreenMES.Modules.Orders.Application.Commands.DeleteAllNotifications;
 using AlGreenMES.Modules.Orders.Application.Commands.DeleteNotification;
 using AlGreenMES.Modules.Orders.Application.Commands.MarkAllNotificationsRead;
@@ -17,15 +18,16 @@ namespace AlGreenMES.Modules.Orders.Api.Controllers;
 public class NotificationsController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly ICurrentUserService _currentUser;
 
-    public NotificationsController(IMediator mediator)
+    public NotificationsController(IMediator mediator, ICurrentUserService currentUser)
     {
         _mediator = mediator;
+        _currentUser = currentUser;
     }
 
     [HttpGet]
     public async Task<IActionResult> GetNotifications(
-        [FromQuery] Guid userId,
         [FromQuery] bool? isRead,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
@@ -34,7 +36,7 @@ public class NotificationsController : ControllerBase
     {
         var result = await _mediator.Send(new GetNotificationsQuery
         {
-            UserId = userId,
+            UserId = _currentUser.GetCurrentUserId(),
             IsRead = isRead,
             Page = page,
             PageSize = pageSize,
@@ -44,44 +46,46 @@ public class NotificationsController : ControllerBase
     }
 
     [HttpGet("unread-count")]
-    public async Task<IActionResult> GetUnreadCount([FromQuery] Guid userId, CancellationToken cancellationToken)
+    public async Task<IActionResult> GetUnreadCount(CancellationToken cancellationToken)
     {
-        var result = await _mediator.Send(new GetUnreadNotificationCountQuery(userId), cancellationToken);
+        var result = await _mediator.Send(
+            new GetUnreadNotificationCountQuery(_currentUser.GetCurrentUserId()),
+            cancellationToken);
         return Ok(result);
     }
 
     [HttpPost("{id:guid}/read")]
     public async Task<IActionResult> MarkAsRead(Guid id, CancellationToken cancellationToken)
     {
-        await _mediator.Send(new MarkNotificationReadCommand(id), cancellationToken);
+        await _mediator.Send(new MarkNotificationReadCommand(id, _currentUser.GetCurrentUserId()), cancellationToken);
         return NoContent();
     }
 
     [HttpPost("{id:guid}/unread")]
     public async Task<IActionResult> MarkAsUnread(Guid id, CancellationToken cancellationToken)
     {
-        await _mediator.Send(new MarkNotificationUnreadCommand(id), cancellationToken);
+        await _mediator.Send(new MarkNotificationUnreadCommand(id, _currentUser.GetCurrentUserId()), cancellationToken);
         return NoContent();
     }
 
     [HttpPost("read-all")]
-    public async Task<IActionResult> MarkAllAsRead([FromQuery] Guid userId, CancellationToken cancellationToken)
+    public async Task<IActionResult> MarkAllAsRead(CancellationToken cancellationToken)
     {
-        await _mediator.Send(new MarkAllNotificationsReadCommand(userId), cancellationToken);
+        await _mediator.Send(new MarkAllNotificationsReadCommand(_currentUser.GetCurrentUserId()), cancellationToken);
         return NoContent();
     }
 
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
-        await _mediator.Send(new DeleteNotificationCommand(id), cancellationToken);
+        await _mediator.Send(new DeleteNotificationCommand(id, _currentUser.GetCurrentUserId()), cancellationToken);
         return NoContent();
     }
 
     [HttpDelete]
-    public async Task<IActionResult> DeleteAll([FromQuery] Guid userId, CancellationToken cancellationToken)
+    public async Task<IActionResult> DeleteAll(CancellationToken cancellationToken)
     {
-        await _mediator.Send(new DeleteAllNotificationsCommand(userId), cancellationToken);
+        await _mediator.Send(new DeleteAllNotificationsCommand(_currentUser.GetCurrentUserId()), cancellationToken);
         return NoContent();
     }
 }

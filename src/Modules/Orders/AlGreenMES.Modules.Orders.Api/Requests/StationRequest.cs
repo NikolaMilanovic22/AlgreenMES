@@ -1,3 +1,3 @@
 namespace AlGreenMES.Modules.Orders.Api.Requests;
 
-public record StationRequest(Guid ProcessId, Guid TenantId, Guid UserId);
+public record StationRequest(Guid ProcessId, Guid UserId);

@@ -1,5 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using AlGreenMES.Modules.Orders.Api.Requests;
 using AlGreenMES.Modules.Orders.Application.Commands.ActivateOrder;
 using AlGreenMES.Modules.Orders.Application.Commands.AddOrderItem;
@@ -25,10 +27,12 @@ using AlGreenMES.Modules.Orders.Application.Queries.GetOrders;
 using AlGreenMES.Modules.Orders.Application.Queries.GetOrdersMasterView;
 using AlGreenMES.Modules.Orders.Domain.Repositories;
 using AlGreenMES.Modules.Orders.Domain.Enums;
+using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 
 namespace AlGreenMES.Modules.Orders.Api.Controllers;
 
@@ -40,17 +44,25 @@ public class OrdersController : ControllerBase
     private readonly IMediator _mediator;
     private readonly IOrderAttachmentRepository _attachmentRepository;
     private readonly IFileStorageService _fileStorageService;
+    private readonly ITenantService _tenantService;
+    private readonly ILogger<OrdersController> _logger;
 
-    public OrdersController(IMediator mediator, IOrderAttachmentRepository attachmentRepository, IFileStorageService fileStorageService)
+    public OrdersController(
+        IMediator mediator,
+        IOrderAttachmentRepository attachmentRepository,
+        IFileStorageService fileStorageService,
+        ITenantService tenantService,
+        ILogger<OrdersController> logger)
     {
         _mediator = mediator;
         _attachmentRepository = attachmentRepository;
         _fileStorageService = fileStorageService;
+        _tenantService = tenantService;
+        _logger = logger;
     }
 
     [HttpGet]
     public async Task<IActionResult> GetOrders(
-        [FromQuery] Guid tenantId,
         [FromQuery] OrderStatus? status,
         [FromQuery] OrderType? orderType,
         [FromQuery] DateTime? dateFrom,
@@ -62,7 +74,7 @@ public class OrdersController : ControllerBase
     {
         var result = await _mediator.Send(new GetOrdersQuery
         {
-            TenantId = tenantId,
+            TenantId = _tenantService.GetCurrentTenantId(),
             Status = status,
             OrderType = orderType,
             DateFrom = dateFrom,
@@ -76,9 +88,9 @@ public class OrdersController : ControllerBase
 
     [HttpGet("master-view")]
     public async Task<IActionResult> GetOrdersMasterView(
-        [FromQuery] Guid tenantId,
         [FromQuery] OrderStatus? status,
         [FromQuery] OrderType? orderType,
+        [FromQuery] bool? isInvoiced,
         [FromQuery] DateTime? dateFrom,
         [FromQuery] DateTime? dateTo,
         [FromQuery] int page = 1,
@@ -90,9 +102,10 @@ public class OrdersController : ControllerBase
     {
         var result = await _mediator.Send(new GetOrdersMasterViewQuery
         {
-            TenantId = tenantId,
+            TenantId = _tenantService.GetCurrentTenantId(),
             Status = status,
             OrderType = orderType,
+            IsInvoiced = isInvoiced,
             DateFrom = dateFrom,
             DateTo = dateTo,
             Page = page,
@@ -112,7 +125,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin,Manager,SalesManager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager")]
     [RequestSizeLimit(50 * 1024 * 1024)]
     public async Task<IActionResult> CreateOrder([FromForm] CreateOrderRequest request, CancellationToken cancellationToken)
     {
@@ -120,18 +133,27 @@ public class OrdersController : ControllerBase
             ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
             ?? throw new UnauthorizedAccessException("User ID claim not found in token."));
 
+        // FE sends ComplexityType as a string ("S"/"L"/"T"); System.Text.Json defaults
+        // to numeric enums, so without the converter deserialization throws and we'd
+        // silently lose the whole manual-processes list.
+        var jsonOpts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        jsonOpts.Converters.Add(new JsonStringEnumConverter());
+        var manualProcesses = ParseJsonList<CreateOrderManualProcessInput>(request.ManualProcessesJson, jsonOpts);
+        var manualDependencies = ParseJsonList<CreateOrderManualDependencyInput>(request.ManualDependenciesJson, jsonOpts);
+
         var result = await _mediator.Send(
             new CreateOrderCommand(
-                request.TenantId, request.OrderNumber, request.DeliveryDate, request.Priority, request.OrderType, userId, request.Notes, request.CustomWarningDays, request.CustomCriticalDays,
+                _tenantService.GetCurrentTenantId(), request.OrderNumber, request.DeliveryDate, request.Priority, request.OrderType, userId, request.Notes, request.CustomWarningDays, request.CustomCriticalDays,
                 request.Items?.Select(i => new Application.Commands.CreateOrder.CreateOrderItemInput(i.ProductCategoryId, i.ProductName, i.Quantity, i.Notes,
                     i.Attachments?.Select(f => new Application.Commands.CreateOrder.CreateOrderAttachmentInput(f.FileName, f.ContentType, f.Length, f.OpenReadStream())).ToList())).ToList(),
-                request.Attachments?.Select(f => new Application.Commands.CreateOrder.CreateOrderAttachmentInput(f.FileName, f.ContentType, f.Length, f.OpenReadStream())).ToList()),
+                request.Attachments?.Select(f => new Application.Commands.CreateOrder.CreateOrderAttachmentInput(f.FileName, f.ContentType, f.Length, f.OpenReadStream())).ToList(),
+                manualProcesses, manualDependencies),
             cancellationToken);
         return CreatedAtAction(nameof(GetOrderById), new { id = result.Id }, result);
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "Admin,Manager,SalesManager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager")]
     public async Task<IActionResult> UpdateOrder(Guid id, [FromBody] UpdateOrderRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -147,7 +169,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/activate")]
-    [Authorize(Roles = "Admin,Manager,Coordinator")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator")]
     public async Task<IActionResult> ActivateOrder(Guid id, [FromBody] ActivateOrderRequest? request = null, CancellationToken cancellationToken = default)
     {
         await _mediator.Send(new ActivateOrderCommand(id, request?.ResetProcessIds), cancellationToken);
@@ -155,7 +177,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/pause")]
-    [Authorize(Roles = "Admin,Manager,Coordinator")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator")]
     public async Task<IActionResult> PauseOrder(Guid id, CancellationToken cancellationToken)
     {
         await _mediator.Send(new PauseOrderCommand(id), cancellationToken);
@@ -163,7 +185,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/resume")]
-    [Authorize(Roles = "Admin,Manager,Coordinator")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator")]
     public async Task<IActionResult> ResumeOrder(Guid id, CancellationToken cancellationToken)
     {
         await _mediator.Send(new ResumeOrderCommand(id), cancellationToken);
@@ -171,7 +193,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/cancel")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
     public async Task<IActionResult> CancelOrder(Guid id, CancellationToken cancellationToken)
     {
         await _mediator.Send(new CancelOrderCommand(id), cancellationToken);
@@ -179,7 +201,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/reopen")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
     public async Task<IActionResult> ReopenOrder(Guid id, CancellationToken cancellationToken)
     {
         await _mediator.Send(new ReopenOrderCommand(id), cancellationToken);
@@ -187,7 +209,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("{orderId:guid}/items")]
-    [Authorize(Roles = "Admin,Manager,SalesManager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager")]
     public async Task<IActionResult> AddOrderItem(Guid orderId, [FromBody] AddOrderItemRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -197,7 +219,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpDelete("{orderId:guid}/items/{itemId:guid}")]
-    [Authorize(Roles = "Admin,Manager,SalesManager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager")]
     public async Task<IActionResult> RemoveOrderItem(Guid orderId, Guid itemId, CancellationToken cancellationToken)
     {
         await _mediator.Send(new RemoveOrderItemCommand(orderId, itemId), cancellationToken);
@@ -205,7 +227,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPut("{id:guid}/priority")]
-    [Authorize(Roles = "Admin,Manager,Coordinator")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator")]
     public async Task<IActionResult> ChangePriority(Guid id, [FromBody] ChangePriorityRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new ChangePriorityCommand(id, request.Priority), cancellationToken);
@@ -213,7 +235,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPut("{id:guid}/invoiced")]
-    [Authorize(Roles = "Admin,Manager,SalesManager,Coordinator")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager,Coordinator")]
     public async Task<IActionResult> SetInvoiced(Guid id, [FromBody] SetOrderInvoicedRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new SetOrderInvoicedCommand(id, request.IsInvoiced), cancellationToken);
@@ -221,7 +243,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/withdraw")]
-    [Authorize(Roles = "Admin,Manager,Coordinator")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator")]
     public async Task<IActionResult> WithdrawOrderToProcess(Guid id, [FromBody] WithdrawOrderToProcessRequest request, CancellationToken cancellationToken)
     {
         await _mediator.Send(new WithdrawOrderToProcessCommand(id, request.TargetProcessId, request.Reason, request.UserId), cancellationToken);
@@ -229,7 +251,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("{orderId:guid}/items/{itemId:guid}/special-requests")]
-    [Authorize(Roles = "Admin,Manager,SalesManager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager")]
     public async Task<IActionResult> AddSpecialRequest(Guid orderId, Guid itemId, [FromBody] AddSpecialRequestRequest request, CancellationToken cancellationToken)
     {
         await _mediator.Send(new AddSpecialRequestCommand(orderId, itemId, request.SpecialRequestTypeId), cancellationToken);
@@ -237,7 +259,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpDelete("{orderId:guid}/items/{itemId:guid}/special-requests/{specialRequestId:guid}")]
-    [Authorize(Roles = "Admin,Manager,SalesManager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager")]
     public async Task<IActionResult> RemoveSpecialRequest(Guid orderId, Guid itemId, Guid specialRequestId, CancellationToken cancellationToken)
     {
         await _mediator.Send(new RemoveSpecialRequestCommand(orderId, itemId, specialRequestId), cancellationToken);
@@ -245,7 +267,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPut("{orderId:guid}/items/{itemId:guid}/processes/{processId:guid}/complexity")]
-    [Authorize(Roles = "Admin,Manager,SalesManager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager")]
     public async Task<IActionResult> OverrideComplexity(Guid orderId, Guid itemId, Guid processId, [FromBody] OverrideComplexityRequest request, CancellationToken cancellationToken)
     {
         await _mediator.Send(new OverrideComplexityCommand(orderId, itemId, processId, request.Complexity), cancellationToken);
@@ -255,16 +277,16 @@ public class OrdersController : ControllerBase
     // --- Attachments ---
 
     [HttpPost("{orderId:guid}/attachments")]
-    [Authorize(Roles = "Admin,Manager,SalesManager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager")]
     [RequestSizeLimit(10 * 1024 * 1024)]
-    public async Task<IActionResult> UploadAttachment(Guid orderId, IFormFile file, [FromQuery] Guid tenantId, [FromQuery] Guid? orderItemId, CancellationToken cancellationToken)
+    public async Task<IActionResult> UploadAttachment(Guid orderId, IFormFile file, [FromQuery] Guid? orderItemId, CancellationToken cancellationToken)
     {
         var userId = Guid.Parse(User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
             ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
             ?? throw new UnauthorizedAccessException("User ID claim not found in token."));
 
         var result = await _mediator.Send(new UploadOrderAttachmentCommand(
-            orderId, tenantId, userId,
+            orderId, _tenantService.GetCurrentTenantId(), userId,
             file.FileName, file.ContentType, file.Length, file.OpenReadStream(),
             orderItemId),
             cancellationToken);
@@ -285,6 +307,15 @@ public class OrdersController : ControllerBase
         if (attachment == null || attachment.OrderId != orderId)
             return NotFound();
 
+        var currentTenantId = _tenantService.GetCurrentTenantId();
+        if (attachment.TenantId != currentTenantId)
+        {
+            _logger.LogWarning(
+                "Cross-tenant attachment access attempt: user tenant {UserTenantId} requested attachment {AttachmentId} from tenant {AttachmentTenantId}",
+                currentTenantId, id, attachment.TenantId);
+            return NotFound();
+        }
+
         var stream = await _fileStorageService.GetFileAsync(attachment.StoragePath, cancellationToken);
         if (stream == null)
             return NotFound();
@@ -299,10 +330,18 @@ public class OrdersController : ControllerBase
     }
 
     [HttpDelete("{orderId:guid}/attachments/{id:guid}")]
-    [Authorize(Roles = "Admin,Manager,SalesManager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager")]
     public async Task<IActionResult> DeleteAttachment(Guid orderId, Guid id, [FromQuery] Guid tenantId, CancellationToken cancellationToken)
     {
         await _mediator.Send(new DeleteOrderAttachmentCommand(orderId, id, tenantId), cancellationToken);
         return NoContent();
+    }
+
+    private static List<T>? ParseJsonList<T>(string? json, JsonSerializerOptions opts)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        // Surface parse failures as 400s — silently dropping the list hides real bugs
+        // (we lost a half-day to that with the ComplexityType enum converter).
+        return JsonSerializer.Deserialize<List<T>>(json, opts);
     }
 }

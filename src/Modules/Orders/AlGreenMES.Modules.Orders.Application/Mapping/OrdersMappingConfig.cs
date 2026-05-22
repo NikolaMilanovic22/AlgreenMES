@@ -1,6 +1,7 @@
 using AlGreenMES.Modules.Orders.Application.DTOs;
 using AlGreenMES.Modules.Orders.Application.DTOs.Tablet;
 using AlGreenMES.Modules.Orders.Domain.Entities;
+using AlGreenMES.Modules.Orders.Domain.Entities.OrderTypes;
 using Mapster;
 
 namespace AlGreenMES.Modules.Orders.Application.Mapping;
@@ -9,12 +10,19 @@ public static class OrdersMappingConfig
 {
     public static void Register(TypeAdapterConfig config)
     {
+        config.NewConfig<OrderType, OrderTypeDto>();
+
         config.NewConfig<Order, OrderDto>()
             .Map(dest => dest.ItemCount, src => src.Items.Count);
 
         config.NewConfig<Order, OrderDetailDto>()
             .Map(dest => dest.Items, src => src.Items)
-            .Map(dest => dest.Attachments, src => src.Attachments.Where(a => a.OrderItemId == null).ToList());
+            .Map(dest => dest.Attachments, src => src.Attachments.Where(a => a.OrderItemId == null).ToList())
+            .Map(dest => dest.ManualProcesses, src => src.ManualProcesses)
+            .Map(dest => dest.ManualProcessDependencies, src => src.ManualProcessDependencies);
+
+        config.NewConfig<OrderManualProcess, OrderManualProcessDto>();
+        config.NewConfig<OrderManualProcessDependency, OrderManualDependencyDto>();
 
         config.NewConfig<OrderItem, OrderItemDto>()
             .Map(dest => dest.Processes, src => src.Processes)

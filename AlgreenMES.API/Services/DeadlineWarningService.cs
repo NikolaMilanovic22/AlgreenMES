@@ -49,6 +49,8 @@ public class DeadlineWarningService : BackgroundService
         var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
         var eventService = scope.ServiceProvider.GetRequiredService<IProductionEventService>();
 
+        // Background service runs without an HTTP context — no JWT, so HasQueryFilter would throw.
+        // Iterate tenants explicitly with IgnoreQueryFilters; every Where clause carries the tenant id.
         var tenants = await tenancyDb.Tenants
             .AsNoTracking()
             .Where(t => t.IsActive)
@@ -57,6 +59,7 @@ public class DeadlineWarningService : BackgroundService
         foreach (var tenant in tenants)
         {
             var settings = await tenancyDb.TenantSettings
+                .IgnoreQueryFilters()
                 .AsNoTracking()
                 .FirstOrDefaultAsync(s => s.TenantId == tenant.Id, cancellationToken);
 
@@ -64,6 +67,7 @@ public class DeadlineWarningService : BackgroundService
             var defaultCriticalDays = settings?.DefaultCriticalDays ?? 3;
 
             var activeOrders = await ordersDb.Orders
+                .IgnoreQueryFilters()
                 .AsNoTracking()
                 .Include(o => o.Items)
                     .ThenInclude(i => i.Processes)
@@ -87,6 +91,7 @@ public class DeadlineWarningService : BackgroundService
 
                 // Check if we already sent this level of notification today
                 var alreadyNotified = await ordersDb.Notifications
+                    .IgnoreQueryFilters()
                     .AnyAsync(n => n.TenantId == tenant.Id
                         && n.ReferenceType == "Order"
                         && n.ReferenceId == order.Id

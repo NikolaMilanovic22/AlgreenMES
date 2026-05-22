@@ -43,21 +43,37 @@ public class GetTabletQueueQueryHandler : IRequestHandler<GetTabletQueueQuery, I
         var specialRequestTypes = await _specialRequestTypeRepository.GetByTenantIdAsync(request.TenantId, cancellationToken);
         var srLookup = specialRequestTypes.ToDictionary(s => s.Id, s => s.Name);
 
+        // Batch-load processes + categories once instead of per-iteration N+1
+        // queries (Sentry flagged this endpoint with ~22 N+1 hits/week).
+        var prodProcessLookup = (await _processRepository.GetByIdsAsync(userProcessIds, cancellationToken))
+            .ToDictionary(p => p.Id);
+        var categoryIds = orders.SelectMany(o => o.Items).Select(i => i.ProductCategoryId).Distinct().ToList();
+        var categoryLookup = (await _categoryRepository.GetByIdsWithDetailsAsync(categoryIds, cancellationToken))
+            .ToDictionary(c => c.Id);
+
         var result = new List<ProcessGroupDto<TabletQueueItemDto>>();
 
         foreach (var processId in userProcessIds)
         {
-            var prodProcess = await _processRepository.GetByIdAsync(processId, cancellationToken);
-            if (prodProcess == null) continue;
+            if (!prodProcessLookup.TryGetValue(processId, out var prodProcess)) continue;
 
             var items = new List<TabletQueueItemDto>();
 
             foreach (var order in orders)
             {
+                // Manual processes override the category dependency graph entirely
+                // when present (item.Processes only contain the manual list, so
+                // category-driven deps would reference processes the item doesn't
+                // have and `allDepsCompleted` would always be false).
+                var manualDepsByProcess = order.HasManualProcesses
+                    ? order.ManualProcessDependencies
+                        .GroupBy(d => d.ProcessId)
+                        .ToDictionary(g => g.Key, g => g.Select(d => d.DependsOnProcessId).ToList())
+                    : null;
+
                 foreach (var item in order.Items)
                 {
-                    var category = await _categoryRepository.GetByIdWithDetailsAsync(item.ProductCategoryId, cancellationToken);
-                    var dependencies = category?.Dependencies ?? [];
+                    categoryLookup.TryGetValue(item.ProductCategoryId, out var category);
 
                     var specialRequestNames = item.SpecialRequests
                         .Select(sr => srLookup.GetValueOrDefault(sr.SpecialRequestTypeId, ""))
@@ -74,10 +90,18 @@ public class GetTabletQueueQueryHandler : IRequestHandler<GetTabletQueueQuery, I
                         if (process.Status != ProcessStatus.Pending) continue;
                         if (process.IsWithdrawn) continue;
 
-                        var processDeps = dependencies
-                            .Where(d => d.ProcessId == process.ProcessId)
-                            .Select(d => d.DependsOnProcessId)
-                            .ToList();
+                        List<Guid> processDeps;
+                        if (manualDepsByProcess is not null)
+                        {
+                            processDeps = manualDepsByProcess.GetValueOrDefault(process.ProcessId) ?? new List<Guid>();
+                        }
+                        else
+                        {
+                            processDeps = (category?.Dependencies ?? [])
+                                .Where(d => d.ProcessId == process.ProcessId)
+                                .Select(d => d.DependsOnProcessId)
+                                .ToList();
+                        }
 
                         var allDepsCompleted = processDeps.All(depProcessId =>
                             item.Processes.Any(p =>

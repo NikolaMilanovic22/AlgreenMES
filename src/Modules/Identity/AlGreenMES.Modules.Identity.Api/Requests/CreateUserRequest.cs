@@ -3,7 +3,6 @@ using AlGreenMES.Modules.Identity.Domain.Entities;
 namespace AlGreenMES.Modules.Identity.Api.Requests;
 
 public record CreateUserRequest(
-    Guid TenantId,
     string Email,
     string Password,
     string FirstName,

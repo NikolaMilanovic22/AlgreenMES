@@ -43,12 +43,19 @@ public class GetTabletActiveWorkQueryHandler : IRequestHandler<GetTabletActiveWo
         var specialRequestTypes = await _specialRequestTypeRepository.GetByTenantIdAsync(request.TenantId, cancellationToken);
         var srLookup = specialRequestTypes.ToDictionary(s => s.Id, s => s.Name);
 
+        // Batch-load processes + categories once instead of per-iteration N+1
+        // queries (Sentry flagged this endpoint with ~29 N+1 hits/week).
+        var prodProcessLookup = (await _processRepository.GetByIdsAsync(userProcessIds, cancellationToken))
+            .ToDictionary(p => p.Id);
+        var categoryIds = orders.SelectMany(o => o.Items).Select(i => i.ProductCategoryId).Distinct().ToList();
+        var categoryLookup = (await _categoryRepository.GetByIdsWithDetailsAsync(categoryIds, cancellationToken))
+            .ToDictionary(c => c.Id);
+
         var result = new List<ProcessGroupDto<TabletActiveWorkDto>>();
 
         foreach (var processId in userProcessIds)
         {
-            var prodProcess = await _processRepository.GetByIdAsync(processId, cancellationToken);
-            if (prodProcess == null) continue;
+            if (!prodProcessLookup.TryGetValue(processId, out var prodProcess)) continue;
 
             var items = new List<TabletActiveWorkDto>();
 
@@ -56,7 +63,7 @@ public class GetTabletActiveWorkQueryHandler : IRequestHandler<GetTabletActiveWo
             {
                 foreach (var item in order.Items)
                 {
-                    var category = await _categoryRepository.GetByIdWithDetailsAsync(item.ProductCategoryId, cancellationToken);
+                    categoryLookup.TryGetValue(item.ProductCategoryId, out var category);
 
                     var specialRequestNames = item.SpecialRequests
                         .Select(sr => srLookup.GetValueOrDefault(sr.SpecialRequestTypeId, ""))

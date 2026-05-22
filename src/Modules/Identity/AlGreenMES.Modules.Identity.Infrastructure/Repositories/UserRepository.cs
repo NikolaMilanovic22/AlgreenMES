@@ -29,18 +29,30 @@ public class UserRepository : IUserRepository
             .FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
     }
 
+    public async Task<User?> GetByIdIgnoreFiltersAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        // Refresh flow runs unauthenticated — bypass HasQueryFilter, caller validates tenant explicitly.
+        return await _dbContext.Users
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
+    }
+
     public async Task<User?> GetByEmailAsync(string email, Guid tenantId, CancellationToken cancellationToken = default)
     {
+        // Login runs unauthenticated (no JWT yet) — bypass HasQueryFilter and rely on the explicit tenantId.
         var normalizedEmail = email.Trim().ToLowerInvariant();
         return await _dbContext.Users
+            .IgnoreQueryFilters()
             .Include(u => u.UserProcesses)
             .FirstOrDefaultAsync(u => u.Email == normalizedEmail && u.TenantId == tenantId, cancellationToken);
     }
 
     public async Task<User?> GetByEmailWithProcessesAsync(string email, Guid tenantId, CancellationToken cancellationToken = default)
     {
+        // Login runs unauthenticated (no JWT yet) — bypass HasQueryFilter and rely on the explicit tenantId.
         var normalizedEmail = email.Trim().ToLowerInvariant();
         return await _dbContext.Users
+            .IgnoreQueryFilters()
             .Include(u => u.UserProcesses)
             .FirstOrDefaultAsync(u => u.Email == normalizedEmail && u.TenantId == tenantId, cancellationToken);
     }
@@ -86,6 +98,13 @@ public class UserRepository : IUserRepository
     public void Delete(User user)
     {
         _dbContext.Users.Remove(user);
+    }
+
+    public async Task<int> CountActiveByRoleAsync(Guid tenantId, UserRole role, CancellationToken cancellationToken = default)
+    {
+        return await _dbContext.Users
+            .Where(u => u.TenantId == tenantId && u.Role == role && u.IsActive)
+            .CountAsync(cancellationToken);
     }
 
     public async Task<PagedResult<User>> GetPagedAsync(Guid tenantId, UserRole? role, bool? isActive, string? search, DateTime? createdFrom, DateTime? createdTo, string? sortBy, bool isDescending, int page, int pageSize, CancellationToken cancellationToken = default)

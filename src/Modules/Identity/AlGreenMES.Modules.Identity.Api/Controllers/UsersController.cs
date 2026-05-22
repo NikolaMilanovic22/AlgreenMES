@@ -7,6 +7,7 @@ using AlGreenMES.Modules.Identity.Application.Commands.UpdateUser;
 using AlGreenMES.Modules.Identity.Application.Queries.GetUserById;
 using AlGreenMES.Modules.Identity.Application.Queries.GetUsers;
 using AlGreenMES.Modules.Identity.Domain.Entities;
+using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using MediatR;
@@ -21,16 +22,17 @@ namespace AlGreenMES.Modules.Identity.Api.Controllers;
 public class UsersController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly ITenantService _tenantService;
 
-    public UsersController(IMediator mediator)
+    public UsersController(IMediator mediator, ITenantService tenantService)
     {
         _mediator = mediator;
+        _tenantService = tenantService;
     }
 
     [HttpGet]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
     public async Task<IActionResult> GetUsers(
-        [FromQuery] Guid tenantId,
         [FromQuery] UserRole? role,
         [FromQuery] bool? isActive,
         [FromQuery] int page = 1,
@@ -44,7 +46,7 @@ public class UsersController : ControllerBase
     {
         var result = await _mediator.Send(new GetUsersQuery
         {
-            TenantId = tenantId,
+            TenantId = _tenantService.GetCurrentTenantId(),
             Role = role,
             IsActive = isActive,
             Page = page,
@@ -66,12 +68,12 @@ public class UsersController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "SuperAdmin,Admin")]
     public async Task<IActionResult> CreateUser([FromBody] CreateUserRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
             new CreateUserCommand(
-                request.TenantId,
+                _tenantService.GetCurrentTenantId(),
                 request.Email,
                 request.Password,
                 request.FirstName,
@@ -84,11 +86,11 @@ public class UsersController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "SuperAdmin,Admin")]
     public async Task<IActionResult> UpdateUser(Guid id, [FromBody] UpdateUserRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
-            new UpdateUserCommand(id, request.TenantId, request.FirstName, request.LastName, request.Role, request.IsActive, request.CanIncludeWithdrawnInAnalysis, request.ProcessIds),
+            new UpdateUserCommand(id, _tenantService.GetCurrentTenantId(), request.FirstName, request.LastName, request.Role, request.IsActive, request.CanIncludeWithdrawnInAnalysis, request.ProcessIds),
             cancellationToken);
 
         return Ok(result);
@@ -105,7 +107,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/reset-password")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "SuperAdmin,Admin")]
     public async Task<IActionResult> ResetPassword(Guid id, [FromBody] ResetPasswordRequest request, CancellationToken cancellationToken)
     {
         await _mediator.Send(
@@ -116,7 +118,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "SuperAdmin,Admin")]
     public async Task<IActionResult> DeleteUser(Guid id, CancellationToken cancellationToken)
     {
         var currentUserId = User.FindFirstValue(JwtRegisteredClaimNames.Sub);

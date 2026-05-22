@@ -2,6 +2,7 @@ using AlGreenMES.BuildingBlocks.Common.Exceptions;
 using AlGreenMES.Modules.Orders.Application.DTOs;
 using AlGreenMES.Modules.Orders.Application.Interfaces;
 using AlGreenMES.Modules.Orders.Domain.Repositories;
+using AlGreenMES.Modules.Production.Domain.Enums;
 using AlGreenMES.Modules.Production.Domain.Repositories;
 using Mapster;
 using MediatR;
@@ -37,12 +38,21 @@ public class AddOrderItemCommandHandler : IRequestHandler<AddOrderItemCommand, O
 
         var item = order.AddItem(request.ProductCategoryId, request.ProductName, request.Quantity, request.Notes);
 
-        // Auto-create processes and sub-processes from the product category
-        foreach (var catProcess in category.Processes.OrderBy(p => p.SequenceOrder))
-        {
-            var oip = item.AddProcess(catProcess.ProcessId, catProcess.DefaultComplexity);
+        // When the order has manual processes, those override the category list
+        // (mirrors CreateOrderCommandHandler). Otherwise fall back to category.
+        IEnumerable<(Guid ProcessId, ComplexityType? Complexity)> processSource = order.HasManualProcesses
+            ? order.ManualProcesses
+                .OrderBy(p => p.SequenceOrder)
+                .Select(p => (p.ProcessId, p.DefaultComplexity))
+            : category.Processes
+                .OrderBy(p => p.SequenceOrder)
+                .Select(p => (p.ProcessId, p.DefaultComplexity));
 
-            var process = await _processRepository.GetByIdWithSubProcessesAsync(catProcess.ProcessId, cancellationToken);
+        foreach (var (processId, complexity) in processSource)
+        {
+            var oip = item.AddProcess(processId, complexity);
+
+            var process = await _processRepository.GetByIdWithSubProcessesAsync(processId, cancellationToken);
             if (process?.SubProcesses != null)
             {
                 foreach (var sub in process.SubProcesses.OrderBy(s => s.SequenceOrder))

@@ -65,6 +65,9 @@ namespace AlGreenMES.Modules.Identity.Infrastructure.Migrations
                         .IsUnique()
                         .HasDatabaseName("ix_refresh_tokens_token");
 
+                    b.HasIndex("UserId")
+                        .HasDatabaseName("ix_refresh_tokens_user_id");
+
                     b.ToTable("refresh_tokens", "identity");
                 });
 
@@ -232,6 +235,16 @@ namespace AlGreenMES.Modules.Identity.Infrastructure.Migrations
                         .HasDatabaseName("ix_user_processes_user_id_process_id");
 
                     b.ToTable("user_processes", "identity");
+                });
+
+            modelBuilder.Entity("AlGreenMES.Modules.Identity.Domain.Entities.RefreshToken", b =>
+                {
+                    b.HasOne("AlGreenMES.Modules.Identity.Domain.Entities.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_refresh_tokens_users_user_id");
                 });
 
             modelBuilder.Entity("AlGreenMES.Modules.Identity.Domain.Entities.UserProcess", b =>

@@ -1,13 +1,12 @@
 namespace AlGreenMES.Modules.Orders.Application.DTOs.Reports;
 
-public record TimeTrackingReportDto(
-    List<TimeTrackingItemDto> Items,
-    TimeTrackingSummaryDto Summary);
+public record TimeTrackingReportDto(List<TimeTrackingItemDto> Items);
 
 public record TimeTrackingItemDto(
     Guid OrderItemProcessId,
     string OrderNumber,
-    string ProductName,
+    string ProductCategoryName,
+    string OrderType,
     Guid ProcessId,
     string ProcessCode,
     string ProcessName,
@@ -15,11 +14,10 @@ public record TimeTrackingItemDto(
     string Status,
     DateTime? StartedAt,
     DateTime? CompletedAt,
-    int TotalDurationMinutes);
+    int DurationSeconds,
+    List<SubProcessTimeDto> SubProcesses);
 
-public record TimeTrackingSummaryDto(
-    int TotalRecords,
-    double AvgDurationMinutes,
-    int TotalDurationMinutes,
-    int MinDurationMinutes,
-    int MaxDurationMinutes);
+public record SubProcessTimeDto(
+    Guid SubProcessId,
+    string Name,
+    int DurationSeconds);

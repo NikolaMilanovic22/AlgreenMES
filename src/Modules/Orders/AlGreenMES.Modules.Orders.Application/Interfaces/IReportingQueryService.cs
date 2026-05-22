@@ -1,11 +1,18 @@
 using AlGreenMES.Modules.Orders.Application.DTOs.Reports;
+using AlGreenMES.Modules.Orders.Domain.Enums;
 using AlGreenMES.Modules.Production.Domain.Enums;
 
 namespace AlGreenMES.Modules.Orders.Application.Interfaces;
 
 public interface IReportingQueryService
 {
-    Task<ProcessAveragesDto> GetProcessAveragesAsync(Guid tenantId, CancellationToken cancellationToken = default);
+    Task<ProcessTimesDto> GetProcessTimesAsync(
+        Guid tenantId,
+        DateTime? from,
+        DateTime? to,
+        List<Guid>? productCategoryIds,
+        List<OrderType>? orderTypes,
+        CancellationToken cancellationToken = default);
 
     Task<TimeTrackingReportDto> GetTimeTrackingReportAsync(
         Guid tenantId,
@@ -13,6 +20,9 @@ public interface IReportingQueryService
         DateTime? to,
         Guid? processId,
         ComplexityType? complexity,
+        string? orderNumber,
+        List<Guid>? productCategoryIds,
+        List<OrderType>? orderTypes,
         CancellationToken cancellationToken = default);
 
     Task<WorkerHoursReportDto> GetWorkerHoursReportAsync(

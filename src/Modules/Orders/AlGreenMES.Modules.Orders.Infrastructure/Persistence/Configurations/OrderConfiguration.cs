@@ -61,5 +61,21 @@ public class OrderConfiguration : IEntityTypeConfiguration<Order>
 
         builder.Metadata.FindNavigation(nameof(Order.Attachments))!
             .SetPropertyAccessMode(PropertyAccessMode.Field);
+
+        builder.HasMany(o => o.ManualProcesses)
+            .WithOne()
+            .HasForeignKey(p => p.OrderId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.Metadata.FindNavigation(nameof(Order.ManualProcesses))!
+            .SetPropertyAccessMode(PropertyAccessMode.Field);
+
+        builder.HasMany(o => o.ManualProcessDependencies)
+            .WithOne()
+            .HasForeignKey(d => d.OrderId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.Metadata.FindNavigation(nameof(Order.ManualProcessDependencies))!
+            .SetPropertyAccessMode(PropertyAccessMode.Field);
     }
 }

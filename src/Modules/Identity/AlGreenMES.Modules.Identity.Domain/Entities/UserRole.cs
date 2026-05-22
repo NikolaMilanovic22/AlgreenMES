@@ -6,5 +6,6 @@ public enum UserRole
     Manager,
     Coordinator,
     SalesManager,
-    Department
+    Department,
+    SuperAdmin
 }

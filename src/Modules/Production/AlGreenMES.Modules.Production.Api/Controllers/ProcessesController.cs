@@ -36,7 +36,6 @@ public class ProcessesController : ControllerBase
 
     [HttpGet]
     public async Task<IActionResult> GetProcesses(
-        [FromQuery] Guid tenantId,
         [FromQuery] bool? isActive,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
@@ -49,7 +48,7 @@ public class ProcessesController : ControllerBase
     {
         var result = await _mediator.Send(new GetProcessesQuery
         {
-            TenantId = tenantId,
+            TenantId = _tenantService.GetCurrentTenantId(),
             IsActive = isActive,
             Page = page,
             PageSize = pageSize,
@@ -70,12 +69,12 @@ public class ProcessesController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
     public async Task<IActionResult> CreateProcess([FromBody] CreateProcessRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
             new CreateProcessCommand(
-                request.TenantId, request.Code, request.Name, request.SequenceOrder, null,
+                _tenantService.GetCurrentTenantId(), request.Code, request.Name, request.SequenceOrder, null,
                 request.SubProcesses?.Select(s => new CreateProcessSubProcessItem(s.Name, s.SequenceOrder)).ToList()),
             cancellationToken);
         await NotifyChangeAsync(cancellationToken);
@@ -83,7 +82,7 @@ public class ProcessesController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
     public async Task<IActionResult> UpdateProcess(Guid id, [FromBody] UpdateProcessRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -97,7 +96,7 @@ public class ProcessesController : ControllerBase
     }
 
     [HttpPost("reorder")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
     public async Task<IActionResult> ReorderProcesses([FromBody] ReorderProcessesRequest request, CancellationToken cancellationToken)
     {
         await _mediator.Send(new ReorderProcessesCommand(
@@ -108,7 +107,7 @@ public class ProcessesController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "SuperAdmin,Admin")]
     public async Task<IActionResult> DeleteProcess(Guid id, [FromQuery] bool forceDeactivate = false, [FromQuery] bool forceDelete = false, CancellationToken cancellationToken = default)
     {
         var result = await _mediator.Send(new DeleteProcessCommand(id, forceDeactivate, forceDelete), cancellationToken);
@@ -119,7 +118,7 @@ public class ProcessesController : ControllerBase
     }
 
     [HttpPost("{id:guid}/activate")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "SuperAdmin,Admin")]
     public async Task<IActionResult> ActivateProcess(Guid id, CancellationToken cancellationToken)
     {
         await _mediator.Send(new ActivateProcessCommand(id), cancellationToken);
@@ -128,7 +127,7 @@ public class ProcessesController : ControllerBase
     }
 
     [HttpPost("{processId:guid}/sub-processes")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
     public async Task<IActionResult> AddSubProcess(Guid processId, [FromBody] AddSubProcessRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -139,7 +138,7 @@ public class ProcessesController : ControllerBase
     }
 
     [HttpPut("{processId:guid}/sub-processes/{subProcessId:guid}")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
     public async Task<IActionResult> UpdateSubProcess(Guid processId, Guid subProcessId, [FromBody] UpdateSubProcessRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -150,7 +149,7 @@ public class ProcessesController : ControllerBase
     }
 
     [HttpPost("{processId:guid}/sub-processes/reorder")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
     public async Task<IActionResult> ReorderSubProcesses(Guid processId, [FromBody] ReorderSubProcessesRequest request, CancellationToken cancellationToken)
     {
         await _mediator.Send(new ReorderSubProcessesCommand(
@@ -162,7 +161,7 @@ public class ProcessesController : ControllerBase
     }
 
     [HttpDelete("{processId:guid}/sub-processes/{subProcessId:guid}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "SuperAdmin,Admin")]
     public async Task<IActionResult> DeactivateSubProcess(Guid processId, Guid subProcessId, CancellationToken cancellationToken)
     {
         await _mediator.Send(new DeactivateSubProcessCommand(processId, subProcessId), cancellationToken);
@@ -172,8 +171,8 @@ public class ProcessesController : ControllerBase
 
     private Task NotifyChangeAsync(CancellationToken cancellationToken)
     {
-        var tenantId = _tenantService.GetCurrentTenantId();
-        if (tenantId == Guid.Empty) return Task.CompletedTask;
-        return _processChangeNotifier.NotifyProcessDefinitionChangedAsync(tenantId, cancellationToken);
+        // ITenantService now throws on missing JWT, so the caller is always authenticated here.
+        return _processChangeNotifier.NotifyProcessDefinitionChangedAsync(
+            _tenantService.GetCurrentTenantId(), cancellationToken);
     }
 }

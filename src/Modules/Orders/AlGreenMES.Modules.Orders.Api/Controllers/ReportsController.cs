@@ -1,6 +1,7 @@
-using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetProcessAverages;
+using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetProcessTimes;
 using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetTimeTracking;
 using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetWorkerHours;
+using AlGreenMES.Modules.Orders.Domain.Enums;
 using AlGreenMES.Modules.Production.Domain.Enums;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
@@ -20,12 +21,18 @@ public class ReportsController : ControllerBase
         _mediator = mediator;
     }
 
-    [HttpGet("process-averages")]
-    public async Task<IActionResult> GetProcessAverages(
+    [HttpGet("process-times")]
+    public async Task<IActionResult> GetProcessTimes(
         [FromQuery] Guid tenantId,
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        [FromQuery] List<Guid>? productCategoryIds,
+        [FromQuery] List<OrderType>? orderTypes,
         CancellationToken cancellationToken)
     {
-        var result = await _mediator.Send(new GetProcessAveragesQuery(tenantId), cancellationToken);
+        var result = await _mediator.Send(
+            new GetProcessTimesQuery(tenantId, from, to, productCategoryIds, orderTypes),
+            cancellationToken);
         return Ok(result);
     }
 
@@ -36,10 +43,13 @@ public class ReportsController : ControllerBase
         [FromQuery] DateTime? to,
         [FromQuery] Guid? processId,
         [FromQuery] ComplexityType? complexity,
+        [FromQuery] string? orderNumber,
+        [FromQuery] List<Guid>? productCategoryIds,
+        [FromQuery] List<OrderType>? orderTypes,
         CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
-            new GetTimeTrackingQuery(tenantId, from, to, processId, complexity),
+            new GetTimeTrackingQuery(tenantId, from, to, processId, complexity, orderNumber, productCategoryIds, orderTypes),
             cancellationToken);
         return Ok(result);
     }

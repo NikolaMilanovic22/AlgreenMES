@@ -16,7 +16,10 @@ public class RefreshTokenRepository : IRefreshTokenRepository
 
     public async Task<RefreshToken?> GetByTokenAsync(string token, CancellationToken cancellationToken = default)
     {
+        // Refresh runs unauthenticated (the access token is expired) — bypass HasQueryFilter.
+        // Caller must validate that the resolved token's TenantId matches the user it issues for.
         return await _dbContext.RefreshTokens
+            .IgnoreQueryFilters()
             .FirstOrDefaultAsync(r => r.Token == token, cancellationToken);
     }
 

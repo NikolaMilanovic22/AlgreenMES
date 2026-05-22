@@ -2,6 +2,7 @@ using AlGreenMES.Modules.Orders.Api.Requests;
 using AlGreenMES.Modules.Orders.Application.Commands.CheckIn;
 using AlGreenMES.Modules.Orders.Application.Commands.CheckOut;
 using AlGreenMES.Modules.Orders.Application.Queries.GetWorkSessions;
+using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -14,15 +15,16 @@ namespace AlGreenMES.Modules.Orders.Api.Controllers;
 public class WorkSessionsController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly ITenantService _tenantService;
 
-    public WorkSessionsController(IMediator mediator)
+    public WorkSessionsController(IMediator mediator, ITenantService tenantService)
     {
         _mediator = mediator;
+        _tenantService = tenantService;
     }
 
     [HttpGet]
     public async Task<IActionResult> GetWorkSessions(
-        [FromQuery] Guid tenantId,
         [FromQuery] DateOnly date,
         [FromQuery] Guid? userId,
         [FromQuery] int page = 1,
@@ -31,7 +33,7 @@ public class WorkSessionsController : ControllerBase
     {
         var result = await _mediator.Send(new GetWorkSessionsQuery
         {
-            TenantId = tenantId,
+            TenantId = _tenantService.GetCurrentTenantId(),
             Date = date,
             UserId = userId,
             Page = page,
@@ -44,7 +46,7 @@ public class WorkSessionsController : ControllerBase
     public async Task<IActionResult> CheckIn([FromBody] CheckInRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
-            new CheckInCommand(request.TenantId, request.UserId),
+            new CheckInCommand(_tenantService.GetCurrentTenantId(), request.UserId),
             cancellationToken);
         return Ok(result);
     }

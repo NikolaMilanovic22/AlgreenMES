@@ -2,6 +2,7 @@ using AlGreenMES.Modules.Identity.Api.Requests;
 using AlGreenMES.Modules.Identity.Application.Commands.CreateShift;
 using AlGreenMES.Modules.Identity.Application.Commands.UpdateShift;
 using AlGreenMES.Modules.Identity.Application.Queries.GetShifts;
+using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -14,15 +15,16 @@ namespace AlGreenMES.Modules.Identity.Api.Controllers;
 public class ShiftsController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly ITenantService _tenantService;
 
-    public ShiftsController(IMediator mediator)
+    public ShiftsController(IMediator mediator, ITenantService tenantService)
     {
         _mediator = mediator;
+        _tenantService = tenantService;
     }
 
     [HttpGet]
     public async Task<IActionResult> GetShifts(
-        [FromQuery] Guid tenantId,
         [FromQuery] bool? isActive,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
@@ -35,7 +37,7 @@ public class ShiftsController : ControllerBase
     {
         var result = await _mediator.Send(new GetShiftsQuery
         {
-            TenantId = tenantId,
+            TenantId = _tenantService.GetCurrentTenantId(),
             IsActive = isActive,
             Page = page,
             PageSize = pageSize,
@@ -49,18 +51,18 @@ public class ShiftsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
     public async Task<IActionResult> CreateShift([FromBody] CreateShiftRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
-            new CreateShiftCommand(request.TenantId, request.Name, request.StartTime, request.EndTime),
+            new CreateShiftCommand(_tenantService.GetCurrentTenantId(), request.Name, request.StartTime, request.EndTime),
             cancellationToken);
 
         return Created($"/api/shifts/{result.Id}", result);
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
     public async Task<IActionResult> UpdateShift(Guid id, [FromBody] UpdateShiftRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(

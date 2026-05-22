@@ -54,10 +54,15 @@ public class GetTabletIncomingQueryHandler : IRequestHandler<GetTabletIncomingQu
 
             foreach (var order in orders)
             {
+                var manualDepsByProcess = order.HasManualProcesses
+                    ? order.ManualProcessDependencies
+                        .GroupBy(d => d.ProcessId)
+                        .ToDictionary(g => g.Key, g => g.Select(d => d.DependsOnProcessId).ToList())
+                    : null;
+
                 foreach (var item in order.Items)
                 {
                     var category = await _categoryRepository.GetByIdWithDetailsAsync(item.ProductCategoryId, cancellationToken);
-                    var dependencies = category?.Dependencies ?? [];
 
                     var specialRequestNames = item.SpecialRequests
                         .Select(sr => srLookup.GetValueOrDefault(sr.SpecialRequestTypeId, ""))
@@ -74,10 +79,18 @@ public class GetTabletIncomingQueryHandler : IRequestHandler<GetTabletIncomingQu
                         if (process.Status != ProcessStatus.Pending) continue;
                         if (process.IsWithdrawn) continue;
 
-                        var processDeps = dependencies
-                            .Where(d => d.ProcessId == process.ProcessId)
-                            .Select(d => d.DependsOnProcessId)
-                            .ToList();
+                        List<Guid> processDeps;
+                        if (manualDepsByProcess is not null)
+                        {
+                            processDeps = manualDepsByProcess.GetValueOrDefault(process.ProcessId) ?? new List<Guid>();
+                        }
+                        else
+                        {
+                            processDeps = (category?.Dependencies ?? [])
+                                .Where(d => d.ProcessId == process.ProcessId)
+                                .Select(d => d.DependsOnProcessId)
+                                .ToList();
+                        }
 
                         var blockingProcesses = new List<BlockingProcessDto>();
                         foreach (var depProcessId in processDeps)

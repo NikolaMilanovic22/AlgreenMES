@@ -1,4 +1,5 @@
 using AlGreenMES.Modules.Orders.Application.Interfaces;
+using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -10,10 +11,12 @@ namespace AlGreenMES.Modules.Orders.Api.Controllers;
 public class PushController : ControllerBase
 {
     private readonly IWebPushService _webPushService;
+    private readonly ITenantService _tenantService;
 
-    public PushController(IWebPushService webPushService)
+    public PushController(IWebPushService webPushService, ITenantService tenantService)
     {
         _webPushService = webPushService;
+        _tenantService = tenantService;
     }
 
     [HttpGet("vapid-public-key")]
@@ -26,7 +29,7 @@ public class PushController : ControllerBase
     public async Task<IActionResult> Subscribe([FromBody] SubscribeRequest request, CancellationToken cancellationToken)
     {
         await _webPushService.SubscribeAsync(
-            request.TenantId,
+            _tenantService.GetCurrentTenantId(),
             request.UserId,
             request.Endpoint,
             request.P256dhKey,
@@ -45,7 +48,6 @@ public class PushController : ControllerBase
 }
 
 public record SubscribeRequest(
-    Guid TenantId,
     Guid UserId,
     string Endpoint,
     string P256dhKey,

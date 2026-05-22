@@ -9,6 +9,7 @@ public record GetOrdersMasterViewQuery : PagedQuery<PagedResult<OrderMasterViewD
     public Guid TenantId { get; init; }
     public OrderStatus? Status { get; init; }
     public OrderType? OrderType { get; init; }
+    public bool? IsInvoiced { get; init; }
     public DateTime? DateFrom { get; init; }
     public DateTime? DateTo { get; init; }
 }

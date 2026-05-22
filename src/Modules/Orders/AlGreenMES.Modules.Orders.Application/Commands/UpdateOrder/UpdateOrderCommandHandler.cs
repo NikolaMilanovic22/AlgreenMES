@@ -3,6 +3,7 @@ using AlGreenMES.Modules.Orders.Application.DTOs;
 using AlGreenMES.Modules.Orders.Application.Interfaces;
 using AlGreenMES.Modules.Orders.Domain.Enums;
 using AlGreenMES.Modules.Orders.Domain.Repositories;
+using AlGreenMES.Modules.Production.Domain.Enums;
 using AlGreenMES.Modules.Production.Domain.Repositories;
 using Mapster;
 using MediatR;
@@ -58,11 +59,24 @@ public class UpdateOrderCommandHandler : IRequestHandler<UpdateOrderCommand, Ord
 
                 var item = order.AddItem(itemInput.ProductCategoryId, itemInput.ProductName, itemInput.Quantity, itemInput.Notes);
 
-                foreach (var catProcess in category.Processes.OrderBy(p => p.SequenceOrder))
-                {
-                    var oip = item.AddProcess(catProcess.ProcessId, catProcess.DefaultComplexity);
+                // Mirror CreateOrder/AddOrderItem: when the order has manual
+                // processes, those override the category list for new items.
+                // Without this, adding an item via the drawer's "Dodaj stavku"
+                // (which posts UpdateOrder with AddItems) silently bypassed the
+                // manual list and the new item got the full category processes.
+                IEnumerable<(Guid ProcessId, ComplexityType? Complexity)> processSource = order.HasManualProcesses
+                    ? order.ManualProcesses
+                        .OrderBy(p => p.SequenceOrder)
+                        .Select(p => (p.ProcessId, p.DefaultComplexity))
+                    : category.Processes
+                        .OrderBy(p => p.SequenceOrder)
+                        .Select(p => (p.ProcessId, p.DefaultComplexity));
 
-                    var process = await _processRepository.GetByIdWithSubProcessesAsync(catProcess.ProcessId, cancellationToken);
+                foreach (var (processId, complexity) in processSource)
+                {
+                    var oip = item.AddProcess(processId, complexity);
+
+                    var process = await _processRepository.GetByIdWithSubProcessesAsync(processId, cancellationToken);
                     if (process?.SubProcesses != null)
                     {
                         foreach (var sub in process.SubProcesses.Where(s => s.IsActive).OrderBy(s => s.SequenceOrder))

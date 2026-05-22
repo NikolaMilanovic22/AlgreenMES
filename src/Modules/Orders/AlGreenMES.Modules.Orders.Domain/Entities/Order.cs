@@ -1,6 +1,7 @@
 using AlGreenMES.BuildingBlocks.Common.Entities;
 using AlGreenMES.BuildingBlocks.Common.Exceptions;
 using AlGreenMES.Modules.Orders.Domain.Enums;
+using AlGreenMES.Modules.Production.Domain.Enums;
 
 namespace AlGreenMES.Modules.Orders.Domain.Entities;
 
@@ -22,6 +23,17 @@ public class Order : AuditableEntity
 
     private readonly List<OrderAttachment> _attachments = new();
     public IReadOnlyCollection<OrderAttachment> Attachments => _attachments.AsReadOnly();
+
+    // Manual processes — used when the order's OrderType has AllowsManualProcesses=true.
+    // Their presence overrides the per-item product-category processes at item-creation
+    // time (CreateOrderCommandHandler).
+    private readonly List<OrderManualProcess> _manualProcesses = new();
+    public IReadOnlyCollection<OrderManualProcess> ManualProcesses => _manualProcesses.AsReadOnly();
+
+    private readonly List<OrderManualProcessDependency> _manualProcessDependencies = new();
+    public IReadOnlyCollection<OrderManualProcessDependency> ManualProcessDependencies => _manualProcessDependencies.AsReadOnly();
+
+    public bool HasManualProcesses => _manualProcesses.Count > 0;
 
     private Order()
     {
@@ -71,6 +83,60 @@ public class Order : AuditableEntity
         var item = _items.FirstOrDefault(i => i.Id == itemId)
             ?? throw new NotFoundException("OrderItem", itemId);
         _items.Remove(item);
+    }
+
+    public void AddManualProcess(Guid processId, int sequenceOrder, ComplexityType? defaultComplexity)
+    {
+        if (Status != OrderStatus.Draft)
+            throw new DomainException("ORDER_NOT_DRAFT", "Manual processes can only be configured on draft orders.");
+        if (_manualProcesses.Any(p => p.ProcessId == processId))
+            throw new DomainException("DUPLICATE_PROCESS", "This process is already added.");
+
+        _manualProcesses.Add(OrderManualProcess.Create(TenantId, Id, processId, sequenceOrder, defaultComplexity));
+    }
+
+    public void AddManualDependency(Guid processId, Guid dependsOnProcessId)
+    {
+        if (Status != OrderStatus.Draft)
+            throw new DomainException("ORDER_NOT_DRAFT", "Manual dependencies can only be configured on draft orders.");
+        if (!_manualProcesses.Any(p => p.ProcessId == processId))
+            throw new DomainException("PROCESS_NOT_IN_ORDER", "Process is not part of the order's manual processes.");
+        if (!_manualProcesses.Any(p => p.ProcessId == dependsOnProcessId))
+            throw new DomainException("PROCESS_NOT_IN_ORDER", "Dependency target is not part of the order's manual processes.");
+        if (_manualProcessDependencies.Any(d => d.ProcessId == processId && d.DependsOnProcessId == dependsOnProcessId))
+            throw new DomainException("DUPLICATE_DEPENDENCY", "This dependency already exists.");
+        if (WouldCreateCycle(processId, dependsOnProcessId))
+            throw new DomainException("CIRCULAR_DEPENDENCY", "This would create a circular dependency.");
+
+        _manualProcessDependencies.Add(OrderManualProcessDependency.Create(TenantId, Id, processId, dependsOnProcessId));
+    }
+
+    /// <summary>BFS forward through existing edges from <paramref name="dependsOnProcessId"/> —
+    /// if we can reach <paramref name="processId"/>, adding the new edge would close the loop.</summary>
+    private bool WouldCreateCycle(Guid processId, Guid dependsOnProcessId)
+    {
+        var visited = new HashSet<Guid>();
+        var queue = new Queue<Guid>();
+        queue.Enqueue(dependsOnProcessId);
+
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+            if (current == processId) return true;
+            if (!visited.Add(current)) continue;
+
+            foreach (var dep in _manualProcessDependencies.Where(d => d.ProcessId == current))
+                queue.Enqueue(dep.DependsOnProcessId);
+        }
+        return false;
+    }
+
+    public void ClearManualProcesses()
+    {
+        if (Status != OrderStatus.Draft)
+            throw new DomainException("ORDER_NOT_DRAFT", "Manual processes can only be modified on draft orders.");
+        _manualProcessDependencies.Clear();
+        _manualProcesses.Clear();
     }
 
     public void Activate()

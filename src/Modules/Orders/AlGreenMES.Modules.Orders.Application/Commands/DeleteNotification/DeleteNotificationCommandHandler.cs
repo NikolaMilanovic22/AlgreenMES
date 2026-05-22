@@ -19,7 +19,8 @@ public class DeleteNotificationCommandHandler : IRequestHandler<DeleteNotificati
     public async Task<Unit> Handle(DeleteNotificationCommand request, CancellationToken cancellationToken)
     {
         var notification = await _notificationRepository.GetByIdAsync(request.Id, cancellationToken);
-        if (notification == null)
+        // Treat foreign-user notifications as missing — never leak existence to a non-owner.
+        if (notification == null || notification.UserId != request.UserId)
             throw new NotFoundException("Notification", request.Id);
 
         _notificationRepository.Delete(notification);

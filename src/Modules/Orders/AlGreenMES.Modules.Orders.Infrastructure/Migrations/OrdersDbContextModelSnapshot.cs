@@ -501,6 +501,10 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("paused_at");
 
+                    b.Property<DateTime?>("PausedByStationAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("paused_by_station_at");
+
                     b.Property<Guid>("ProcessId")
                         .HasColumnType("uuid")
                         .HasColumnName("process_id");
@@ -629,6 +633,10 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("order_item_process_id");
 
+                    b.Property<DateTime?>("PausedByStationAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("paused_by_station_at");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -727,6 +735,172 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Migrations
                         .HasDatabaseName("ix_order_item_sub_process_logs_user_id");
 
                     b.ToTable("order_item_sub_process_logs", "orders");
+                });
+
+            modelBuilder.Entity("AlGreenMES.Modules.Orders.Domain.Entities.OrderManualProcess", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by_user_id");
+
+                    b.Property<string>("DefaultComplexity")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("default_complexity");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<Guid>("ProcessId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("process_id");
+
+                    b.Property<int>("SequenceOrder")
+                        .HasColumnType("integer")
+                        .HasColumnName("sequence_order");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by_user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_order_manual_processes");
+
+                    b.HasIndex("OrderId")
+                        .HasDatabaseName("ix_order_manual_processes_order_id");
+
+                    b.HasIndex("OrderId", "ProcessId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_order_manual_processes_order_id_process_id");
+
+                    b.ToTable("order_manual_processes", "orders");
+                });
+
+            modelBuilder.Entity("AlGreenMES.Modules.Orders.Domain.Entities.OrderManualProcessDependency", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by_user_id");
+
+                    b.Property<Guid>("DependsOnProcessId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("depends_on_process_id");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<Guid>("ProcessId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("process_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by_user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_order_manual_process_dependencies");
+
+                    b.HasIndex("OrderId")
+                        .HasDatabaseName("ix_order_manual_process_dependencies_order_id");
+
+                    b.HasIndex("OrderId", "ProcessId", "DependsOnProcessId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_order_manual_process_dependencies_order_id_process_id_depen");
+
+                    b.ToTable("order_manual_process_dependencies", "orders");
+                });
+
+            modelBuilder.Entity("AlGreenMES.Modules.Orders.Domain.Entities.OrderTypes.OrderType", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("AllowsManualProcesses")
+                        .HasColumnType("boolean")
+                        .HasColumnName("allows_manual_processes");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("code");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by_user_id");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_active");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("name");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by_user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_order_types");
+
+                    b.HasIndex("TenantId", "Code")
+                        .IsUnique()
+                        .HasDatabaseName("ix_order_types_tenant_id_code");
+
+                    b.ToTable("order_types", "orders");
                 });
 
             modelBuilder.Entity("AlGreenMES.Modules.Orders.Domain.Entities.PushSubscription", b =>
@@ -945,11 +1119,35 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Migrations
                     b.Navigation("OrderItemSubProcess");
                 });
 
+            modelBuilder.Entity("AlGreenMES.Modules.Orders.Domain.Entities.OrderManualProcess", b =>
+                {
+                    b.HasOne("AlGreenMES.Modules.Orders.Domain.Entities.Order", null)
+                        .WithMany("ManualProcesses")
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_order_manual_processes_orders_order_id");
+                });
+
+            modelBuilder.Entity("AlGreenMES.Modules.Orders.Domain.Entities.OrderManualProcessDependency", b =>
+                {
+                    b.HasOne("AlGreenMES.Modules.Orders.Domain.Entities.Order", null)
+                        .WithMany("ManualProcessDependencies")
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_order_manual_process_dependencies_orders_order_id");
+                });
+
             modelBuilder.Entity("AlGreenMES.Modules.Orders.Domain.Entities.Order", b =>
                 {
                     b.Navigation("Attachments");
 
                     b.Navigation("Items");
+
+                    b.Navigation("ManualProcessDependencies");
+
+                    b.Navigation("ManualProcesses");
                 });
 
             modelBuilder.Entity("AlGreenMES.Modules.Orders.Domain.Entities.OrderItem", b =>

@@ -5,6 +5,7 @@ using AlGreenMES.Modules.Orders.Application.Commands.RejectChangeRequest;
 using AlGreenMES.Modules.Orders.Application.Queries.GetChangeRequests;
 using AlGreenMES.Modules.Orders.Application.Queries.GetMyChangeRequests;
 using AlGreenMES.Modules.Orders.Domain.Enums;
+using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -17,15 +18,16 @@ namespace AlGreenMES.Modules.Orders.Api.Controllers;
 public class ChangeRequestsController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly ITenantService _tenantService;
 
-    public ChangeRequestsController(IMediator mediator)
+    public ChangeRequestsController(IMediator mediator, ITenantService tenantService)
     {
         _mediator = mediator;
+        _tenantService = tenantService;
     }
 
     [HttpGet]
     public async Task<IActionResult> GetChangeRequests(
-        [FromQuery] Guid tenantId,
         [FromQuery] RequestStatus? status,
         [FromQuery] ChangeRequestType? requestType,
         [FromQuery] Guid? orderId,
@@ -40,7 +42,7 @@ public class ChangeRequestsController : ControllerBase
     {
         var result = await _mediator.Send(new GetChangeRequestsQuery
         {
-            TenantId = tenantId,
+            TenantId = _tenantService.GetCurrentTenantId(),
             Status = status,
             RequestType = requestType,
             OrderId = orderId,
@@ -57,7 +59,6 @@ public class ChangeRequestsController : ControllerBase
 
     [HttpGet("my")]
     public async Task<IActionResult> GetMyChangeRequests(
-        [FromQuery] Guid tenantId,
         [FromQuery] Guid userId,
         [FromQuery] RequestStatus? status,
         [FromQuery] int page = 1,
@@ -67,7 +68,7 @@ public class ChangeRequestsController : ControllerBase
     {
         var result = await _mediator.Send(new GetMyChangeRequestsQuery
         {
-            TenantId = tenantId,
+            TenantId = _tenantService.GetCurrentTenantId(),
             UserId = userId,
             Status = status,
             Page = page,
@@ -78,17 +79,17 @@ public class ChangeRequestsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin,Manager,SalesManager")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager")]
     public async Task<IActionResult> CreateChangeRequest([FromBody] CreateChangeRequestRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
-            new CreateChangeRequestCommand(request.TenantId, request.OrderId, request.RequestedByUserId, request.RequestType, request.Description),
+            new CreateChangeRequestCommand(_tenantService.GetCurrentTenantId(), request.OrderId, request.RequestedByUserId, request.RequestType, request.Description),
             cancellationToken);
         return CreatedAtAction(nameof(GetChangeRequests), result);
     }
 
     [HttpPost("{id:guid}/approve")]
-    [Authorize(Roles = "Admin,Manager,Coordinator")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator")]
     public async Task<IActionResult> ApproveChangeRequest(Guid id, [FromBody] HandleChangeRequestRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -98,7 +99,7 @@ public class ChangeRequestsController : ControllerBase
     }
 
     [HttpPost("{id:guid}/reject")]
-    [Authorize(Roles = "Admin,Manager,Coordinator")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator")]
     public async Task<IActionResult> RejectChangeRequest(Guid id, [FromBody] HandleChangeRequestRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(

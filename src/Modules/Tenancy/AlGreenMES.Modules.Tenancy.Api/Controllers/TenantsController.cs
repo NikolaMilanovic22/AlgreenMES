@@ -6,12 +6,14 @@ using AlGreenMES.Modules.Tenancy.Application.Queries.GetTenantById;
 using AlGreenMES.Modules.Tenancy.Application.Queries.GetTenants;
 using AlGreenMES.Modules.Tenancy.Application.Queries.GetTenantSettings;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AlGreenMES.Modules.Tenancy.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize(Policy = "RequireSuperAdmin")]
 public class TenantsController : ControllerBase
 {
     private readonly IMediator _mediator;

@@ -20,6 +20,14 @@ public class OrderItemSubProcess : TenantEntity
     public DateTime CreatedAt { get; private set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; private set; }
 
+    /// <summary>
+    /// When set, this sub-process was paused by a tablet-station logout
+    /// (its open log was closed in PauseStation). Next ResumeStation call
+    /// should auto-resume it (StartLog). Null means manually paused or
+    /// never running — must not auto-resume.
+    /// </summary>
+    public DateTime? PausedByStationAt { get; private set; }
+
     public OrderItemProcess OrderItemProcess { get; private set; } = null!;
 
     private readonly List<OrderItemSubProcessLog> _logs = new();
@@ -99,7 +107,19 @@ public class OrderItemSubProcess : TenantEntity
 
         var log = OrderItemSubProcessLog.Start(TenantId, Id, userId);
         _logs.Add(log);
+        PausedByStationAt = null; // started — no longer eligible for auto-resume
+        UpdatedAt = DateTime.UtcNow;
         return log;
+    }
+
+    /// <summary>
+    /// Mark this sub-process as paused by a tablet-station logout so the
+    /// next ResumeStation call can auto-restart its log.
+    /// </summary>
+    public void PauseByStation()
+    {
+        PausedByStationAt = DateTime.UtcNow;
+        UpdatedAt = DateTime.UtcNow;
     }
 
     public OrderItemSubProcessLog? GetOpenLog()

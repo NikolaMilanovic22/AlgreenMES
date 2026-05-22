@@ -26,6 +26,8 @@ public class OrderRepository : IOrderRepository
     {
         return await _dbContext.Orders
             .Include(o => o.Items)
+            .Include(o => o.ManualProcesses)
+            .Include(o => o.ManualProcessDependencies)
             .FirstOrDefaultAsync(o => o.Id == id, cancellationToken);
     }
 
@@ -38,6 +40,8 @@ public class OrderRepository : IOrderRepository
                         .ThenInclude(sp => sp.Logs)
             .Include(o => o.Items)
                 .ThenInclude(i => i.SpecialRequests)
+            .Include(o => o.ManualProcesses)
+            .Include(o => o.ManualProcessDependencies)
             .FirstOrDefaultAsync(o => o.Id == id, cancellationToken);
     }
 
@@ -68,13 +72,20 @@ public class OrderRepository : IOrderRepository
 
     public async Task<IReadOnlyList<Order>> GetActiveOrdersWithProcessesAsync(Guid tenantId, CancellationToken cancellationToken = default)
     {
+        // AsSplitQuery() — same rationale as GetPagedWithProcessesAsync.
+        // Tablet /active and /queue endpoints walk this graph; without
+        // splitting the JOIN cardinality blows up across SubProcesses × Logs
+        // × SpecialRequests.
         return await _dbContext.Orders
+            .AsSplitQuery()
             .Include(o => o.Items)
                 .ThenInclude(i => i.Processes)
                     .ThenInclude(p => p.SubProcesses)
                         .ThenInclude(sp => sp.Logs)
             .Include(o => o.Items)
                 .ThenInclude(i => i.SpecialRequests)
+            .Include(o => o.ManualProcesses)
+            .Include(o => o.ManualProcessDependencies)
             .Where(o => o.TenantId == tenantId && o.Status == OrderStatus.Active)
             .OrderBy(o => o.Priority)
             .ThenBy(o => o.DeliveryDate)
@@ -127,14 +138,25 @@ public class OrderRepository : IOrderRepository
         return await query.ToPagedResultAsync(page, pageSize, cancellationToken);
     }
 
-    public async Task<PagedResult<Order>> GetPagedWithProcessesAsync(Guid tenantId, OrderStatus? status, OrderType? orderType, DateTime? dateFrom, DateTime? dateTo, string? search, string? sortBy, bool isDescending, int page, int pageSize, CancellationToken cancellationToken = default)
+    public async Task<PagedResult<Order>> GetPagedWithProcessesAsync(Guid tenantId, OrderStatus? status, OrderType? orderType, bool? isInvoiced, DateTime? dateFrom, DateTime? dateTo, string? search, string? sortBy, bool isDescending, int page, int pageSize, CancellationToken cancellationToken = default)
     {
+        // AsSplitQuery() avoids a cartesian explosion across the 4-level
+        // Items → Processes → SubProcesses → Logs include chain (which also
+        // pulls Attachments / ManualProcesses / ManualProcessDependencies).
+        // A single JOIN-everything query multiplies row counts by every
+        // collection size; splitting it sends one query per collection and
+        // hydrates the graph client-side. That's the EF-recommended fix for
+        // the MultipleCollectionIncludeWarning seen in startup logs and the
+        // main reason GET /api/orders/master-view averaged ~1.96s.
         var query = _dbContext.Orders
+            .AsSplitQuery()
             .Include(o => o.Items)
                 .ThenInclude(i => i.Processes)
                     .ThenInclude(p => p.SubProcesses)
                         .ThenInclude(sp => sp.Logs)
             .Include(o => o.Attachments)
+            .Include(o => o.ManualProcesses)
+            .Include(o => o.ManualProcessDependencies)
             .Where(o => o.TenantId == tenantId);
 
         if (status.HasValue)
@@ -142,6 +164,9 @@ public class OrderRepository : IOrderRepository
 
         if (orderType.HasValue)
             query = query.Where(o => o.OrderType == orderType.Value);
+
+        if (isInvoiced.HasValue)
+            query = query.Where(o => o.IsInvoiced == isInvoiced.Value);
 
         if (dateFrom.HasValue)
         {

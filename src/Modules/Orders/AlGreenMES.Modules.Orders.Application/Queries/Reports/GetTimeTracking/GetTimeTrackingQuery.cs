@@ -1,4 +1,5 @@
 using AlGreenMES.Modules.Orders.Application.DTOs.Reports;
+using AlGreenMES.Modules.Orders.Domain.Enums;
 using AlGreenMES.Modules.Production.Domain.Enums;
 using MediatR;
 
@@ -9,4 +10,7 @@ public record GetTimeTrackingQuery(
     DateTime? From,
     DateTime? To,
     Guid? ProcessId,
-    ComplexityType? Complexity) : IRequest<TimeTrackingReportDto>;
+    ComplexityType? Complexity,
+    string? OrderNumber,
+    List<Guid>? ProductCategoryIds,
+    List<OrderType>? OrderTypes) : IRequest<TimeTrackingReportDto>;

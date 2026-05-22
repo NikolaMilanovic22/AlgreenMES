@@ -2,6 +2,7 @@ using AlGreenMES.Modules.Orders.Application.Commands.PauseWork;
 using AlGreenMES.Modules.Orders.Application.Queries.Tablet.GetTabletActiveWork;
 using AlGreenMES.Modules.Orders.Application.Queries.Tablet.GetTabletIncoming;
 using AlGreenMES.Modules.Orders.Application.Queries.Tablet.GetTabletQueue;
+using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -14,30 +15,32 @@ namespace AlGreenMES.Modules.Orders.Api.Controllers;
 public class TabletController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly ITenantService _tenantService;
 
-    public TabletController(IMediator mediator)
+    public TabletController(IMediator mediator, ITenantService tenantService)
     {
         _mediator = mediator;
+        _tenantService = tenantService;
     }
 
     [HttpGet("queue")]
-    public async Task<IActionResult> GetQueue([FromQuery] Guid tenantId, [FromQuery] Guid userId, CancellationToken cancellationToken)
+    public async Task<IActionResult> GetQueue([FromQuery] Guid userId, CancellationToken cancellationToken)
     {
-        var result = await _mediator.Send(new GetTabletQueueQuery(tenantId, userId), cancellationToken);
+        var result = await _mediator.Send(new GetTabletQueueQuery(_tenantService.GetCurrentTenantId(), userId), cancellationToken);
         return Ok(result);
     }
 
     [HttpGet("active")]
-    public async Task<IActionResult> GetActiveWork([FromQuery] Guid tenantId, [FromQuery] Guid userId, CancellationToken cancellationToken)
+    public async Task<IActionResult> GetActiveWork([FromQuery] Guid userId, CancellationToken cancellationToken)
     {
-        var result = await _mediator.Send(new GetTabletActiveWorkQuery(tenantId, userId), cancellationToken);
+        var result = await _mediator.Send(new GetTabletActiveWorkQuery(_tenantService.GetCurrentTenantId(), userId), cancellationToken);
         return Ok(result);
     }
 
     [HttpGet("incoming")]
-    public async Task<IActionResult> GetIncoming([FromQuery] Guid tenantId, [FromQuery] Guid userId, CancellationToken cancellationToken)
+    public async Task<IActionResult> GetIncoming([FromQuery] Guid userId, CancellationToken cancellationToken)
     {
-        var result = await _mediator.Send(new GetTabletIncomingQuery(tenantId, userId), cancellationToken);
+        var result = await _mediator.Send(new GetTabletIncomingQuery(_tenantService.GetCurrentTenantId(), userId), cancellationToken);
         return Ok(result);
     }
 

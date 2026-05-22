@@ -9,6 +9,7 @@ using AlGreenMES.Modules.Orders.Application.Commands.StopProcessWork;
 using AlGreenMES.Modules.Orders.Application.Commands.RestartProcess;
 using AlGreenMES.Modules.Orders.Application.Commands.UnblockProcess;
 using AlGreenMES.Modules.Orders.Application.Commands.WithdrawProcess;
+using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -21,10 +22,12 @@ namespace AlGreenMES.Modules.Orders.Api.Controllers;
 public class ProcessWorkflowController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly ITenantService _tenantService;
 
-    public ProcessWorkflowController(IMediator mediator)
+    public ProcessWorkflowController(IMediator mediator, ITenantService tenantService)
     {
         _mediator = mediator;
+        _tenantService = tenantService;
     }
 
     [HttpPost("{id:guid}/block")]
@@ -35,7 +38,7 @@ public class ProcessWorkflowController : ControllerBase
     }
 
     [HttpPost("{id:guid}/unblock")]
-    [Authorize(Roles = "Admin,Manager,Coordinator")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator")]
     public async Task<IActionResult> UnblockProcess(Guid id, [FromBody] UnblockProcessRequest request, CancellationToken cancellationToken)
     {
         await _mediator.Send(new UnblockProcessCommand(id, request.UserId, request.ResetTime), cancellationToken);
@@ -50,7 +53,7 @@ public class ProcessWorkflowController : ControllerBase
     }
 
     [HttpPost("{id:guid}/restart")]
-    [Authorize(Roles = "Admin,Manager,Coordinator")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator")]
     public async Task<IActionResult> RestartProcess(Guid id, [FromBody] RestartProcessRequest request, CancellationToken cancellationToken)
     {
         await _mediator.Send(new RestartProcessCommand(id, request.ResetTime), cancellationToken);
@@ -58,7 +61,7 @@ public class ProcessWorkflowController : ControllerBase
     }
 
     [HttpPost("{id:guid}/withdraw")]
-    [Authorize(Roles = "Admin,Manager,Coordinator")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator")]
     public async Task<IActionResult> WithdrawProcess(Guid id, [FromBody] WithdrawProcessRequest request, CancellationToken cancellationToken)
     {
         await _mediator.Send(new WithdrawProcessCommand(id, request.UserId, request.Reason), cancellationToken);
@@ -89,14 +92,14 @@ public class ProcessWorkflowController : ControllerBase
     [HttpPost("pause-station")]
     public async Task<IActionResult> PauseStation([FromBody] StationRequest request, CancellationToken cancellationToken)
     {
-        await _mediator.Send(new PauseStationCommand(request.ProcessId, request.TenantId, request.UserId), cancellationToken);
+        await _mediator.Send(new PauseStationCommand(request.ProcessId, _tenantService.GetCurrentTenantId(), request.UserId), cancellationToken);
         return NoContent();
     }
 
     [HttpPost("resume-station")]
     public async Task<IActionResult> ResumeStation([FromBody] StationRequest request, CancellationToken cancellationToken)
     {
-        await _mediator.Send(new ResumeStationCommand(request.ProcessId, request.TenantId, request.UserId), cancellationToken);
+        await _mediator.Send(new ResumeStationCommand(request.ProcessId, _tenantService.GetCurrentTenantId(), request.UserId), cancellationToken);
         return NoContent();
     }
 }

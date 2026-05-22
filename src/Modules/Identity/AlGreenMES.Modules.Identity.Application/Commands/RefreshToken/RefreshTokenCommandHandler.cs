@@ -35,11 +35,18 @@ public class RefreshTokenCommandHandler : IRequestHandler<RefreshTokenCommand, L
         if (!existingToken.IsValid())
             throw new DomainException("INVALID_REFRESH_TOKEN", "The refresh token is invalid or expired.");
 
-        var user = await _userRepository.GetByIdAsync(existingToken.UserId, cancellationToken)
-            ?? throw new NotFoundException("The user associated with this token was not found.");
+        // Refresh runs pre-auth (access token expired) — bypass HasQueryFilter and validate tenant explicitly.
+        var user = await _userRepository.GetByIdIgnoreFiltersAsync(existingToken.UserId, cancellationToken)
+            ?? throw new DomainException("INVALID_REFRESH_TOKEN", "The refresh token is invalid.");
 
         if (!user.IsActive)
             throw new DomainException("USER_INACTIVE", "The user account is not active.");
+
+        if (user.TenantId != existingToken.TenantId)
+        {
+            // Defense in depth — refresh tokens are tenant-scoped; a mismatch means tampering or data corruption.
+            throw new DomainException("INVALID_REFRESH_TOKEN", "The refresh token is invalid.");
+        }
 
         existingToken.Revoke();
 
