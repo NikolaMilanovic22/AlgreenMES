@@ -1,4 +1,5 @@
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
+using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetDeliveryCompliance;
 using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetProcessTimes;
 using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetTimeTracking;
 using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetWorkerHours;
@@ -64,6 +65,25 @@ public class ReportsController : ControllerBase
     {
         var result = await _mediator.Send(
             new GetWorkerHoursQuery(_tenantService.GetCurrentTenantId(), from, to, userId),
+            cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// "Analiza kašnjenja i poštovanja rokova" — per-period on-time vs late
+    /// breakdown of completed orders. CompletedAt &lt;= DeliveryDate → on time;
+    /// otherwise late. Bucketed by ISO week (Monday) or month.
+    /// </summary>
+    [HttpGet("delivery-compliance")]
+    public async Task<IActionResult> GetDeliveryCompliance(
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        [FromQuery] ReportGranularity granularity,
+        [FromQuery] List<OrderType>? orderTypes,
+        CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(
+            new GetDeliveryComplianceQuery(_tenantService.GetCurrentTenantId(), from, to, granularity, orderTypes),
             cancellationToken);
         return Ok(result);
     }

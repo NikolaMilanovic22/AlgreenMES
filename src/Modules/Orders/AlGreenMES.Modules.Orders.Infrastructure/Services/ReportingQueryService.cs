@@ -1,6 +1,7 @@
 using AlGreenMES.Modules.Identity.Infrastructure.Persistence;
 using AlGreenMES.Modules.Orders.Application.DTOs.Reports;
 using AlGreenMES.Modules.Orders.Application.Interfaces;
+using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetDeliveryCompliance;
 using AlGreenMES.Modules.Orders.Domain.Enums;
 using AlGreenMES.Modules.Orders.Infrastructure.Persistence;
 using AlGreenMES.Modules.Production.Domain.Enums;
@@ -40,14 +41,18 @@ public class ReportingQueryService : IReportingQueryService
             .Select(p => new { p.Id, p.Code, p.Name })
             .ToListAsync(cancellationToken);
 
+        // IsExcludedFromReports rows are filtered out at the source — Vremena
+        // is an aggregate view and excluded samples must not influence stats.
         var query = _ordersDb.OrderItemProcesses
             .AsNoTracking()
             .Include(p => p.OrderItem)
                 .ThenInclude(oi => oi.Order)
+            .Include(p => p.SubProcesses)
             .Where(p => p.TenantId == tenantId
                 && p.Status == ProcessStatus.Completed
                 && p.Complexity.HasValue
-                && p.TotalDurationMinutes > 0);
+                && p.TotalDurationMinutes > 0
+                && !p.IsExcludedFromReports);
 
         if (from.HasValue)
         {
@@ -67,12 +72,22 @@ public class ReportingQueryService : IReportingQueryService
         if (orderTypes is { Count: > 0 })
             query = query.Where(p => orderTypes.Contains(p.OrderItem.Order.OrderType));
 
-        // TotalDurationMinutes column actually stores seconds (misnamed) — divide by 60.
-        var rows = await query
-            .Select(p => new { p.ProcessId, p.Complexity, Seconds = p.TotalDurationMinutes })
-            .ToListAsync(cancellationToken);
+        // TotalDurationMinutes column actually stores seconds (misnamed).
+        // If a process has sub-processes, its effective duration is the sum
+        // of sub-process durations — the parent column is wall-clock from
+        // Start to Complete and includes idle gaps between sub-process
+        // activations, which Sale/Bojan don't want counted (see feedback
+        // 22.05.2026: ORD-2026-025 E-STAKLO parent 0:06:56 vs subs 0:03:21).
+        var entities = await query.ToListAsync(cancellationToken);
 
-        var grouped = rows
+        var grouped = entities
+            .Select(p => new
+            {
+                p.ProcessId,
+                p.Complexity,
+                Seconds = EffectiveDurationSeconds(p),
+            })
+            .Where(r => r.Seconds > 0)
             .GroupBy(r => new { r.ProcessId, r.Complexity })
             .ToDictionary(g => g.Key, g => ComputeStats(g.Select(x => x.Seconds / 60.0).ToList()));
 
@@ -92,33 +107,87 @@ public class ReportingQueryService : IReportingQueryService
         return new ProcessTimesDto(result);
     }
 
+    /// <summary>
+    /// Effective duration for reporting purposes — in the misnamed-seconds
+    /// "TotalDurationMinutes" unit.
+    ///
+    /// If a process has any sub-processes with non-zero duration, the
+    /// effective duration is the SUM of those sub-process durations rather
+    /// than the parent's wall-clock value. The parent's TotalDurationMinutes
+    /// counts every second between Start and Complete (incl. idle gaps
+    /// between sub-process activations), but Sale/Bojan want only the active
+    /// sub-process work to count (feedback 22.05.2026: ORD-2026-025 E-STAKLO
+    /// parent column showed 0:06:56 vs sub-process sum 0:03:21).
+    ///
+    /// If the process has no sub-processes (single-timer path), the parent
+    /// column already reflects only active timer time, so use it as-is.
+    /// </summary>
+    private static int EffectiveDurationSeconds(
+        AlGreenMES.Modules.Orders.Domain.Entities.OrderItemProcess process)
+    {
+        var subSum = process.SubProcesses
+            .Where(sp => !sp.IsWithdrawn && sp.TotalDurationMinutes > 0)
+            .Sum(sp => sp.TotalDurationMinutes);
+        return subSum > 0 ? subSum : process.TotalDurationMinutes;
+    }
+
+    /// <summary>
+    /// 1-sigma window stats per Sale/Bojan's Excel StDev sheet formula:
+    ///   μ   = AVERAGE(samples)
+    ///   σ   = sqrt(AVERAGE((xi−μ)²))            (population stdev)
+    ///   min = MINIFS(samples, ">="& μ−σ)        (smallest sample inside the band)
+    ///   max = MAXIFS(samples, "<="& μ+σ)        (largest sample inside the band)
+    ///   trimmedMean = AVERAGEIFS(samples, ">="& μ−σ, "<="& μ+σ)   ("Realni prosek")
+    /// min/max are window-clamped (not population min/max) — outliers excluded.
+    /// </summary>
     private static ComplexityStatsDto ComputeStats(List<double> values)
     {
         var n = values.Count;
         var mean = values.Average();
         var variance = values.Sum(x => (x - mean) * (x - mean)) / n;
         var stdev = Math.Sqrt(variance);
-        var min = values.Min();
-        var max = values.Max();
 
+        double minWindow;
+        double maxWindow;
         double trimmedMean;
+
         if (n == 1 || stdev == 0)
         {
+            // Single sample (or all identical) — window degenerates to the
+            // point itself. Returning the value avoids divide-by-zero edge
+            // cases and matches the Excel layout (one-row bucket shows the
+            // value in min/max/trimmed cells).
+            minWindow = values.Min();
+            maxWindow = values.Max();
             trimmedMean = mean;
         }
         else
         {
             var lower = mean - stdev;
             var upper = mean + stdev;
-            var trimmed = values.Where(x => x >= lower && x <= upper).ToList();
-            trimmedMean = trimmed.Count > 0 ? trimmed.Average() : mean;
+            var withinWindow = values.Where(x => x >= lower && x <= upper).ToList();
+            // Defensive: if no sample falls inside μ±σ (very rare — happens
+            // only with bimodal distributions where every sample is outside
+            // the band), fall back to population min/max + plain mean.
+            if (withinWindow.Count == 0)
+            {
+                minWindow = values.Min();
+                maxWindow = values.Max();
+                trimmedMean = mean;
+            }
+            else
+            {
+                minWindow = withinWindow.Min();
+                maxWindow = withinWindow.Max();
+                trimmedMean = withinWindow.Average();
+            }
         }
 
         return new ComplexityStatsDto(
             n,
             Math.Round(mean, 2),
-            Math.Round(min, 2),
-            Math.Round(max, 2),
+            Math.Round(minWindow, 2),
+            Math.Round(maxWindow, 2),
             Math.Round(stdev, 2),
             Math.Round(trimmedMean, 2));
     }
@@ -216,7 +285,8 @@ public class ReportingQueryService : IReportingQueryService
                 p.Status.ToString(),
                 p.StartedAt,
                 p.CompletedAt,
-                p.TotalDurationMinutes,
+                EffectiveDurationSeconds(p),
+                p.IsExcludedFromReports,
                 subs);
         }).ToList();
 
@@ -273,5 +343,65 @@ public class ReportingQueryService : IReportingQueryService
             .ToList();
 
         return new WorkerHoursReportDto(grouped);
+    }
+
+    public async Task<DeliveryComplianceReportDto> GetDeliveryComplianceAsync(
+        Guid tenantId,
+        DateTime? from,
+        DateTime? to,
+        ReportGranularity granularity,
+        List<OrderType>? orderTypes,
+        CancellationToken cancellationToken = default)
+    {
+        var query = _ordersDb.Orders
+            .AsNoTracking()
+            .Where(o => o.TenantId == tenantId
+                && o.CompletedAt.HasValue);
+
+        if (from.HasValue)
+        {
+            var fromUtc = DateTime.SpecifyKind(from.Value.Date, DateTimeKind.Utc);
+            query = query.Where(o => o.CompletedAt >= fromUtc);
+        }
+
+        if (to.HasValue)
+        {
+            var toUtc = DateTime.SpecifyKind(to.Value.Date.AddDays(1).AddTicks(-1), DateTimeKind.Utc);
+            query = query.Where(o => o.CompletedAt <= toUtc);
+        }
+
+        if (orderTypes is { Count: > 0 })
+            query = query.Where(o => orderTypes.Contains(o.OrderType));
+
+        var orders = await query
+            .Select(o => new { o.CompletedAt, o.DeliveryDate })
+            .ToListAsync(cancellationToken);
+
+        // Bucket by ISO week (Monday start) or month — match the granularity
+        // the FE picker selects. "On-time" = CompletedAt date ≤ DeliveryDate date
+        // (day-precision; we don't compare timestamps within a day because
+        // delivery dates have wall-clock-of-day semantics, not exact times).
+        var grouped = orders
+            .Where(o => o.CompletedAt.HasValue)
+            .GroupBy(o => BucketStart(o.CompletedAt!.Value, granularity))
+            .Select(g => new DeliveryComplianceBucketDto(
+                g.Key,
+                g.Count(o => o.CompletedAt!.Value.Date <= o.DeliveryDate.Date),
+                g.Count(o => o.CompletedAt!.Value.Date > o.DeliveryDate.Date)))
+            .OrderBy(b => b.BucketStart)
+            .ToList();
+
+        return new DeliveryComplianceReportDto(grouped);
+    }
+
+    private static DateTime BucketStart(DateTime d, ReportGranularity granularity)
+    {
+        if (granularity == ReportGranularity.Month)
+        {
+            return DateTime.SpecifyKind(new DateTime(d.Year, d.Month, 1), DateTimeKind.Utc);
+        }
+        // ISO week: Monday is day-1. C# DayOfWeek puts Sunday=0, Monday=1.
+        var dayOffset = ((int)d.DayOfWeek + 6) % 7; // Monday=0, Sunday=6
+        return DateTime.SpecifyKind(d.Date.AddDays(-dayOffset), DateTimeKind.Utc);
     }
 }

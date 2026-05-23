@@ -32,6 +32,10 @@ public class OrderItemProcessConfiguration : IEntityTypeConfiguration<OrderItemP
         builder.Property(p => p.IsWithdrawn)
             .IsRequired();
 
+        builder.Property(p => p.IsExcludedFromReports)
+            .IsRequired()
+            .HasDefaultValue(false);
+
         builder.Property(p => p.BlockReason)
             .HasMaxLength(2000);
 

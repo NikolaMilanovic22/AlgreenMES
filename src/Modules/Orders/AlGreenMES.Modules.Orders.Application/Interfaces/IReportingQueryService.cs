@@ -1,4 +1,5 @@
 using AlGreenMES.Modules.Orders.Application.DTOs.Reports;
+using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetDeliveryCompliance;
 using AlGreenMES.Modules.Orders.Domain.Enums;
 using AlGreenMES.Modules.Production.Domain.Enums;
 
@@ -30,5 +31,13 @@ public interface IReportingQueryService
         DateOnly from,
         DateOnly to,
         Guid? userId,
+        CancellationToken cancellationToken = default);
+
+    Task<DeliveryComplianceReportDto> GetDeliveryComplianceAsync(
+        Guid tenantId,
+        DateTime? from,
+        DateTime? to,
+        ReportGranularity granularity,
+        List<OrderType>? orderTypes,
         CancellationToken cancellationToken = default);
 }

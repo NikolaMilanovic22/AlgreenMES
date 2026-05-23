@@ -7,6 +7,7 @@ using AlGreenMES.Modules.Orders.Application.Commands.ResumeStation;
 using AlGreenMES.Modules.Orders.Application.Commands.StartProcessWork;
 using AlGreenMES.Modules.Orders.Application.Commands.StopProcessWork;
 using AlGreenMES.Modules.Orders.Application.Commands.RestartProcess;
+using AlGreenMES.Modules.Orders.Application.Commands.SetProcessExcludedFromReports;
 using AlGreenMES.Modules.Orders.Application.Commands.UnblockProcess;
 using AlGreenMES.Modules.Orders.Application.Commands.WithdrawProcess;
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
@@ -100,6 +101,22 @@ public class ProcessWorkflowController : ControllerBase
     public async Task<IActionResult> ResumeStation([FromBody] StationRequest request, CancellationToken cancellationToken)
     {
         await _mediator.Send(new ResumeStationCommand(request.ProcessId, _tenantService.GetCurrentTenantId(), request.UserId), cancellationToken);
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Toggle whether this OrderItemProcess is excluded from the /reports
+    /// statistics + export (Sale/Bojan's manual Uključi/Isključi switch).
+    /// </summary>
+    [HttpPatch("{id:guid}/excluded-from-reports")]
+    public async Task<IActionResult> SetExcludedFromReports(
+        Guid id,
+        [FromBody] SetProcessExcludedFromReportsRequest request,
+        CancellationToken cancellationToken)
+    {
+        await _mediator.Send(
+            new SetProcessExcludedFromReportsCommand(id, request.Excluded),
+            cancellationToken);
         return NoContent();
     }
 }

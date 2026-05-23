@@ -41,6 +41,17 @@ public class OrderItemProcess : TenantEntity
     /// </summary>
     public DateTime? PausedByStationAt { get; private set; }
 
+    /// <summary>
+    /// Sale/Bojan can manually mark a row to be excluded from the /reports
+    /// statistics + export. Excluded rows are filtered out of Vremena
+    /// (process times) aggregation and from the Praćenje (time-tracking)
+    /// XLSX/CSV export. They still appear in the Praćenje table itself so
+    /// the user can re-include via the Uključi toggle. Persisted in DB so
+    /// the choice survives sessions and is visible to all users in the
+    /// tenant.
+    /// </summary>
+    public bool IsExcludedFromReports { get; private set; }
+
     public DateTime CreatedAt { get; private set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; private set; }
 
@@ -318,5 +329,12 @@ public class OrderItemProcess : TenantEntity
         var subProcess = OrderItemSubProcess.Create(TenantId, Id, subProcessId);
         _subProcesses.Add(subProcess);
         return subProcess;
+    }
+
+    public void SetExcludedFromReports(bool excluded)
+    {
+        if (IsExcludedFromReports == excluded) return;
+        IsExcludedFromReports = excluded;
+        UpdatedAt = DateTime.UtcNow;
     }
 }
