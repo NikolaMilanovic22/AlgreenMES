@@ -495,8 +495,14 @@ public class ReportingQueryService : IReportingQueryService
         // We include sibling processes (.Processes on OrderItem) so we can
         // evaluate "ready" (all dependencies complete-or-withdrawn) without
         // a second roundtrip per row.
+        //
+        // AsNoTrackingWithIdentityResolution because the Include chain
+        // OrderItemProcess → OrderItem → Processes creates a cycle back to
+        // OrderItemProcess. Plain AsNoTracking refuses cycles (EF throws);
+        // this variant resolves shared instances by identity without
+        // tracking them for change detection.
         var query = _ordersDb.OrderItemProcesses
-            .AsNoTracking()
+            .AsNoTrackingWithIdentityResolution()
             .Include(p => p.OrderItem)
                 .ThenInclude(oi => oi.Processes)
             .Include(p => p.OrderItem)
