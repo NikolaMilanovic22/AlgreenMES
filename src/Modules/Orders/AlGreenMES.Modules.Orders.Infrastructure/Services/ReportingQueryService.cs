@@ -2,6 +2,8 @@ using AlGreenMES.Modules.Identity.Infrastructure.Persistence;
 using AlGreenMES.Modules.Orders.Application.DTOs.Reports;
 using AlGreenMES.Modules.Orders.Application.Interfaces;
 using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetDeliveryCompliance;
+using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetProcessTimeTrend;
+using AlGreenMES.Modules.Orders.Domain.Entities;
 using AlGreenMES.Modules.Orders.Domain.Enums;
 using AlGreenMES.Modules.Orders.Infrastructure.Persistence;
 using AlGreenMES.Modules.Production.Domain.Enums;
@@ -403,5 +405,177 @@ public class ReportingQueryService : IReportingQueryService
         // ISO week: Monday is day-1. C# DayOfWeek puts Sunday=0, Monday=1.
         var dayOffset = ((int)d.DayOfWeek + 6) % 7; // Monday=0, Sunday=6
         return DateTime.SpecifyKind(d.Date.AddDays(-dayOffset), DateTimeKind.Utc);
+    }
+
+    public async Task<ProcessTimeTrendDto> GetProcessTimeTrendAsync(
+        Guid tenantId,
+        Guid processId,
+        ComplexityType complexity,
+        ReportGranularity granularity,
+        DateTime? from,
+        DateTime? to,
+        CancellationToken cancellationToken = default)
+    {
+        // Same filters as GetProcessTimes — completed processes for the
+        // single chosen process+complexity, excluding manually-isključi rows.
+        var query = _ordersDb.OrderItemProcesses
+            .AsNoTracking()
+            .Include(p => p.SubProcesses)
+            .Where(p => p.TenantId == tenantId
+                && p.ProcessId == processId
+                && p.Complexity == complexity
+                && p.Status == ProcessStatus.Completed
+                && p.TotalDurationMinutes > 0
+                && !p.IsExcludedFromReports
+                && p.CompletedAt.HasValue);
+
+        if (from.HasValue)
+        {
+            var fromUtc = DateTime.SpecifyKind(from.Value.Date, DateTimeKind.Utc);
+            query = query.Where(p => p.CompletedAt >= fromUtc);
+        }
+
+        if (to.HasValue)
+        {
+            var toUtc = DateTime.SpecifyKind(to.Value.Date.AddDays(1).AddTicks(-1), DateTimeKind.Utc);
+            query = query.Where(p => p.CompletedAt <= toUtc);
+        }
+
+        var entities = await query.ToListAsync(cancellationToken);
+
+        if (entities.Count == 0)
+        {
+            return new ProcessTimeTrendDto(new List<ProcessTimeTrendBucketDto>(), null);
+        }
+
+        // Compute per-bucket stats (window-clamped min/max + trimmed mean) so
+        // the green zone in the chart matches the Vremena table semantics.
+        var buckets = entities
+            .Select(p => new { p.CompletedAt, Minutes = EffectiveDurationSeconds(p) / 60.0 })
+            .GroupBy(x => BucketStart(x.CompletedAt!.Value, granularity))
+            .OrderBy(g => g.Key)
+            .Select(g =>
+            {
+                var values = g.Select(x => x.Minutes).ToList();
+                var stats = ComputeStats(values);
+                return new ProcessTimeTrendBucketDto(
+                    g.Key,
+                    stats.Count,
+                    stats.TrimmedMeanMinutes,
+                    stats.MinMinutes,
+                    stats.MaxMinutes);
+            })
+            .ToList();
+
+        // Normativ = 85% of trimmed mean across ALL filtered samples (not
+        // bucket-aware) so it's a single constant target line.
+        var overallValues = entities
+            .Select(p => EffectiveDurationSeconds(p) / 60.0)
+            .ToList();
+        var overallStats = ComputeStats(overallValues);
+        var normativ = Math.Round(overallStats.TrimmedMeanMinutes * 0.85, 2);
+
+        return new ProcessTimeTrendDto(buckets, normativ);
+    }
+
+    public async Task<ActiveProcessFunnelDto> GetActiveProcessFunnelAsync(
+        Guid tenantId,
+        List<OrderType>? orderTypes,
+        ComplexityType? complexity,
+        CancellationToken cancellationToken = default)
+    {
+        var processes = await _productionDb.Processes
+            .AsNoTracking()
+            .Where(p => p.TenantId == tenantId && p.IsActive)
+            .OrderBy(p => p.SequenceOrder)
+            .Select(p => new { p.Id, p.Code, p.Name, p.SequenceOrder })
+            .ToListAsync(cancellationToken);
+
+        // Active OrderItemProcesses — InProgress / Pending / Blocked, not withdrawn.
+        // We include sibling processes (.Processes on OrderItem) so we can
+        // evaluate "ready" (all dependencies complete-or-withdrawn) without
+        // a second roundtrip per row.
+        var query = _ordersDb.OrderItemProcesses
+            .AsNoTracking()
+            .Include(p => p.OrderItem)
+                .ThenInclude(oi => oi.Processes)
+            .Include(p => p.OrderItem)
+                .ThenInclude(oi => oi.Order)
+            .Where(p => p.TenantId == tenantId
+                && !p.IsWithdrawn
+                && (p.Status == ProcessStatus.InProgress
+                    || p.Status == ProcessStatus.Pending
+                    || p.Status == ProcessStatus.Blocked));
+
+        if (orderTypes is { Count: > 0 })
+            query = query.Where(p => orderTypes.Contains(p.OrderItem.Order.OrderType));
+        if (complexity.HasValue)
+            query = query.Where(p => p.Complexity == complexity.Value);
+
+        var active = await query.ToListAsync(cancellationToken);
+
+        // Manual process dependencies live on Order. Load separately, keyed
+        // by orderId for fast lookup. Category-level deps used as fallback
+        // when an order has no manual processes (same fallback the MasterView
+        // query uses — keeps the live "spreman" indicator consistent with
+        // this chart).
+        var orderIds = active.Select(p => p.OrderItem.OrderId).Distinct().ToList();
+        var manualDepsByOrder = await _ordersDb.Orders
+            .AsNoTracking()
+            .Where(o => orderIds.Contains(o.Id))
+            .Select(o => new { o.Id, Deps = o.ManualProcessDependencies.ToList(), HasManual = o.ManualProcesses.Any() })
+            .ToDictionaryAsync(x => x.Id, x => x, cancellationToken);
+
+        var categoryDeps = await _productionDb.ProductCategoryDependencies
+            .AsNoTracking()
+            .Where(d => d.TenantId == tenantId)
+            .ToListAsync(cancellationToken);
+        var categoryDepsByCategory = categoryDeps
+            .GroupBy(d => d.ProductCategoryId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        List<Guid> ResolveDeps(OrderItemProcess p)
+        {
+            var orderInfo = manualDepsByOrder.GetValueOrDefault(p.OrderItem.OrderId);
+            if (orderInfo is not null && orderInfo.HasManual)
+            {
+                return orderInfo.Deps
+                    .Where(d => d.ProcessId == p.ProcessId)
+                    .Select(d => d.DependsOnProcessId)
+                    .ToList();
+            }
+            return categoryDepsByCategory.TryGetValue(p.OrderItem.ProductCategoryId, out var cd)
+                ? cd.Where(d => d.ProcessId == p.ProcessId).Select(d => d.DependsOnProcessId).ToList()
+                : new List<Guid>();
+        }
+
+        bool IsReady(OrderItemProcess p)
+        {
+            if (p.Status != ProcessStatus.Pending) return false;
+            var deps = ResolveDeps(p);
+            if (deps.Count == 0) return true;
+            return deps.All(depId =>
+            {
+                var depProc = p.OrderItem.Processes.FirstOrDefault(ip => ip.ProcessId == depId);
+                if (depProc == null) return true; // dep not on this item = effectively withdrawn
+                return depProc.Status == ProcessStatus.Completed || depProc.IsWithdrawn;
+            });
+        }
+
+        var buckets = processes.Select(pr =>
+        {
+            int inProgress = 0, ready = 0, blocked = 0;
+            foreach (var p in active.Where(x => x.ProcessId == pr.Id))
+            {
+                if (p.Status == ProcessStatus.InProgress) inProgress++;
+                else if (p.Status == ProcessStatus.Blocked) blocked++;
+                else if (p.Status == ProcessStatus.Pending && IsReady(p)) ready++;
+            }
+            return new ActiveProcessFunnelBucketDto(
+                pr.Id, pr.Code, pr.Name, pr.SequenceOrder,
+                inProgress, ready, blocked);
+        }).ToList();
+
+        return new ActiveProcessFunnelDto(buckets);
     }
 }

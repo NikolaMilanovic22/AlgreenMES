@@ -40,4 +40,19 @@ public interface IReportingQueryService
         ReportGranularity granularity,
         List<OrderType>? orderTypes,
         CancellationToken cancellationToken = default);
+
+    Task<ProcessTimeTrendDto> GetProcessTimeTrendAsync(
+        Guid tenantId,
+        Guid processId,
+        ComplexityType complexity,
+        ReportGranularity granularity,
+        DateTime? from,
+        DateTime? to,
+        CancellationToken cancellationToken = default);
+
+    Task<ActiveProcessFunnelDto> GetActiveProcessFunnelAsync(
+        Guid tenantId,
+        List<OrderType>? orderTypes,
+        ComplexityType? complexity,
+        CancellationToken cancellationToken = default);
 }

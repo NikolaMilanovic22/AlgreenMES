@@ -1,6 +1,8 @@
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
+using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetActiveProcessFunnel;
 using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetDeliveryCompliance;
 using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetProcessTimes;
+using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetProcessTimeTrend;
 using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetTimeTracking;
 using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetWorkerHours;
 using AlGreenMES.Modules.Orders.Domain.Enums;
@@ -65,6 +67,50 @@ public class ReportsController : ControllerBase
     {
         var result = await _mediator.Send(
             new GetWorkerHoursQuery(_tenantService.GetCurrentTenantId(), from, to, userId),
+            cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// "Trend prosečnog vremena po nedelji" — per-period (week/month) stats
+    /// for a single (process × complexity): green band = window-clamped
+    /// MIN/MAX per bucket, blue line = Realni prosek per bucket, Normativ =
+    /// 85% of trimmed mean across the whole filtered period (constant).
+    /// </summary>
+    [HttpGet("process-time-trend")]
+    public async Task<IActionResult> GetProcessTimeTrend(
+        [FromQuery] Guid processId,
+        [FromQuery] ComplexityType complexity,
+        [FromQuery] ReportGranularity granularity,
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(
+            new GetProcessTimeTrendQuery(
+                _tenantService.GetCurrentTenantId(),
+                processId,
+                complexity,
+                granularity,
+                from,
+                to),
+            cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// "Napredak aktivnih narudžbina" — per-process count of active
+    /// OrderItemProcesses split into three buckets: U toku (InProgress),
+    /// Spreman za izvršavanje (Pending + deps complete), Blokirano.
+    /// </summary>
+    [HttpGet("active-process-funnel")]
+    public async Task<IActionResult> GetActiveProcessFunnel(
+        [FromQuery] List<OrderType>? orderTypes,
+        [FromQuery] ComplexityType? complexity,
+        CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(
+            new GetActiveProcessFunnelQuery(_tenantService.GetCurrentTenantId(), orderTypes, complexity),
             cancellationToken);
         return Ok(result);
     }
