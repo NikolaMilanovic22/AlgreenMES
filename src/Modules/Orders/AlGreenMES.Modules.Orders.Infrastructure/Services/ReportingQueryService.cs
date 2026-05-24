@@ -133,66 +133,9 @@ public class ReportingQueryService : IReportingQueryService
         return subSum > 0 ? subSum : process.TotalDurationMinutes;
     }
 
-    /// <summary>
-    /// 1-sigma window stats per Sale/Bojan's Excel StDev sheet formula:
-    ///   μ   = AVERAGE(samples)
-    ///   σ   = sqrt(AVERAGE((xi−μ)²))            (population stdev)
-    ///   min = MINIFS(samples, ">="& μ−σ)        (smallest sample inside the band)
-    ///   max = MAXIFS(samples, "<="& μ+σ)        (largest sample inside the band)
-    ///   trimmedMean = AVERAGEIFS(samples, ">="& μ−σ, "<="& μ+σ)   ("Realni prosek")
-    /// min/max are window-clamped (not population min/max) — outliers excluded.
-    /// </summary>
-    private static ComplexityStatsDto ComputeStats(List<double> values)
-    {
-        var n = values.Count;
-        var mean = values.Average();
-        var variance = values.Sum(x => (x - mean) * (x - mean)) / n;
-        var stdev = Math.Sqrt(variance);
-
-        double minWindow;
-        double maxWindow;
-        double trimmedMean;
-
-        if (n == 1 || stdev == 0)
-        {
-            // Single sample (or all identical) — window degenerates to the
-            // point itself. Returning the value avoids divide-by-zero edge
-            // cases and matches the Excel layout (one-row bucket shows the
-            // value in min/max/trimmed cells).
-            minWindow = values.Min();
-            maxWindow = values.Max();
-            trimmedMean = mean;
-        }
-        else
-        {
-            var lower = mean - stdev;
-            var upper = mean + stdev;
-            var withinWindow = values.Where(x => x >= lower && x <= upper).ToList();
-            // Defensive: if no sample falls inside μ±σ (very rare — happens
-            // only with bimodal distributions where every sample is outside
-            // the band), fall back to population min/max + plain mean.
-            if (withinWindow.Count == 0)
-            {
-                minWindow = values.Min();
-                maxWindow = values.Max();
-                trimmedMean = mean;
-            }
-            else
-            {
-                minWindow = withinWindow.Min();
-                maxWindow = withinWindow.Max();
-                trimmedMean = withinWindow.Average();
-            }
-        }
-
-        return new ComplexityStatsDto(
-            n,
-            Math.Round(mean, 2),
-            Math.Round(minWindow, 2),
-            Math.Round(maxWindow, 2),
-            Math.Round(stdev, 2),
-            Math.Round(trimmedMean, 2));
-    }
+    // Stats math extracted to ReportingStats (public, unit-testable).
+    private static ComplexityStatsDto ComputeStats(List<double> values) =>
+        ReportingStats.ComputeStats(values);
 
     public async Task<TimeTrackingReportDto> GetTimeTrackingReportAsync(
         Guid tenantId,

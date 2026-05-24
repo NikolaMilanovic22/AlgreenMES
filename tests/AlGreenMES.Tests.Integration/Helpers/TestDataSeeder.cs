@@ -7,6 +7,7 @@ using AlGreenMES.Modules.Orders.Domain.Entities;
 using AlGreenMES.Modules.Orders.Domain.Enums;
 using AlGreenMES.Modules.Orders.Infrastructure.Persistence;
 using AlGreenMES.Modules.Production.Domain.Entities;
+using AlGreenMES.Modules.Production.Domain.Enums;
 using AlGreenMES.Modules.Production.Infrastructure.Persistence;
 using AlGreenMES.Modules.Tenancy.Domain.Entities;
 using AlGreenMES.Modules.Tenancy.Infrastructure.Persistence;
@@ -147,6 +148,65 @@ public static class TestDataSeeder
         productionDb.Processes.Add(process);
         await productionDb.SaveChangesAsync();
         return process.Id;
+    }
+
+    /// <summary>
+    /// Seeds a minimal Order → Item → OIP chain and returns the OIP id.
+    /// Used by /reports tests to exercise PATCH excluded-from-reports etc.
+    /// </summary>
+    public static async Task<Guid> SeedOrderItemProcessAsync(
+        AlgreenWebApplicationFactory factory,
+        Guid tenantId,
+        Guid createdByUserId,
+        Guid processId,
+        Guid productCategoryId,
+        ProcessStatus? status = null,
+        int? totalDurationSeconds = null,
+        ComplexityType? complexity = null)
+    {
+        using var scope = factory.Services.CreateScope();
+        var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
+
+        var order = Order.Create(
+            tenantId,
+            $"ORD-{Guid.NewGuid():N}".Substring(0, 16),
+            DateTime.UtcNow.AddDays(7),
+            priority: 3,
+            OrderType.Standard,
+            createdByUserId,
+            notes: null);
+        var item = order.AddItem(productCategoryId, productName: null, quantity: 1);
+        var oip = item.AddProcess(processId, complexity);
+
+        if (status.HasValue && status.Value != ProcessStatus.Pending)
+        {
+            oip.Start();
+            if (totalDurationSeconds is { } secs && secs > 0)
+                oip.AddDuration(secs);
+            if (status.Value == ProcessStatus.Completed)
+                oip.Complete();
+        }
+
+        ordersDb.Orders.Add(order);
+        await ordersDb.SaveChangesAsync();
+        return oip.Id;
+    }
+
+    public static async Task<Guid> SeedProductCategoryAsync(
+        AlgreenWebApplicationFactory factory,
+        Guid tenantId,
+        Guid? createdByUserId = null)
+    {
+        using var scope = factory.Services.CreateScope();
+        var productionDb = scope.ServiceProvider.GetRequiredService<ProductionDbContext>();
+        var pc = ProductCategory.Create(
+            tenantId,
+            $"Cat-{Guid.NewGuid():N}".Substring(0, 12),
+            description: null,
+            createdByUserId);
+        productionDb.ProductCategories.Add(pc);
+        await productionDb.SaveChangesAsync();
+        return pc.Id;
     }
 
     public static async Task<Guid> SeedNotificationAsync(
