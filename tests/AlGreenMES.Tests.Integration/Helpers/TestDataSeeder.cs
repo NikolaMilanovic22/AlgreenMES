@@ -11,6 +11,7 @@ using AlGreenMES.Modules.Production.Domain.Enums;
 using AlGreenMES.Modules.Production.Infrastructure.Persistence;
 using AlGreenMES.Modules.Tenancy.Domain.Entities;
 using AlGreenMES.Modules.Tenancy.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace AlGreenMES.Tests.Integration.Helpers;
@@ -183,8 +184,16 @@ public static class TestDataSeeder
             oip.Start();
             if (totalDurationSeconds is { } secs && secs > 0)
                 oip.AddDuration(secs);
-            if (status.Value == ProcessStatus.Completed)
-                oip.Complete();
+            switch (status.Value)
+            {
+                case ProcessStatus.Completed:
+                    oip.Complete();
+                    break;
+                case ProcessStatus.Blocked:
+                    oip.Block(createdByUserId, "test");
+                    break;
+                // InProgress: leave as-is (Start() already transitioned it).
+            }
         }
 
         ordersDb.Orders.Add(order);
@@ -207,6 +216,111 @@ public static class TestDataSeeder
         productionDb.ProductCategories.Add(pc);
         await productionDb.SaveChangesAsync();
         return pc.Id;
+    }
+
+    /// <summary>
+    /// Adds processes (in given order) + dependencies to an existing product
+    /// category. Dependencies are pairs (processId, dependsOnProcessId).
+    /// Used by funnel "ready" tests so a Pending OIP can be evaluated against
+    /// completed/withdrawn/pending predecessors.
+    /// </summary>
+    public static async Task SeedCategoryProcessesAndDepsAsync(
+        AlgreenWebApplicationFactory factory,
+        Guid categoryId,
+        IEnumerable<Guid> processIds,
+        IEnumerable<(Guid ProcessId, Guid DependsOnProcessId)>? dependencies = null)
+    {
+        using var scope = factory.Services.CreateScope();
+        var productionDb = scope.ServiceProvider.GetRequiredService<ProductionDbContext>();
+        // IgnoreQueryFilters because the seeder runs in a test scope with no
+        // HTTP context — ICurrentUserService.GetCurrentTenantId() returns
+        // Guid.Empty (intentional fail-closed default), which would zero
+        // out the tenant query filter and return no rows.
+        var category = await productionDb.ProductCategories
+            .IgnoreQueryFilters()
+            .Include(c => c.Processes)
+            .Include(c => c.Dependencies)
+            .SingleAsync(c => c.Id == categoryId);
+
+        var order = 1;
+        foreach (var pid in processIds)
+            category.AddProcess(pid, sequenceOrder: order++);
+        if (dependencies is not null)
+        {
+            foreach (var (pid, depPid) in dependencies)
+                category.AddDependency(pid, depPid);
+        }
+        await productionDb.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Seeds an order with multiple processes on a single item — needed for
+    /// dep-chain tests (e.g., "predkrojenje must complete before staklo
+    /// can start"). Each processStatus[i] sets the status of the OIP for
+    /// processes[i].
+    /// </summary>
+    public static async Task<(Guid OrderId, Guid ItemId, Guid[] OipIds)> SeedOrderWithProcessesAsync(
+        AlgreenWebApplicationFactory factory,
+        Guid tenantId,
+        Guid createdByUserId,
+        Guid productCategoryId,
+        IReadOnlyList<Guid> processIds,
+        IReadOnlyList<ProcessStatus> processStatuses,
+        DateTime? deliveryDate = null,
+        DateTime? completedAtOverride = null)
+    {
+        if (processIds.Count != processStatuses.Count)
+            throw new ArgumentException("processIds and processStatuses must match length");
+
+        using var scope = factory.Services.CreateScope();
+        var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
+
+        var order = Order.Create(
+            tenantId,
+            $"ORD-{Guid.NewGuid():N}".Substring(0, 16),
+            deliveryDate ?? DateTime.UtcNow.AddDays(7),
+            priority: 3,
+            OrderType.Standard,
+            createdByUserId,
+            notes: null);
+        var item = order.AddItem(productCategoryId, productName: null, quantity: 1);
+        var oips = new Guid[processIds.Count];
+        for (var i = 0; i < processIds.Count; i++)
+        {
+            var oip = item.AddProcess(processIds[i], complexity: null);
+            switch (processStatuses[i])
+            {
+                case ProcessStatus.Completed:
+                    oip.Start();
+                    oip.Complete();
+                    break;
+                case ProcessStatus.InProgress:
+                    oip.Start();
+                    break;
+                case ProcessStatus.Blocked:
+                    oip.Start();
+                    oip.Block(createdByUserId, "test");
+                    break;
+                case ProcessStatus.Pending:
+                    // nothing — Pending is the default
+                    break;
+            }
+            oips[i] = oip.Id;
+        }
+        ordersDb.Orders.Add(order);
+        await ordersDb.SaveChangesAsync();
+
+        // Optional CompletedAt override: useful for delivery-compliance tests
+        // where we need a specific completion date relative to deliveryDate.
+        if (completedAtOverride.HasValue)
+        {
+            await ordersDb.Orders
+                .IgnoreQueryFilters()
+                .Where(o => o.Id == order.Id)
+                .ExecuteUpdateAsync(set => set.SetProperty(o => o.CompletedAt, completedAtOverride.Value));
+        }
+
+        return (order.Id, item.Id, oips);
     }
 
     public static async Task<Guid> SeedNotificationAsync(

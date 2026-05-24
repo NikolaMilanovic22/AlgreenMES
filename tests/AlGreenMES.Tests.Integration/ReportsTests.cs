@@ -223,4 +223,236 @@ public class ReportsTests : IntegrationTestBase
         var resp = await anon.GetAsync("/api/reports/process-times");
         resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
+
+    // ─── GET /api/reports/active-process-funnel ────────────
+    //
+    // The "ready" logic is the most complex code we wrote — a Pending OIP
+    // counts as "Spreman za izvršavanje" only when ALL its dependencies
+    // are Completed-or-Withdrawn. Below tests cover the main branches.
+
+    [Fact]
+    public async Task ActiveFunnel_pending_with_no_deps_counts_as_ready()
+    {
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+        var processId = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId, t.UserId);
+        var categoryId = await TestDataSeeder.SeedProductCategoryAsync(Factory, t.TenantId, t.UserId);
+        await TestDataSeeder.SeedCategoryProcessesAndDepsAsync(Factory, categoryId, new[] { processId });
+
+        await TestDataSeeder.SeedOrderItemProcessAsync(
+            Factory, t.TenantId, t.UserId, processId, categoryId,
+            status: ProcessStatus.Pending);
+
+        var resp = await client.GetAsync("/api/reports/active-process-funnel");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        var row = doc.RootElement.GetProperty("processes")
+            .EnumerateArray()
+            .Single(p => p.GetProperty("processId").GetGuid() == processId);
+        row.GetProperty("readyCount").GetInt32().Should().Be(1);
+        row.GetProperty("inProgressCount").GetInt32().Should().Be(0);
+        row.GetProperty("blockedCount").GetInt32().Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ActiveFunnel_pending_with_unmet_dep_is_NOT_counted_as_ready()
+    {
+        // Process B depends on process A. A is Pending. So B should NOT
+        // count as ready (waiting on A). And the count of B in the funnel
+        // should be 0 across all three statuses, since pending-waiting is
+        // not a tracked status per Sale/Bojan's spec.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+        var processA = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId, t.UserId);
+        var processB = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId, t.UserId);
+        var categoryId = await TestDataSeeder.SeedProductCategoryAsync(Factory, t.TenantId, t.UserId);
+        await TestDataSeeder.SeedCategoryProcessesAndDepsAsync(
+            Factory,
+            categoryId,
+            new[] { processA, processB },
+            new[] { (processB, processA) }); // B depends on A
+
+        // Order with item that has both processes; both Pending.
+        await TestDataSeeder.SeedOrderWithProcessesAsync(
+            Factory, t.TenantId, t.UserId, categoryId,
+            new[] { processA, processB },
+            new[] { ProcessStatus.Pending, ProcessStatus.Pending });
+
+        var resp = await client.GetAsync("/api/reports/active-process-funnel");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        var processes = doc.RootElement.GetProperty("processes").EnumerateArray().ToList();
+
+        // A is Pending with no deps → ready.
+        processes.Single(p => p.GetProperty("processId").GetGuid() == processA)
+            .GetProperty("readyCount").GetInt32().Should().Be(1);
+        // B is Pending but A (its dep) is not done → NOT ready (and not counted).
+        processes.Single(p => p.GetProperty("processId").GetGuid() == processB)
+            .GetProperty("readyCount").GetInt32().Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ActiveFunnel_pending_with_dep_completed_counts_as_ready()
+    {
+        // A is Completed, B is Pending. B should now be ready (dep met).
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+        var processA = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId, t.UserId);
+        var processB = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId, t.UserId);
+        var categoryId = await TestDataSeeder.SeedProductCategoryAsync(Factory, t.TenantId, t.UserId);
+        await TestDataSeeder.SeedCategoryProcessesAndDepsAsync(
+            Factory,
+            categoryId,
+            new[] { processA, processB },
+            new[] { (processB, processA) });
+
+        await TestDataSeeder.SeedOrderWithProcessesAsync(
+            Factory, t.TenantId, t.UserId, categoryId,
+            new[] { processA, processB },
+            new[] { ProcessStatus.Completed, ProcessStatus.Pending });
+
+        var resp = await client.GetAsync("/api/reports/active-process-funnel");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        var processes = doc.RootElement.GetProperty("processes").EnumerateArray().ToList();
+
+        // A is Completed → not in funnel at all (Completed is not an active status).
+        processes.Single(p => p.GetProperty("processId").GetGuid() == processA)
+            .GetProperty("readyCount").GetInt32().Should().Be(0);
+        // B is Pending with A completed → ready.
+        processes.Single(p => p.GetProperty("processId").GetGuid() == processB)
+            .GetProperty("readyCount").GetInt32().Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ActiveFunnel_counts_inprogress_and_blocked_separately()
+    {
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+        var processId = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId, t.UserId);
+        var categoryId = await TestDataSeeder.SeedProductCategoryAsync(Factory, t.TenantId, t.UserId);
+        await TestDataSeeder.SeedCategoryProcessesAndDepsAsync(Factory, categoryId, new[] { processId });
+
+        await TestDataSeeder.SeedOrderItemProcessAsync(
+            Factory, t.TenantId, t.UserId, processId, categoryId,
+            status: ProcessStatus.InProgress);
+        await TestDataSeeder.SeedOrderItemProcessAsync(
+            Factory, t.TenantId, t.UserId, processId, categoryId,
+            status: ProcessStatus.Blocked);
+
+        var resp = await client.GetAsync("/api/reports/active-process-funnel");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        var row = doc.RootElement.GetProperty("processes")
+            .EnumerateArray()
+            .Single(p => p.GetProperty("processId").GetGuid() == processId);
+        row.GetProperty("inProgressCount").GetInt32().Should().Be(1);
+        row.GetProperty("blockedCount").GetInt32().Should().Be(1);
+    }
+
+    // ─── GET /api/reports/delivery-compliance ──────────────
+
+    [Fact]
+    public async Task DeliveryCompliance_on_time_when_completed_on_or_before_delivery_date()
+    {
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+        var processId = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId, t.UserId);
+        var categoryId = await TestDataSeeder.SeedProductCategoryAsync(Factory, t.TenantId, t.UserId);
+        await TestDataSeeder.SeedCategoryProcessesAndDepsAsync(Factory, categoryId, new[] { processId });
+
+        var deliveryDate = DateTime.UtcNow.Date.AddDays(7);
+        // On-time: completed BEFORE delivery date.
+        await TestDataSeeder.SeedOrderWithProcessesAsync(
+            Factory, t.TenantId, t.UserId, categoryId,
+            new[] { processId }, new[] { ProcessStatus.Completed },
+            deliveryDate: deliveryDate,
+            completedAtOverride: deliveryDate.AddDays(-3));
+        // On-time boundary: completed on delivery date itself (same day = on time).
+        await TestDataSeeder.SeedOrderWithProcessesAsync(
+            Factory, t.TenantId, t.UserId, categoryId,
+            new[] { processId }, new[] { ProcessStatus.Completed },
+            deliveryDate: deliveryDate,
+            completedAtOverride: deliveryDate);
+        // Late: completed after delivery date.
+        await TestDataSeeder.SeedOrderWithProcessesAsync(
+            Factory, t.TenantId, t.UserId, categoryId,
+            new[] { processId }, new[] { ProcessStatus.Completed },
+            deliveryDate: deliveryDate,
+            completedAtOverride: deliveryDate.AddDays(2));
+
+        var resp = await client.GetAsync(
+            $"/api/reports/delivery-compliance?granularity=Week" +
+            $"&from={DateTime.UtcNow.Date.AddDays(-30):yyyy-MM-dd}" +
+            $"&to={DateTime.UtcNow.Date.AddDays(60):yyyy-MM-dd}");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        var buckets = doc.RootElement.GetProperty("buckets").EnumerateArray().ToList();
+
+        var totalOnTime = buckets.Sum(b => b.GetProperty("onTimeCount").GetInt32());
+        var totalLate = buckets.Sum(b => b.GetProperty("lateCount").GetInt32());
+        totalOnTime.Should().Be(2);  // before + same-day
+        totalLate.Should().Be(1);
+    }
+
+    // ─── Cross-tenant isolation for the chart endpoints ────
+
+    [Fact]
+    public async Task ChartEndpoints_isolate_data_across_tenants()
+    {
+        // Seed completed OIPs in tenant A, then call all 3 chart endpoints
+        // as tenant B's user. Tenant B's responses must NOT see any of A's
+        // data — total counts/buckets remain at 0 for B.
+        var (a, b) = await TestDataSeeder.SeedTwoTenantsAsync(Factory);
+        var processA = await TestDataSeeder.SeedProcessAsync(Factory, a.TenantId, a.UserId);
+        var categoryA = await TestDataSeeder.SeedProductCategoryAsync(Factory, a.TenantId, a.UserId);
+        await TestDataSeeder.SeedCategoryProcessesAndDepsAsync(Factory, categoryA, new[] { processA });
+        await TestDataSeeder.SeedOrderItemProcessAsync(
+            Factory, a.TenantId, a.UserId, processA, categoryA,
+            status: ProcessStatus.Completed,
+            totalDurationSeconds: 600,
+            complexity: ComplexityType.S);
+        await TestDataSeeder.SeedOrderItemProcessAsync(
+            Factory, a.TenantId, a.UserId, processA, categoryA,
+            status: ProcessStatus.InProgress);
+
+        var clientB = await TestDataSeeder.AuthenticatedClientAsync(Factory, b);
+
+        // Delivery compliance: B should see zero buckets (no completed orders).
+        var resp1 = await clientB.GetAsync(
+            $"/api/reports/delivery-compliance?granularity=Week" +
+            $"&from={DateTime.UtcNow.AddDays(-30):yyyy-MM-dd}&to={DateTime.UtcNow:yyyy-MM-dd}");
+        resp1.EnsureSuccessStatusCode();
+        using (var doc = JsonDocument.Parse(await resp1.Content.ReadAsStringAsync()))
+        {
+            doc.RootElement.GetProperty("buckets").GetArrayLength().Should().Be(0);
+        }
+
+        // Funnel: B should see no processes (B has no processes seeded at all)
+        // OR processes with all-zero counts. Either way, no leaked totals.
+        var resp2 = await clientB.GetAsync("/api/reports/active-process-funnel");
+        resp2.EnsureSuccessStatusCode();
+        using (var doc = JsonDocument.Parse(await resp2.Content.ReadAsStringAsync()))
+        {
+            var totalActive = doc.RootElement.GetProperty("processes").EnumerateArray()
+                .Sum(p =>
+                    p.GetProperty("inProgressCount").GetInt32()
+                  + p.GetProperty("readyCount").GetInt32()
+                  + p.GetProperty("blockedCount").GetInt32());
+            totalActive.Should().Be(0);
+        }
+
+        // Trend: B can request the trend for A's processId (no auth on the
+        // processId itself in our query — but the WHERE TenantId = B
+        // filters out all data). Expect zero buckets + null normativ.
+        var resp3 = await clientB.GetAsync(
+            $"/api/reports/process-time-trend?processId={processA}" +
+            $"&complexity=S&granularity=Week");
+        resp3.EnsureSuccessStatusCode();
+        using (var doc = JsonDocument.Parse(await resp3.Content.ReadAsStringAsync()))
+        {
+            doc.RootElement.GetProperty("buckets").GetArrayLength().Should().Be(0);
+            doc.RootElement.GetProperty("normativMinutes").ValueKind.Should().Be(JsonValueKind.Null);
+        }
+    }
 }
