@@ -15,6 +15,10 @@ sessions don't have to reverse-engineer formulas from screenshots.
 | `GET /api/reports/delivery-compliance` | Per-period on-time vs late order count | "Analiza kašnjenja i poštovanja rokova" chart |
 | `GET /api/reports/active-process-funnel` | Per-process active OIP counts split by status | "Napredak aktivnih narudžbina" chart |
 | `GET /api/reports/worker-hours` | Per-worker time totals + daily breakdown | "Sati radnika" table |
+| `GET /api/reports/blocks-per-process` | Per-process block-request roll-up + **working-hours** avg duration | "Blokade po procesu" tab (table + 2 charts) |
+| `GET /api/reports/product-manufacturing-time` | Per-completed-order process timings + inter-process gaps | "Trajanje izrade proizvoda" tab (wide table) |
+| `GET /api/reports/work-efficiency` | Per-worker per-day Pravo vreme rada / Aktivno / Pauze / Efikasnost % | "Efikasnost radnog vremena" tab |
+| `GET /api/work-sessions/current` | Calling worker's open session + alarm/logout timestamps | Tablet auto-logout banner |
 | `PATCH /api/order-item-processes/{id}/excluded-from-reports` | (204) Toggle the IsExcludedFromReports flag | "Uključi" switch in Praćenje vremena |
 
 ## Core math: window-clamped MIN/MAX + trimmed mean
@@ -161,12 +165,117 @@ If admin renames a type, the new name appears on the next refresh — no FE
 state update needed because the name resolution happens per render via the
 fresh react-query cache.
 
+## Blokade po procesu — working-hours duration math
+
+Per Bojan 25.05.2026: average block duration counts only **active shift
+hours**, not wall-clock. A block opened Friday 13:00 and resolved Monday
+07:00 should not claim 66 hours — most of that span is night/weekend.
+
+Implementation: `WorkingMinutesBetween(from, to, shifts)` walks the date
+range day-by-day and sums each day's intersection of `[from, to]` with
+every active shift's `[StartTime, EndTime]` window. Cross-midnight
+shifts (`End ≤ Start`, e.g. 22:00–06:00) are split into two windows
+(`[Start, 24:00)` on day N + `[00:00, End)` on day N+1).
+
+Approved = `Approved + Resolved` (per Bojan); rejected blocks count
+toward `totalSubmitted` but contribute 0 duration to the average.
+
+## Trajanje izrade proizvoda — najzastupljenija težina + overlap clipping
+
+Per Bojan 25.05.2026:
+
+**Najzastupljenija težina** — mode of `Complexity` across all OIPs in the
+order, with **low-bias tie-break**: T/S equal → S, S/L equal → L,
+T/L equal → L, all three tied → L. Null when no OIP has complexity set.
+
+**Overlap clipping** — when process N+1's `StartedAt` precedes process
+N's `CompletedAt`, the inter-process gap is `max(0, raw_gap)` (zero, not
+negative). Aggregated to one logical slot per ProcessId for the order:
+`Min(StartedAt)` + `Max(CompletedAt)` across all items.
+
+Two totals: `totalWithoutGapsSeconds` (durations only) and
+`totalWithGapsSeconds` (durations + positive gaps).
+
+## Efikasnost radnog vremena — wall-clock union + lazy auto-logout
+
+Per Bojan 25.05.2026:
+
+```
+Pravo vreme rada      = sum(session.CheckOut − session.CheckIn) per worker per day
+Aktivno na procesima  = wall-clock UNION of all OrderItemSubProcessLog
+                         [StartTime, EndTime] for that worker on that day
+                         (parallel sub-processes counted ONCE, not summed)
+Pauze                 = max(0, Pravo vreme rada − Aktivno na procesima)
+Efikasnost %          = Aktivno / Pravo vreme rada × 100
+```
+
+FE color thresholds (table-only, no chart per spec): ≥80 green / 50–80
+yellow / <50 red.
+
+### Lazy auto-logout — applied to both Efikasnost and Sati radnika
+
+Per Bojan 25.05.2026 + design discussion 26.05.2026 (lazy approach,
+no background service):
+
+```
+shiftDuration = Shift.EndTime − Shift.StartTime    (handles cross-midnight)
+cap           = CheckIn + shiftDuration + Shift.MaxOvertimeHours hours
+
+effectiveEnd  =
+  null                         if no shift matches CheckIn time-of-day
+  min(CheckOut, cap)           if session is closed
+  cap                          if session is open AND now ≥ cap
+  null (excluded from report)  if session is open AND now < cap
+```
+
+The shift is resolved by matching `TimeOnly.FromDateTime(CheckIn)` against
+each active shift's `[StartTime, EndTime]` window. Both reports always
+recompute `duration` from `effectiveEnd − CheckIn` — never the stored
+`DurationMinutes` — so capped sessions don't silently use uncapped
+DB values (regression caught by integration test 26.05.2026).
+
+Implementation: `ComputeEffectiveSessionEnd` in
+`ReportingQueryService.cs`. Used by `GetWorkEfficiencyAsync`,
+`GetWorkerHoursReportAsync`, and `GetActiveWorkSessionAsync`.
+
+## Tablet auto-logout banner (no SignalR)
+
+`GET /api/work-sessions/current` returns the worker's open session plus
+pre-computed `alarmAtUtc` / `logoutAtUtc` (the same shift-matching math
+as the lazy cap). The tablet polls every 5 min + on focus, drives a
+local `setInterval` ticking every 60s. Banner shows orange at
+`alarmAtUtc`, red at `logoutAtUtc`. There's no server-pushed enforcement
+— the report-side cap is what limits "claimed" working time.
+
+## Per-shift time-tracking config
+
+`Shift` entity gained 4 fields (Bojan spec 25.05.2026):
+
+| Field | Default | Drives |
+|---|---|---|
+| `BreakMinutes` | 0 | (FE display only for now) |
+| `MaxOvertimeHours` | 6 | Lazy auto-logout cap |
+| `AutoLogoutAfterHours` | 2 | (Reserved for future background-job mode) |
+| `AlarmBeforeLogoutMinutes` | 5 | Tablet banner trigger time |
+
+Admin → Smene form exposes all four as direct InputNumber fields (Bojan
+preferred option (a) over a nested subsection). Validation rejects
+negative values via DomainException.
+
 ## Test coverage
 
 | Test type | Where | What |
 |---|---|---|
 | Unit (11 tests) | `tests/AlGreenMES.Tests.Unit/ReportingStatsTests.cs` | Window-clamped MIN/MAX, trimmed mean, edge cases, rounding |
-| Integration (13 tests) | `tests/AlGreenMES.Tests.Integration/ReportsTests.cs` | PATCH exclusion (persistence, 404, cross-tenant), `process-times` filtering, `time-tracking` flag exposure, funnel ready logic (no deps / unmet dep / met dep / InProgress + Blocked), delivery compliance on-time boundary, cross-tenant isolation for all 3 chart endpoints |
+| Integration (legacy 13) | `tests/AlGreenMES.Tests.Integration/ReportsTests.cs` | PATCH exclusion (persistence, 404, cross-tenant), `process-times` filtering, `time-tracking` flag exposure, funnel ready logic, delivery compliance on-time boundary, cross-tenant isolation |
+| Integration (5) | `BlocksPerProcessReportTests.cs` + `ProductManufacturingTimeReportTests.cs` | Blokade roll-up + cross-tenant; Trajanje row count + last-gap=0 + T/S→S tie-break + cross-tenant |
+| Integration (5) | `WorkEfficiencyReportTests.cs` | Closed-session cap, open-past-cap, open-within-cap excluded, cross-tenant, auth |
+| Integration (4) | `ActiveWorkSessionTests.cs` | 204 when no session, alarm/logout math, null when no shift match, auth |
+| Integration (8) | `ShiftConfigTests.cs` | CRUD with new fields, Department user blocked (403), cross-tenant write rejected, GET isolation, negative-value validation |
+| Integration (5) | `ProcessTimeTrendTests.cs` | Window-clamped math, outlier excluded, single sample, Normativ = 85% of trimmed mean, empty period |
+| Integration (2) | `WorkerHoursReportTests.cs` | Closed-session cap, legit session passes through |
+
+Total: 79 integration tests, 76 passing + 3 pre-existing skips.
 
 Run locally with the existing macOS Testcontainers setup:
 ```

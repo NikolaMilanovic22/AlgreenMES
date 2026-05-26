@@ -8,6 +8,77 @@ Mirrored to `easy-mes-be` (skyhard) — keep both in sync when editing.
 
 ---
 
+## 2026-05-26 — Three new /reports analyses + lazy auto-logout
+
+### Added
+- **`GET /api/reports/blocks-per-process`** — per-process roll-up of block
+  requests with **working-hours** average duration (intersection of
+  `CreatedAt → HandledAt` with the union of active shift windows, incl.
+  cross-midnight). Approved = Approved + Resolved per Bojan; rejected
+  contributes 0 duration. FE: new tab on `/reports` (table + 2 charts:
+  avg duration + submitted-vs-approved). Spec: Bojan 25.05.2026.
+- **`GET /api/reports/product-manufacturing-time`** — per-completed-order
+  breakdown of process timings + inter-process gaps. **Najzastupljenija
+  težina** tie-break (T/S→S, S/L→L, T/L→L, all-tied→L). Overlapping
+  processes clipped (no negative gaps). FE: wide horizontally-scrollable
+  all-processes table. Spec: Bojan 25.05.2026.
+- **`GET /api/reports/work-efficiency`** — per-worker per-day breakdown
+  of Pravo vreme rada / Aktivno na procesima (wall-clock union of
+  subprocess log ranges) / Pauze / Efikasnost %. FE: new tab with
+  color-coded efficiency column (≥80 green / 50–80 yellow / <50 red).
+  Spec: Bojan 25.05.2026.
+- **`GET /api/work-sessions/current`** — calling worker's open session +
+  pre-computed `alarmAtUtc` / `logoutAtUtc` for the tablet auto-logout
+  countdown banner. Cap = CheckIn + shift duration + MaxOvertimeHours.
+- **`Shift` entity gained 4 per-shift config fields**: `BreakMinutes`,
+  `MaxOvertimeHours`, `AutoLogoutAfterHours`, `AlarmBeforeLogoutMinutes`.
+  Defaults (0/6/2/5) match Bojan's stated values. Admin → Smene form
+  exposes them as direct fields (Bojan UI choice).
+- **Lazy auto-logout** applied to `/reports/work-efficiency` and
+  `/reports/worker-hours`: any session (open OR closed) whose end
+  exceeds `CheckIn + ShiftDuration + MaxOvertimeHours` is treated as
+  capped for reporting. No background service; pure read-side math.
+- **Tablet auto-logout banner** — client-side countdown using shift
+  config from `/work-sessions/current`. Banner appears at `alarmAtUtc`,
+  turns red at `logoutAtUtc`. No SignalR; pure FE.
+
+### Fixed
+- **`/reports/process-time-trend` MIN/MAX math** — reverted a brief
+  detour into literal μ±σ. Trend chart now consistently uses Excel's
+  `MINIFS`/`MAXIFS` semantics (window-clamped smallest/largest sample
+  inside the band) — same as the table. Avoids the 1-bucket / huge
+  outlier explosion seen during Bojan review 26.05.2026.
+- **FE trend chart UX** — auto-defaults to first process + complexity S
+  on mount + adds a period selector (Mesec / 3 meseca / 6 meseci /
+  Godina dana). No more "Izaberite proces i kompleksnost" wall.
+- **Closed sessions with bogus durations** were silently bypassing the
+  lazy auto-logout cap (the report used the stored `DurationMinutes`
+  instead of recomputing from the effective end). Found via integration
+  tests, fixed in both reports.
+
+### Tests
+- **36 new integration tests** across 6 files:
+  - `BlocksPerProcessReportTests` (3) — roll-up math, cross-tenant, auth
+  - `ProductManufacturingTimeReportTests` (5) — row count, last-gap=0,
+    T/S→S tie-break, cross-tenant, auth
+  - `WorkEfficiencyReportTests` (5) — closed-cap, open-past-cap,
+    open-within-cap excluded, cross-tenant, auth
+  - `ActiveWorkSessionTests` (4) — 204 when no session, alarm/logout
+    math, null when no shift match, auth
+  - `ShiftConfigTests` (8) — CRUD with new fields, Department user
+    blocked on create/update (403), cross-tenant write rejected,
+    GET isolation, negative-value validation
+  - `ProcessTimeTrendTests` (5) — window-clamped math, outlier
+    excluded, single sample, Normativ = 85% of trimmed mean, empty period
+  - `WorkerHoursReportTests` (2) — closed-session cap, legit session
+- Suite total: 79 (was 50), 76 passing + 3 pre-existing skips.
+
+### Migrations
+- `20260526171601_AddShiftTimeTrackingConfig` (Identity) — adds 4 int
+  columns with defaults (0/6/2/5) to `identity.shifts`.
+
+---
+
 ## 2026-05-24 — Test coverage + UX polish for /reports
 
 ### Added

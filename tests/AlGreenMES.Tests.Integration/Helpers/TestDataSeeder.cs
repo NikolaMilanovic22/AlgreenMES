@@ -323,6 +323,200 @@ public static class TestDataSeeder
         return (order.Id, item.Id, oips);
     }
 
+    /// <summary>
+    /// Marks an existing order as Completed with a given CompletedAt. Used
+    /// by /reports/product-manufacturing-time tests where the report only
+    /// considers orders with Status=Completed. (SeedOrderWithProcessesAsync
+    /// completes the OIPs but doesn't touch the order's status.)
+    /// </summary>
+    public static async Task MarkOrderCompletedAsync(
+        AlgreenWebApplicationFactory factory,
+        Guid orderId,
+        DateTime? completedAt = null)
+    {
+        using var scope = factory.Services.CreateScope();
+        var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
+        await ordersDb.Orders.IgnoreQueryFilters()
+            .Where(o => o.Id == orderId)
+            .ExecuteUpdateAsync(set => set
+                .SetProperty(o => o.Status, OrderStatus.Completed)
+                .SetProperty(o => o.CompletedAt, completedAt ?? DateTime.UtcNow));
+    }
+
+    /// <summary>
+    /// Seeds a Shift with per-shift time-tracking config (Bojan spec 25.05.2026).
+    /// Defaults match the BE seeder: 0 min break, 6h max overtime, auto-logout
+    /// every 2h, 5 min alarm. Override individual params to exercise edge cases
+    /// (cross-midnight shifts, different overtime caps, etc.).
+    /// </summary>
+    public static async Task<Guid> SeedShiftAsync(
+        AlgreenWebApplicationFactory factory,
+        Guid tenantId,
+        string? name = null,
+        TimeOnly? startTime = null,
+        TimeOnly? endTime = null,
+        int breakMinutes = 0,
+        int maxOvertimeHours = 6,
+        int autoLogoutAfterHours = 2,
+        int alarmBeforeLogoutMinutes = 5)
+    {
+        using var scope = factory.Services.CreateScope();
+        var identityDb = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+
+        var shift = Shift.Create(
+            tenantId,
+            name ?? $"Shift-{Guid.NewGuid():N}".Substring(0, 10),
+            startTime ?? new TimeOnly(6, 0),
+            endTime ?? new TimeOnly(14, 0),
+            breakMinutes,
+            maxOvertimeHours,
+            autoLogoutAfterHours,
+            alarmBeforeLogoutMinutes);
+        identityDb.Shifts.Add(shift);
+        await identityDb.SaveChangesAsync();
+        return shift.Id;
+    }
+
+    /// <summary>
+    /// Seeds a WorkSession with arbitrary historical timestamps. The entity's
+    /// CheckIn factory hardcodes CheckInTime = UtcNow, so we override via
+    /// ExecuteUpdateAsync after insert. Pass checkOutTime = null to seed an
+    /// open session (for lazy auto-logout tests).
+    /// </summary>
+    public static async Task<Guid> SeedWorkSessionAsync(
+        AlgreenWebApplicationFactory factory,
+        Guid tenantId,
+        Guid userId,
+        DateTime checkInTime,
+        DateTime? checkOutTime = null)
+    {
+        using var scope = factory.Services.CreateScope();
+        var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
+
+        var session = WorkSession.CheckIn(tenantId, userId);
+        if (checkOutTime.HasValue)
+            session.CheckOut();
+        ordersDb.WorkSessions.Add(session);
+        await ordersDb.SaveChangesAsync();
+
+        // Override the auto-generated UtcNow stamps with the requested times.
+        var date = DateOnly.FromDateTime(checkInTime);
+        var duration = checkOutTime.HasValue
+            ? (int?)Math.Max(0, (int)(checkOutTime.Value - checkInTime).TotalMinutes)
+            : null;
+        await ordersDb.WorkSessions
+            .IgnoreQueryFilters()
+            .Where(ws => ws.Id == session.Id)
+            .ExecuteUpdateAsync(set => set
+                .SetProperty(ws => ws.CheckInTime, checkInTime)
+                .SetProperty(ws => ws.CheckOutTime, checkOutTime)
+                .SetProperty(ws => ws.DurationMinutes, duration)
+                .SetProperty(ws => ws.Date, date));
+
+        return session.Id;
+    }
+
+    /// <summary>
+    /// Seeds a BlockRequest against an existing OIP, with optional historical
+    /// CreatedAt + HandledAt timestamps. Used by /reports/blocks-per-process
+    /// tests to exercise the working-hours duration math across shift windows.
+    /// </summary>
+    public static async Task<Guid> SeedBlockRequestAsync(
+        AlgreenWebApplicationFactory factory,
+        Guid tenantId,
+        Guid orderItemProcessId,
+        Guid requestedByUserId,
+        RequestStatus finalStatus = RequestStatus.Pending,
+        DateTime? createdAt = null,
+        DateTime? handledAt = null)
+    {
+        using var scope = factory.Services.CreateScope();
+        var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
+
+        var br = BlockRequest.CreateForProcess(
+            tenantId, orderItemProcessId, requestedByUserId, requestNote: "test");
+
+        switch (finalStatus)
+        {
+            case RequestStatus.Approved:
+                br.Approve(requestedByUserId, "test-approved");
+                break;
+            case RequestStatus.Resolved:
+                br.Approve(requestedByUserId, "test-approved");
+                br.Resolve(requestedByUserId);
+                break;
+            case RequestStatus.Rejected:
+                br.Reject(requestedByUserId, "test-rejected");
+                break;
+        }
+
+        ordersDb.BlockRequests.Add(br);
+        await ordersDb.SaveChangesAsync();
+
+        if (createdAt.HasValue || handledAt.HasValue)
+        {
+            await ordersDb.BlockRequests
+                .IgnoreQueryFilters()
+                .Where(b => b.Id == br.Id)
+                .ExecuteUpdateAsync(set => set
+                    .SetProperty(b => b.CreatedAt, createdAt ?? br.CreatedAt)
+                    .SetProperty(b => b.HandledAt, handledAt ?? br.HandledAt));
+        }
+
+        return br.Id;
+    }
+
+    /// <summary>
+    /// Seeds a SubProcess template + an OrderItemSubProcess on an existing
+    /// OIP + an OrderItemSubProcessLog with override-able start/end times.
+    /// Returns the log id. Used by /reports/work-efficiency tests to exercise
+    /// the wall-clock-union math for "Aktivno na procesima."
+    /// </summary>
+    public static async Task<Guid> SeedSubProcessLogAsync(
+        AlgreenWebApplicationFactory factory,
+        Guid tenantId,
+        Guid orderItemProcessId,
+        Guid processId,
+        Guid userId,
+        DateTime startTime,
+        DateTime endTime)
+    {
+        using var scope = factory.Services.CreateScope();
+        var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
+        var productionDb = scope.ServiceProvider.GetRequiredService<ProductionDbContext>();
+
+        var subProcessName = $"SP-{Guid.NewGuid():N}".Substring(0, 10);
+        // Process.AddSubProcess is the public factory path; SubProcess.Create is internal.
+        var process = await productionDb.Processes
+            .IgnoreQueryFilters()
+            .SingleAsync(p => p.Id == processId);
+        var subProcess = process.AddSubProcess(subProcessName, sequenceOrder: 1);
+        await productionDb.SaveChangesAsync();
+
+        var oip = await ordersDb.OrderItemProcesses
+            .IgnoreQueryFilters()
+            .SingleAsync(p => p.Id == orderItemProcessId);
+        var oisp = oip.AddSubProcess(subProcess.Id);
+        await ordersDb.SaveChangesAsync();
+
+        var log = OrderItemSubProcessLog.Start(tenantId, oisp.Id, userId);
+        log.End();
+        ordersDb.OrderItemSubProcessLogs.Add(log);
+        await ordersDb.SaveChangesAsync();
+
+        // Override the auto-generated timestamps.
+        var duration = (int)(endTime - startTime).TotalSeconds;
+        await ordersDb.OrderItemSubProcessLogs
+            .IgnoreQueryFilters()
+            .Where(l => l.Id == log.Id)
+            .ExecuteUpdateAsync(set => set
+                .SetProperty(l => l.StartTime, startTime)
+                .SetProperty(l => l.EndTime, endTime)
+                .SetProperty(l => l.DurationMinutes, duration));
+
+        return log.Id;
+    }
+
     public static async Task<Guid> SeedNotificationAsync(
         AlgreenWebApplicationFactory factory,
         Guid tenantId,
