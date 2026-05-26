@@ -26,6 +26,25 @@ public class ShiftConfiguration : IEntityTypeConfiguration<Shift>
             .IsRequired()
             .HasDefaultValue(true);
 
+        // Per-shift time-tracking config (Bojan spec 25.05.2026).
+        // Defaults match Bojan's stated values: 0 min break (configurable),
+        // 6h max overtime, auto-logout every 2h, 5 min alarm before logout.
+        builder.Property(s => s.BreakMinutes)
+            .IsRequired()
+            .HasDefaultValue(0);
+
+        builder.Property(s => s.MaxOvertimeHours)
+            .IsRequired()
+            .HasDefaultValue(6);
+
+        builder.Property(s => s.AutoLogoutAfterHours)
+            .IsRequired()
+            .HasDefaultValue(2);
+
+        builder.Property(s => s.AlarmBeforeLogoutMinutes)
+            .IsRequired()
+            .HasDefaultValue(5);
+
         builder.Property(s => s.CreatedAt)
             .IsRequired();
     }

@@ -1,3 +1,4 @@
+using AlGreenMES.Modules.Orders.Application.DTOs;
 using AlGreenMES.Modules.Orders.Application.DTOs.Reports;
 using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetDeliveryCompliance;
 using AlGreenMES.Modules.Orders.Domain.Enums;
@@ -54,5 +55,31 @@ public interface IReportingQueryService
         Guid tenantId,
         List<OrderType>? orderTypes,
         ComplexityType? complexity,
+        CancellationToken cancellationToken = default);
+
+    Task<BlocksPerProcessReportDto> GetBlocksPerProcessAsync(
+        Guid tenantId,
+        DateTime? from,
+        DateTime? to,
+        CancellationToken cancellationToken = default);
+
+    Task<ProductManufacturingTimeReportDto> GetProductManufacturingTimeAsync(
+        Guid tenantId,
+        DateTime? from,
+        DateTime? to,
+        List<OrderType>? orderTypes,
+        List<Guid>? productCategoryIds,
+        CancellationToken cancellationToken = default);
+
+    Task<WorkEfficiencyReportDto> GetWorkEfficiencyAsync(
+        Guid tenantId,
+        DateOnly from,
+        DateOnly to,
+        Guid? userId,
+        CancellationToken cancellationToken = default);
+
+    Task<ActiveWorkSessionDto?> GetActiveWorkSessionAsync(
+        Guid tenantId,
+        Guid userId,
         CancellationToken cancellationToken = default);
 }

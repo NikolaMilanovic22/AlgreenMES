@@ -4,4 +4,8 @@ public record UpdateShiftRequest(
     string Name,
     TimeOnly StartTime,
     TimeOnly EndTime,
-    bool IsActive);
+    bool IsActive,
+    int BreakMinutes,
+    int MaxOvertimeHours,
+    int AutoLogoutAfterHours,
+    int AlarmBeforeLogoutMinutes);

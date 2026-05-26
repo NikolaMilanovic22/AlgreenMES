@@ -1,9 +1,12 @@
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetActiveProcessFunnel;
+using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetBlocksPerProcess;
 using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetDeliveryCompliance;
 using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetProcessTimes;
 using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetProcessTimeTrend;
+using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetProductManufacturingTime;
 using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetTimeTracking;
+using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetWorkEfficiency;
 using AlGreenMES.Modules.Orders.Application.Queries.Reports.GetWorkerHours;
 using AlGreenMES.Modules.Orders.Domain.Enums;
 using AlGreenMES.Modules.Production.Domain.Enums;
@@ -72,6 +75,25 @@ public class ReportsController : ControllerBase
     }
 
     /// <summary>
+    /// "Efikasnost radnog vremena" — per-worker per-day breakdown of
+    /// worked time vs. active-on-process time. Aktivno = wall-clock union
+    /// of subprocess log ranges (parallel work counted once). Efficiency %
+    /// gets color-coded on the FE. Bojan spec 25.05.2026.
+    /// </summary>
+    [HttpGet("work-efficiency")]
+    public async Task<IActionResult> GetWorkEfficiency(
+        [FromQuery] DateOnly from,
+        [FromQuery] DateOnly to,
+        [FromQuery] Guid? userId,
+        CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(
+            new GetWorkEfficiencyQuery(_tenantService.GetCurrentTenantId(), from, to, userId),
+            cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
     /// "Trend prosečnog vremena po nedelji" — per-period (week/month) stats
     /// for a single (process × complexity): green band = window-clamped
     /// MIN/MAX per bucket, blue line = Realni prosek per bucket, Normativ =
@@ -99,6 +121,25 @@ public class ReportsController : ControllerBase
     }
 
     /// <summary>
+    /// "Blokade po procesu" — per-process count of block requests + average
+    /// duration in WORKING HOURS (intersection of CreatedAt → HandledAt with
+    /// the union of active Shift windows). Approved = Approved+Resolved.
+    /// Rejected blocks contribute zero duration to the average but count
+    /// toward TotalSubmitted. Bojan spec 25.05.2026.
+    /// </summary>
+    [HttpGet("blocks-per-process")]
+    public async Task<IActionResult> GetBlocksPerProcess(
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(
+            new GetBlocksPerProcessQuery(_tenantService.GetCurrentTenantId(), from, to),
+            cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
     /// "Napredak aktivnih narudžbina" — per-process count of active
     /// OrderItemProcesses split into three buckets: U toku (InProgress),
     /// Spreman za izvršavanje (Pending + deps complete), Blokirano.
@@ -111,6 +152,26 @@ public class ReportsController : ControllerBase
     {
         var result = await _mediator.Send(
             new GetActiveProcessFunnelQuery(_tenantService.GetCurrentTenantId(), orderTypes, complexity),
+            cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// "Prosečno trajanje izrade proizvoda" — per-completed-order breakdown
+    /// of process timings + inter-process gaps. Najzastupljenija težina with
+    /// low-bias tie-break (T/S=S, S/L=L, T/L=L). Overlapping processes are
+    /// clipped (no negative gaps). Bojan spec 25.05.2026.
+    /// </summary>
+    [HttpGet("product-manufacturing-time")]
+    public async Task<IActionResult> GetProductManufacturingTime(
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        [FromQuery] List<OrderType>? orderTypes,
+        [FromQuery] List<Guid>? productCategoryIds,
+        CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(
+            new GetProductManufacturingTimeQuery(_tenantService.GetCurrentTenantId(), from, to, orderTypes, productCategoryIds),
             cancellationToken);
         return Ok(result);
     }

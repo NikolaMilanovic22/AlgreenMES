@@ -7,5 +7,9 @@ public record ShiftDto(
     TimeOnly StartTime,
     TimeOnly EndTime,
     bool IsActive,
+    int BreakMinutes,
+    int MaxOvertimeHours,
+    int AutoLogoutAfterHours,
+    int AlarmBeforeLogoutMinutes,
     DateTime CreatedAt,
     DateTime? UpdatedAt);

@@ -7,4 +7,8 @@ public record CreateShiftCommand(
     Guid TenantId,
     string Name,
     TimeOnly StartTime,
-    TimeOnly EndTime) : IRequest<ShiftDto>;
+    TimeOnly EndTime,
+    int BreakMinutes,
+    int MaxOvertimeHours,
+    int AutoLogoutAfterHours,
+    int AlarmBeforeLogoutMinutes) : IRequest<ShiftDto>;

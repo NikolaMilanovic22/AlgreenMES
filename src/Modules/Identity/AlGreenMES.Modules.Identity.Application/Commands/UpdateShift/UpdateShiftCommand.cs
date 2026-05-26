@@ -8,4 +8,8 @@ public record UpdateShiftCommand(
     string Name,
     TimeOnly StartTime,
     TimeOnly EndTime,
-    bool IsActive) : IRequest<ShiftDto>;
+    bool IsActive,
+    int BreakMinutes,
+    int MaxOvertimeHours,
+    int AutoLogoutAfterHours,
+    int AlarmBeforeLogoutMinutes) : IRequest<ShiftDto>;

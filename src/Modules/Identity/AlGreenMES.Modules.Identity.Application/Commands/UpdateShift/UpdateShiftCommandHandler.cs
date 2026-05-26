@@ -23,7 +23,15 @@ public class UpdateShiftCommandHandler : IRequestHandler<UpdateShiftCommand, Shi
         var shift = await _shiftRepository.GetByIdAsync(request.Id, cancellationToken)
             ?? throw new NotFoundException("Shift", request.Id);
 
-        shift.Update(request.Name, request.StartTime, request.EndTime, request.IsActive);
+        shift.Update(
+            request.Name,
+            request.StartTime,
+            request.EndTime,
+            request.IsActive,
+            request.BreakMinutes,
+            request.MaxOvertimeHours,
+            request.AutoLogoutAfterHours,
+            request.AlarmBeforeLogoutMinutes);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return shift.Adapt<ShiftDto>();

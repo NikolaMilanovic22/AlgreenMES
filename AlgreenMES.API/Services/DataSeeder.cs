@@ -210,7 +210,9 @@ public static class DataSeeder
             if (!await identityDb.Shifts.IgnoreQueryFilters()
                 .AnyAsync(s => s.Name == name && s.TenantId == tenantId))
             {
-                var shift = Shift.Create(tenantId, name, start, end);
+                // Seed defaults match Bojan spec 25.05.2026: 0 min break,
+                // 6h max overtime, auto-logout every 2h, 5 min alarm.
+                var shift = Shift.Create(tenantId, name, start, end, 0, 6, 2, 5);
                 identityDb.Shifts.Add(shift);
             }
         }

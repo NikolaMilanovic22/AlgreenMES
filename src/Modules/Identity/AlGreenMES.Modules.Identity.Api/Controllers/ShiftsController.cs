@@ -55,7 +55,15 @@ public class ShiftsController : ControllerBase
     public async Task<IActionResult> CreateShift([FromBody] CreateShiftRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
-            new CreateShiftCommand(_tenantService.GetCurrentTenantId(), request.Name, request.StartTime, request.EndTime),
+            new CreateShiftCommand(
+                _tenantService.GetCurrentTenantId(),
+                request.Name,
+                request.StartTime,
+                request.EndTime,
+                request.BreakMinutes,
+                request.MaxOvertimeHours,
+                request.AutoLogoutAfterHours,
+                request.AlarmBeforeLogoutMinutes),
             cancellationToken);
 
         return Created($"/api/shifts/{result.Id}", result);
@@ -66,7 +74,16 @@ public class ShiftsController : ControllerBase
     public async Task<IActionResult> UpdateShift(Guid id, [FromBody] UpdateShiftRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
-            new UpdateShiftCommand(id, request.Name, request.StartTime, request.EndTime, request.IsActive),
+            new UpdateShiftCommand(
+                id,
+                request.Name,
+                request.StartTime,
+                request.EndTime,
+                request.IsActive,
+                request.BreakMinutes,
+                request.MaxOvertimeHours,
+                request.AutoLogoutAfterHours,
+                request.AlarmBeforeLogoutMinutes),
             cancellationToken);
 
         return Ok(result);

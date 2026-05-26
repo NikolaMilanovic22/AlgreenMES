@@ -1,6 +1,7 @@
 using AlGreenMES.Modules.Orders.Api.Requests;
 using AlGreenMES.Modules.Orders.Application.Commands.CheckIn;
 using AlGreenMES.Modules.Orders.Application.Commands.CheckOut;
+using AlGreenMES.Modules.Orders.Application.Queries.GetActiveWorkSession;
 using AlGreenMES.Modules.Orders.Application.Queries.GetWorkSessions;
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using MediatR;
@@ -17,10 +18,27 @@ public class WorkSessionsController : ControllerBase
     private readonly IMediator _mediator;
     private readonly ITenantService _tenantService;
 
-    public WorkSessionsController(IMediator mediator, ITenantService tenantService)
+    private readonly ICurrentUserService _currentUserService;
+
+    public WorkSessionsController(IMediator mediator, ITenantService tenantService, ICurrentUserService currentUserService)
     {
         _mediator = mediator;
         _tenantService = tenantService;
+        _currentUserService = currentUserService;
+    }
+
+    /// <summary>
+    /// Calling worker's currently-open WorkSession + pre-computed alarm /
+    /// auto-logout timestamps for the tablet countdown banner. Returns null
+    /// (HTTP 204) when no session is open. Bojan spec 25.05.2026.
+    /// </summary>
+    [HttpGet("current")]
+    public async Task<IActionResult> GetCurrent(CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(
+            new GetActiveWorkSessionQuery(_tenantService.GetCurrentTenantId(), _currentUserService.GetCurrentUserId()),
+            cancellationToken);
+        return result == null ? NoContent() : Ok(result);
     }
 
     [HttpGet]
