@@ -71,4 +71,61 @@ public static class ReportingStats
             Math.Round(stdev, 2),
             Math.Round(trimmedMean, 2));
     }
+
+    /// <summary>
+    /// Two-pass robust stats for the Trend chart — Bojan review round 3
+    /// (27.05.2026). Both the previous interpretations were "wrong" per his
+    /// review:
+    ///   - Excel MINIFS/MAXIFS (smallest/largest in-window sample) → MAX
+    ///     was still pulled up by one borderline-in-window outlier (e.g.
+    ///     PREDKROJENJE/S: MAX=46 with most samples under 5 min).
+    ///   - Literal μ±σ on RAW data → exploded for any process with a single
+    ///     forgotten-checkout outlier (band hit 1579 min).
+    ///
+    /// This pass:
+    ///   1. Compute μ₀, σ₀ on RAW samples.
+    ///   2. Drop everything outside [μ₀ − σ₀, μ₀ + σ₀].
+    ///   3. Recompute μ′, σ′ on the cleaned subset.
+    ///   4. MIN = max(0, μ′ − σ′), MAX = μ′ + σ′, TrimmedMean = μ′.
+    /// Result: tight, visually-meaningful band centered on the cleaned
+    /// mean; isolated outliers can't move the band.
+    /// </summary>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="values"/> is empty.</exception>
+    public static ComplexityStatsDto ComputeRobustTrendStats(List<double> values)
+    {
+        if (values.Count == 0)
+            throw new ArgumentException("ComputeRobustTrendStats requires at least one sample.", nameof(values));
+
+        var n = values.Count;
+        var meanRaw = values.Average();
+        var varianceRaw = values.Sum(x => (x - meanRaw) * (x - meanRaw)) / n;
+        var stdevRaw = Math.Sqrt(varianceRaw);
+
+        List<double> cleaned;
+        if (n == 1 || stdevRaw == 0)
+        {
+            cleaned = values;
+        }
+        else
+        {
+            cleaned = values.Where(x => x >= meanRaw - stdevRaw && x <= meanRaw + stdevRaw).ToList();
+            if (cleaned.Count == 0) cleaned = values; // bimodal pathology — defensive
+        }
+
+        var meanCleaned = cleaned.Average();
+        var stdevCleaned = cleaned.Count > 1
+            ? Math.Sqrt(cleaned.Sum(x => (x - meanCleaned) * (x - meanCleaned)) / cleaned.Count)
+            : 0.0;
+
+        var minBand = Math.Max(0, meanCleaned - stdevCleaned);
+        var maxBand = meanCleaned + stdevCleaned;
+
+        return new ComplexityStatsDto(
+            n,
+            Math.Round(meanCleaned, 2),
+            Math.Round(minBand, 2),
+            Math.Round(maxBand, 2),
+            Math.Round(stdevCleaned, 2),
+            Math.Round(meanCleaned, 2));
+    }
 }

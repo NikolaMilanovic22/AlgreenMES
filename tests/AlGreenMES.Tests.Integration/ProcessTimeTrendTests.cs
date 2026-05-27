@@ -9,24 +9,24 @@ namespace AlGreenMES.Tests.Integration;
 
 /// <summary>
 /// /api/reports/process-time-trend — single (process × complexity) trend
-/// chart with window-clamped MIN/MAX matching Excel's MINIFS/MAXIFS
-/// (smallest/largest sample inside μ±σ band). Bojan spec 25.05.2026.
-///
-/// Why this code needs tests: the math has been touched twice this session
-/// — first switched to literal μ±σ, then reverted to window-clamped after
-/// data review. A silent regression here would change every Realni prosek
-/// and band value with no visible error.
+/// chart with two-pass robust stats: clean RAW samples to within [μ₀±σ₀],
+/// then return μ′±σ′ on the cleaned subset as MIN/MAX. Bojan review
+/// round 3 (27.05.2026). Rounds 1+2 (Excel MINIFS/MAXIFS, literal μ±σ
+/// on raw) were both flagged wrong.
 /// </summary>
 public class ProcessTimeTrendTests : IntegrationTestBase
 {
     public ProcessTimeTrendTests(AlgreenWebApplicationFactory factory) : base(factory) { }
 
     [Fact]
-    public async Task Trend_window_clamped_min_max_picks_smallest_and_largest_in_band()
+    public async Task Trend_robust_min_max_uses_cleaned_mean_plus_minus_sigma()
     {
-        // Samples: {5, 10, 15, 20, 25} minutes  (durations stored as seconds:
-        // {300, 600, 900, 1200, 1500}). μ=15, σ=√50 ≈ 7.07, band ≈ [7.93, 22.07].
-        // In-window samples: {10, 15, 20}. MIN=10, MAX=20, trimmedMean=15.
+        // Samples: {5, 10, 15, 20, 25} minutes (stored as seconds:
+        // {300, 600, 900, 1200, 1500}).
+        // Pass 1: μ₀=15, σ₀=√50 ≈ 7.07, cleaning window [7.93, 22.07].
+        // Cleaned subset: {10, 15, 20}.
+        // Pass 2: μ′=15, σ′=√(50/3) ≈ 4.08.
+        // MIN ≈ 10.92, MAX ≈ 19.08, trimmedMean = 15.
         var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
         var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
         var processId = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId, t.UserId);
@@ -51,8 +51,8 @@ public class ProcessTimeTrendTests : IntegrationTestBase
         buckets.Should().HaveCount(1);
         var b = buckets[0];
         b.GetProperty("count").GetInt32().Should().Be(5);
-        b.GetProperty("minMinutes").GetDouble().Should().BeApproximately(10.0, 0.01);
-        b.GetProperty("maxMinutes").GetDouble().Should().BeApproximately(20.0, 0.01);
+        b.GetProperty("minMinutes").GetDouble().Should().BeApproximately(10.92, 0.01);
+        b.GetProperty("maxMinutes").GetDouble().Should().BeApproximately(19.08, 0.01);
         b.GetProperty("trimmedMeanMinutes").GetDouble().Should().BeApproximately(15.0, 0.01);
     }
 

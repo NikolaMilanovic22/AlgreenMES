@@ -414,13 +414,12 @@ public class ReportingQueryService : IReportingQueryService
             return new ProcessTimeTrendDto(new List<ProcessTimeTrendBucketDto>(), null);
         }
 
-        // Per Bojan 25.05.2026: trend chart MIN/MAX should match the Excel
-        // StDev formula (MINIFS/MAXIFS) — i.e. smallest/largest sample inside
-        // the μ±σ band, NOT literal μ±σ bounds. Literal μ±σ explodes when one
-        // forgotten-checkout sample inflates σ; the Excel formula naturally
-        // ignores those extreme outliers. Same math as ComputeStats; the
-        // trend chart, the Vremena table, and the StDev sheet all stay
-        // consistent.
+        // Per Bojan review 27.05.2026 — third interpretation attempt for the
+        // Trend chart MIN/MAX. Rounds 1 (Excel MINIFS/MAXIFS) and 2 (literal
+        // μ±σ on raw data) were both flagged wrong. Switching to two-pass
+        // robust stats: cleaned data → μ′ ± σ′ as the band. Same Realni prosek
+        // (cleaned mean) but the band is now tight and visually meaningful
+        // even with one borderline outlier. See ReportingStats.ComputeRobustTrendStats.
         var buckets = entities
             .Select(p => new { p.CompletedAt, Minutes = EffectiveDurationSeconds(p) / 60.0 })
             .GroupBy(x => BucketStart(x.CompletedAt!.Value, granularity))
@@ -428,7 +427,7 @@ public class ReportingQueryService : IReportingQueryService
             .Select(g =>
             {
                 var values = g.Select(x => x.Minutes).ToList();
-                var stats = ComputeStats(values);
+                var stats = ReportingStats.ComputeRobustTrendStats(values);
                 return new ProcessTimeTrendBucketDto(
                     g.Key,
                     stats.Count,
@@ -438,12 +437,12 @@ public class ReportingQueryService : IReportingQueryService
             })
             .ToList();
 
-        // Normativ = 85% of trimmed mean across ALL filtered samples (not
-        // bucket-aware) so it's a single constant target line.
+        // Normativ = 85% of cleaned trimmed mean across ALL filtered samples
+        // (not bucket-aware) so it's a single constant target line.
         var overallValues = entities
             .Select(p => EffectiveDurationSeconds(p) / 60.0)
             .ToList();
-        var overallStats = ComputeStats(overallValues);
+        var overallStats = ReportingStats.ComputeRobustTrendStats(overallValues);
         var normativ = Math.Round(overallStats.TrimmedMeanMinutes * 0.85, 2);
 
         return new ProcessTimeTrendDto(buckets, normativ);
