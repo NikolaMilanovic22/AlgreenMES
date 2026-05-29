@@ -324,6 +324,47 @@ public static class TestDataSeeder
     }
 
     /// <summary>
+    /// Seeds one order with multiple items (each with a single completed
+    /// process). Used to assert the manufacturing-time report emits one row
+    /// PER ITEM (29.05.2026 reshape), not one row per order. Caller must still
+    /// MarkOrderCompletedAsync for the order to qualify for the report.
+    /// </summary>
+    public static async Task<(Guid OrderId, Guid[] ItemIds)> SeedMultiItemOrderAsync(
+        AlgreenWebApplicationFactory factory,
+        Guid tenantId,
+        Guid createdByUserId,
+        Guid productCategoryId,
+        Guid processId,
+        int itemCount)
+    {
+        using var scope = factory.Services.CreateScope();
+        var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
+
+        var order = Order.Create(
+            tenantId,
+            $"ORD-{Guid.NewGuid():N}".Substring(0, 16),
+            DateTime.UtcNow.AddDays(7),
+            priority: 3,
+            OrderType.Standard,
+            createdByUserId,
+            notes: null);
+
+        var itemIds = new Guid[itemCount];
+        for (var i = 0; i < itemCount; i++)
+        {
+            var item = order.AddItem(productCategoryId, productName: null, quantity: 1);
+            var oip = item.AddProcess(processId, complexity: null);
+            oip.Start();
+            oip.Complete();
+            itemIds[i] = item.Id;
+        }
+
+        ordersDb.Orders.Add(order);
+        await ordersDb.SaveChangesAsync();
+        return (order.Id, itemIds);
+    }
+
+    /// <summary>
     /// Marks an existing order as Completed with a given CompletedAt. Used
     /// by /reports/product-manufacturing-time tests where the report only
     /// considers orders with Status=Completed. (SeedOrderWithProcessesAsync

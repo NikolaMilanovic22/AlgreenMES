@@ -1,29 +1,26 @@
 namespace AlGreenMES.Modules.Orders.Application.DTOs.Reports;
 
 /// <summary>
-/// "Efikasnost radnog vremena" — per-worker, per-day breakdown of
-/// time spent at work vs. time actively working on processes
-/// (Bojan spec 25.05.2026).
+/// "Efikasnost radnog vremena" — per-WORKER aggregate over the filtered
+/// period (Excel Table 2, Sale/Bojan 29.05.2026). One row per worker;
+/// the per-day detail lives in the "Sati radnika" tab (WorkerHoursReportDto).
 ///
-/// Calculations:
-///   • Pravo vreme rada = sum(CheckOut − CheckIn) across all WorkSessions
-///                        for that worker on that day.
-///   • Aktivno na procesima = WALL-CLOCK UNION of all
-///     OrderItemSubProcessLog [StartTime, EndTime] ranges for that worker
-///     on that day (parallel sub-processes overlap into the same wall-clock
-///     window — counted once, NOT summed — per Bojan).
-///   • Pauze = max(0, PravoVremeRada − AktivnoNaProcesima).
-///   • Efikasnost % = (Aktivno / PravoVremeRada) × 100.
+///   • LoggedMinutes      = Σ TotalWorked (Prijavljeno / ukupno).
+///   • EffectiveMinutes   = Σ Effective (Efektivno).
+///   • ActiveMinutes      = Σ Active na procesima.
+///   • UncoveredMinutes   = Σ Nepokriveno.
+///   • EfficiencyPercent  = ΣActive / ΣEffective × 100 (weighted).
 ///
-/// Color coding (FE): efficiency ≥ 80 → green, 50–80 → yellow, &lt; 50 → red.
+/// Status + color are derived on the FE from EfficiencyPercent
+/// (≥80 Odlično, 60–79 Prihvatljivo, 40–59 Ispod norme, &lt;40 Neprihvatljivo).
 /// </summary>
 public record WorkEfficiencyReportDto(List<WorkEfficiencyRowDto> Rows);
 
 public record WorkEfficiencyRowDto(
     Guid UserId,
     string FullName,
-    DateOnly Date,
-    int WorkedMinutes,
+    int LoggedMinutes,
+    int EffectiveMinutes,
     int ActiveOnProcessesMinutes,
-    int BreakMinutes,
+    int UncoveredMinutes,
     double EfficiencyPercent);

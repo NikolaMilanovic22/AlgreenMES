@@ -200,9 +200,9 @@ public static class DataSeeder
         // 7. Shifts
         var shiftDefs = new (string Name, TimeOnly Start, TimeOnly End)[]
         {
-            ("Jutarnja smjena", new TimeOnly(6, 0), new TimeOnly(14, 0)),
-            ("Popodnevna smjena", new TimeOnly(14, 0), new TimeOnly(22, 0)),
-            ("Noćna smjena", new TimeOnly(22, 0), new TimeOnly(6, 0)),
+            ("Jutarnja smena", new TimeOnly(6, 0), new TimeOnly(14, 0)),
+            ("Popodnevna smena", new TimeOnly(14, 0), new TimeOnly(22, 0)),
+            ("Noćna smena", new TimeOnly(22, 0), new TimeOnly(6, 0)),
         };
 
         foreach (var (name, start, end) in shiftDefs)

@@ -1,30 +1,35 @@
 namespace AlGreenMES.Modules.Orders.Application.DTOs.Reports;
 
 /// <summary>
-/// "Prosečno trajanje izrade proizvoda" — per-completed-order
+/// "Prosečno trajanje izrade proizvoda" — per-completed-order-ITEM
 /// breakdown of process timings + inter-process gaps (Sale/Bojan
-/// spec 25.05.2026). One row per order, columns wide enough to
-/// fit all processes the order touched (no fixed 7-process cap —
-/// spec says "Svi procesi moraju da budu prikazani").
+/// spec 25.05.2026, refined 29.05.2026). One row per ORDER ITEM
+/// ("sve stavke iz narudžbine treba da budu prikazane"); columns wide
+/// enough to fit all processes the item touched.
 ///
-/// Processes are ordered by their start time (first started = process 1).
-/// If process N+1 starts before process N completes, the overlap is
-/// clipped — the gap "Do sledećeg procesa" treats start of N+1 as
-/// equal to end of N (no negative gaps).
+/// Processes are ordered by the canonical process sequence so the
+/// columns match the order-detail table. The gap "Do sledećeg procesa"
+/// = max(0, next.Start − this.Stop): out-of-order / overlapping
+/// processes give 0 (no negative gaps). Computing gaps per item — not
+/// per order — is what fixed the impossible 0:00:00 gaps that the old
+/// per-order aggregation produced for multi-item orders.
 ///
-/// Top complexity ("najzastupljenija težina") uses item-count majority
-/// with low-bias tie-break per spec: T/S=S, S/L=L, T/L=L. When all
-/// three appear at equal counts, falls back to L.
+/// Top complexity ("najzastupljenija težina") uses per-item process-count
+/// majority with low-bias tie-break per spec: T/S=S, S/L=L, T/L=L. When
+/// all three appear at equal counts, falls back to L.
 /// </summary>
 public record ProductManufacturingTimeReportDto(List<ProductManufacturingTimeOrderDto> Orders);
 
 public record ProductManufacturingTimeOrderDto(
     Guid OrderId,
+    Guid OrderItemId,
     string OrderNumber,
     string OrderType,
     string ProductCategoryName,
-    /// <summary>"T" / "S" / "L" — null if order had no items with complexity set.</summary>
+    /// <summary>"T" / "S" / "L" — null if the item had no processes with complexity set.</summary>
     string? TopComplexity,
+    /// <summary>"Zastupljenost težina" — T/S/L distribution, e.g. "60% / 20% / 20%". Null if no complexity set.</summary>
+    string? ComplexityShare,
     List<ProductManufacturingProcessDto> Processes,
     /// <summary>Sum of all process durations + all positive inter-process gaps. Seconds.</summary>
     int TotalWithGapsSeconds,
@@ -35,6 +40,8 @@ public record ProductManufacturingProcessDto(
     Guid ProcessId,
     string ProcessCode,
     string ProcessName,
+    /// <summary>Canonical process sequence (so the FE can order columns consistently).</summary>
+    int SequenceOrder,
     DateTime? StartedAt,
     DateTime? CompletedAt,
     int DurationSeconds,

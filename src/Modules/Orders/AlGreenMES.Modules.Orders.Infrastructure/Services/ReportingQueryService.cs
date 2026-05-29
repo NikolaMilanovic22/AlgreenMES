@@ -1,3 +1,4 @@
+using AlGreenMES.Modules.Identity.Domain.Entities;
 using AlGreenMES.Modules.Identity.Infrastructure.Persistence;
 using AlGreenMES.Modules.Orders.Application.DTOs;
 using AlGreenMES.Modules.Orders.Application.DTOs.Reports;
@@ -246,71 +247,43 @@ public class ReportingQueryService : IReportingQueryService
         Guid? userId,
         CancellationToken cancellationToken = default)
     {
-        // Lazy auto-logout (Bojan 25.05.2026) applies here too — forgotten
-        // checkouts get capped at shift duration + MaxOvertimeHours so this
-        // report matches Efikasnost. See ComputeEffectiveSessionEnd.
-        var sessionsQuery = _ordersDb.WorkSessions
-            .AsNoTracking()
-            .Where(ws => ws.TenantId == tenantId
-                && ws.Date >= from
-                && ws.Date <= to);
+        var stats = await ComputeWorkerDayStatsAsync(tenantId, from, to, userId, cancellationToken);
 
-        if (userId.HasValue)
-            sessionsQuery = sessionsQuery.Where(ws => ws.UserId == userId.Value);
-
-        var rawSessions = await sessionsQuery.ToListAsync(cancellationToken);
-
-        var shiftConfigs = await _identityDb.Shifts
-            .AsNoTracking()
-            .Where(s => s.TenantId == tenantId && s.IsActive)
-            .Select(s => new ShiftConfig(s.StartTime, s.EndTime, s.MaxOvertimeHours))
-            .ToListAsync(cancellationToken);
-
-        var now = DateTime.UtcNow;
-        var sessions = rawSessions
-            .Select(s =>
-            {
-                var effectiveEnd = ComputeEffectiveSessionEnd(s.CheckInTime, s.CheckOutTime, now, shiftConfigs);
-                if (effectiveEnd == null) return null;
-                // Always derive from effectiveEnd, not stored DurationMinutes —
-                // otherwise capped sessions silently use the uncapped DB value.
-                var duration = (int)(effectiveEnd.Value - s.CheckInTime).TotalMinutes;
-                return new WorkSessionProjection(s.UserId, s.Date, Math.Max(0, duration));
-            })
-            .Where(x => x != null)
-            .Select(x => x!)
-            .ToList();
-
-        var userIds = sessions.Select(s => s.UserId).Distinct().ToList();
-        var users = await _identityDb.Users
-            .AsNoTracking()
-            .Where(u => userIds.Contains(u.Id))
-            .ToDictionaryAsync(u => u.Id, u => $"{u.FirstName} {u.LastName}", cancellationToken);
-
-        var grouped = sessions
-            .GroupBy(s => s.UserId)
+        var workers = stats
+            .GroupBy(s => new { s.UserId, s.FullName })
             .Select(g =>
             {
-                var dailyBreakdown = g
-                    .GroupBy(s => s.Date)
-                    .OrderBy(d => d.Key)
+                var daily = g
+                    .OrderBy(d => d.Date)
                     .Select(d => new WorkerHoursDayDto(
-                        d.Key,
-                        d.Sum(s => s.DurationMinutes),
-                        d.Count()))
+                        d.Date, d.FirstCheckIn, d.LastCheckOut,
+                        d.RegularMinutes, d.OvertimeMinutes, d.TotalWorkedMinutes,
+                        d.EffectiveMinutes, d.ActiveMinutes, d.UncoveredMinutes,
+                        d.EfficiencyPercent, d.SessionCount))
                     .ToList();
 
+                var totalEffective = g.Sum(x => x.EffectiveMinutes);
+                var totalActive = g.Sum(x => x.ActiveMinutes);
+                var efficiency = totalEffective > 0
+                    ? Math.Round(100.0 * totalActive / totalEffective, 1)
+                    : 0.0;
+
                 return new WorkerHoursSummaryDto(
-                    g.Key,
-                    users.GetValueOrDefault(g.Key, "Unknown"),
-                    g.Sum(s => s.DurationMinutes),
-                    g.Count(),
-                    dailyBreakdown);
+                    g.Key.UserId,
+                    g.Key.FullName,
+                    g.Sum(x => x.RegularMinutes),
+                    g.Sum(x => x.OvertimeMinutes),
+                    g.Sum(x => x.TotalWorkedMinutes),
+                    totalEffective,
+                    totalActive,
+                    g.Sum(x => x.UncoveredMinutes),
+                    efficiency,
+                    daily);
             })
             .OrderBy(w => w.FullName)
             .ToList();
 
-        return new WorkerHoursReportDto(grouped);
+        return new WorkerHoursReportDto(workers);
     }
 
     public async Task<DeliveryComplianceReportDto> GetDeliveryComplianceAsync(
@@ -670,15 +643,18 @@ public class ReportingQueryService : IReportingQueryService
             var resolved = procBlocks.Count(b => b.Status == RequestStatus.Resolved);
             var rejected = procBlocks.Count(b => b.Status == RequestStatus.Rejected);
 
+            // Average over approved+resolved blocks, EXCLUDING those with 0
+            // working hours (Bojan 29.05.2026: "izbaciti 0" — blocks opened and
+            // resolved entirely outside shift windows shouldn't dilute the
+            // average). Counts above are unaffected; only the average drops them.
             double avgDurationHours = 0;
-            if (approved > 0)
-            {
-                var approvedBlocks = procBlocks
-                    .Where(b => b.Status == RequestStatus.Approved || b.Status == RequestStatus.Resolved)
-                    .ToList();
-                avgDurationHours = approvedBlocks
-                    .Sum(b => DurationHours(b.CreatedAt, b.HandledAt)) / approved;
-            }
+            var nonZeroDurations = procBlocks
+                .Where(b => b.Status == RequestStatus.Approved || b.Status == RequestStatus.Resolved)
+                .Select(b => DurationHours(b.CreatedAt, b.HandledAt))
+                .Where(h => h > 0)
+                .ToList();
+            if (nonZeroDurations.Count > 0)
+                avgDurationHours = nonZeroDurations.Sum() / nonZeroDurations.Count;
 
             result.Add(new BlocksPerProcessBucketDto(
                 pr.Id, pr.Code, pr.Name, pr.SequenceOrder,
@@ -732,18 +708,15 @@ public class ReportingQueryService : IReportingQueryService
             .Select(i => new { i.Id, i.OrderId, i.ProductCategoryId, i.Quantity })
             .ToListAsync(cancellationToken);
 
-        // Optional product-category filter applies to the order level — keep
-        // orders that have at least one item in the requested categories.
+        // Optional product-category filter — since rows are per ITEM, keep
+        // only the items whose category matches (and drop orders left with no
+        // matching item).
         if (productCategoryIds is { Count: > 0 })
         {
-            var allowedOrderIds = items
-                .Where(i => productCategoryIds.Contains(i.ProductCategoryId))
-                .Select(i => i.OrderId)
-                .Distinct()
-                .ToHashSet();
+            items = items.Where(i => productCategoryIds.Contains(i.ProductCategoryId)).ToList();
+            var allowedOrderIds = items.Select(i => i.OrderId).Distinct().ToHashSet();
             orders = orders.Where(o => allowedOrderIds.Contains(o.Id)).ToList();
             orderIds = orders.Select(o => o.Id).ToList();
-            items = items.Where(i => allowedOrderIds.Contains(i.OrderId)).ToList();
         }
 
         if (orders.Count == 0)
@@ -761,6 +734,15 @@ public class ReportingQueryService : IReportingQueryService
                 p.Complexity,
                 p.StartedAt,
                 p.CompletedAt,
+                // Active/effective time (Bojan 29.05.2026, List 2 Q2): only the
+                // operator's logged work counts, NOT the wall-clock Start→Complete
+                // span. Sub-process sum when present, else the OIP's own active-
+                // timer total. Both live in the misnamed "Minutes" field that in
+                // fact stores SECONDS (see EffectiveDurationSeconds).
+                ParentSeconds = p.TotalDurationMinutes,
+                SubSeconds = p.SubProcesses
+                    .Where(sp => !sp.IsWithdrawn && sp.TotalDurationMinutes > 0)
+                    .Sum(sp => (int?)sp.TotalDurationMinutes) ?? 0,
             })
             .ToListAsync(cancellationToken);
 
@@ -782,90 +764,100 @@ public class ReportingQueryService : IReportingQueryService
         var oipsByItem = oips.GroupBy(p => p.OrderItemId).ToDictionary(g => g.Key, g => g.ToList());
 
         var result = new List<ProductManufacturingTimeOrderDto>();
+        // One row per ORDER ITEM (Sale/Bojan 29.05.2026: "sve stavke iz
+        // narudžbine treba da budu prikazane"). Processes are ordered by the
+        // canonical sequence so columns line up with the order-detail table,
+        // and gaps are computed between consecutive processes of THAT item.
+        // The old per-order aggregation collapsed every item's processes into
+        // shared MIN/MAX slots, which overlapped and produced impossible
+        // 0:00:00 gaps for multi-item orders.
         foreach (var order in orders.OrderByDescending(o => o.CompletedAt))
         {
             if (!itemsByOrder.TryGetValue(order.Id, out var orderItems) || orderItems.Count == 0)
                 continue;
 
-            // Top complexity via item-count majority across all OIPs for the order.
-            // Tie-break per Bojan: T/S → S, S/L → L, T/L → L, all-tied → L.
-            var orderOips = orderItems
-                .SelectMany(i => oipsByItem.TryGetValue(i.Id, out var pList) ? pList : new())
-                .ToList();
-
-            if (orderOips.Count == 0)
-                continue;
-
-            var topComplexity = ResolveTopComplexity(orderOips.Select(p => p.Complexity));
-
-            // Aggregate to one logical "process slot" per ProcessId for the
-            // order — when multiple items share a process, take MIN(StartedAt)
-            // and MAX(CompletedAt) so the slot spans the whole batch.
-            var processSlots = orderOips
-                .GroupBy(p => p.ProcessId)
-                .Select(g => new
-                {
-                    ProcessId = g.Key,
-                    StartedAt = g.Min(x => x.StartedAt!.Value),
-                    CompletedAt = g.Max(x => x.CompletedAt!.Value),
-                })
-                .OrderBy(g => g.StartedAt)
-                .ToList();
-
-            var processDtos = new List<ProductManufacturingProcessDto>(processSlots.Count);
-            var totalWithoutGaps = 0;
-            var totalWithGaps = 0;
-
-            for (int idx = 0; idx < processSlots.Count; idx++)
+            foreach (var item in orderItems.OrderBy(i => i.Id))
             {
-                var slot = processSlots[idx];
-                if (!processes.TryGetValue(slot.ProcessId, out var procInfo))
+                if (!oipsByItem.TryGetValue(item.Id, out var itemOips) || itemOips.Count == 0)
                     continue;
 
-                var durationSec = Math.Max(0, (int)(slot.CompletedAt - slot.StartedAt).TotalSeconds);
-                totalWithoutGaps += durationSec;
+                // Najzastupljenija težina — mode of THIS item's process
+                // complexities, low-bias tie-break (T/S→S, S/L→L, T/L→L, all→L).
+                var topComplexity = ResolveTopComplexity(itemOips.Select(p => p.Complexity));
+                var complexityShare = ResolveComplexityShare(itemOips.Select(p => p.Complexity));
 
-                var gapSec = 0;
-                if (idx + 1 < processSlots.Count)
+                // Order by process SequenceOrder (matches the order table);
+                // StartedAt breaks ties. Collapse the rare case of multiple
+                // OIPs for one process via MIN(start)/MAX(complete).
+                var processSlots = itemOips
+                    .Where(p => processes.ContainsKey(p.ProcessId))
+                    .GroupBy(p => p.ProcessId)
+                    .Select(g => new
+                    {
+                        ProcessId = g.Key,
+                        Sequence = processes[g.Key].SequenceOrder,
+                        StartedAt = g.Min(x => x.StartedAt!.Value),
+                        CompletedAt = g.Max(x => x.CompletedAt!.Value),
+                        // Σ active time over the OIP(s) of this process.
+                        ActiveSeconds = g.Sum(x => x.SubSeconds > 0 ? x.SubSeconds : x.ParentSeconds),
+                    })
+                    .OrderBy(g => g.Sequence)
+                    .ThenBy(g => g.StartedAt)
+                    .ToList();
+
+                if (processSlots.Count == 0)
+                    continue;
+
+                var processDtos = new List<ProductManufacturingProcessDto>(processSlots.Count);
+                var totalWithoutGaps = 0;
+                var totalWithGaps = 0;
+
+                for (int idx = 0; idx < processSlots.Count; idx++)
                 {
-                    var next = processSlots[idx + 1];
-                    // Overlap clipping: if next starts before this completes,
-                    // treat the gap as 0 (no negative gaps).
-                    var rawGap = (int)(next.StartedAt - slot.CompletedAt).TotalSeconds;
-                    gapSec = Math.Max(0, rawGap);
+                    var slot = processSlots[idx];
+                    var procInfo = processes[slot.ProcessId];
+
+                    // Active time, not Stop−Start (Bojan 29.05.2026, List 2 Q2).
+                    var durationSec = Math.Max(0, slot.ActiveSeconds);
+                    totalWithoutGaps += durationSec;
+
+                    var gapSec = 0;
+                    if (idx + 1 < processSlots.Count)
+                    {
+                        var next = processSlots[idx + 1];
+                        // "Do sledećeg procesa" = max(0, next.start − this.stop)
+                        // (Excel L formula — overlaps/out-of-order give 0).
+                        var rawGap = (int)(next.StartedAt - slot.CompletedAt).TotalSeconds;
+                        gapSec = Math.Max(0, rawGap);
+                    }
+
+                    processDtos.Add(new ProductManufacturingProcessDto(
+                        procInfo.Id,
+                        procInfo.Code,
+                        procInfo.Name,
+                        procInfo.SequenceOrder,
+                        slot.StartedAt,
+                        slot.CompletedAt,
+                        durationSec,
+                        gapSec));
+
+                    totalWithGaps += durationSec + gapSec;
                 }
 
-                processDtos.Add(new ProductManufacturingProcessDto(
-                    procInfo.Id,
-                    procInfo.Code,
-                    procInfo.Name,
-                    slot.StartedAt,
-                    slot.CompletedAt,
-                    durationSec,
-                    gapSec));
+                var categoryName = categories.TryGetValue(item.ProductCategoryId, out var n) ? n : "—";
 
-                totalWithGaps += durationSec + gapSec;
+                result.Add(new ProductManufacturingTimeOrderDto(
+                    order.Id,
+                    item.Id,
+                    order.OrderNumber,
+                    order.OrderType.ToString(),
+                    categoryName,
+                    topComplexity,
+                    complexityShare,
+                    processDtos,
+                    totalWithGaps,
+                    totalWithoutGaps));
             }
-
-            // Pick the most common product category among the order's items
-            // (weighted by quantity) so the row's category label is meaningful
-            // for mixed-category orders.
-            var categoryName = orderItems
-                .GroupBy(i => i.ProductCategoryId)
-                .OrderByDescending(g => g.Sum(x => x.Quantity))
-                .ThenByDescending(g => g.Count())
-                .Select(g => categories.TryGetValue(g.Key, out var n) ? n : "—")
-                .FirstOrDefault() ?? "—";
-
-            result.Add(new ProductManufacturingTimeOrderDto(
-                order.Id,
-                order.OrderNumber,
-                order.OrderType.ToString(),
-                categoryName,
-                topComplexity,
-                processDtos,
-                totalWithGaps,
-                totalWithoutGaps));
         }
 
         return new ProductManufacturingTimeReportDto(result);
@@ -907,6 +899,22 @@ public class ReportingQueryService : IReportingQueryService
         return "T";
     }
 
+    /// <summary>
+    /// "Zastupljenost težina" — T/S/L distribution across an item's OIP
+    /// complexities, formatted "{t}% / {s}% / {l}%" (Excel G column,
+    /// ROUND(count/total*100,0)). Null when no complexity is set.
+    /// </summary>
+    private static string? ResolveComplexityShare(IEnumerable<ComplexityType?> complexities)
+    {
+        var present = complexities.Where(c => c.HasValue).Select(c => c!.Value).ToList();
+        if (present.Count == 0) return null;
+        double total = present.Count;
+        var t = (int)Math.Round(100.0 * present.Count(c => c == ComplexityType.T) / total);
+        var s = (int)Math.Round(100.0 * present.Count(c => c == ComplexityType.S) / total);
+        var l = (int)Math.Round(100.0 * present.Count(c => c == ComplexityType.L) / total);
+        return $"{t}% / {s}% / {l}%";
+    }
+
     public async Task<WorkEfficiencyReportDto> GetWorkEfficiencyAsync(
         Guid tenantId,
         DateOnly from,
@@ -914,134 +922,31 @@ public class ReportingQueryService : IReportingQueryService
         Guid? userId,
         CancellationToken cancellationToken = default)
     {
-        // Per Bojan spec 25.05.2026: per-worker per-day breakdown of
-        //   - Pravo vreme rada      = wall-clock duration of WorkSessions
-        //   - Aktivno na procesima  = wall-clock UNION of subprocess log
-        //                              ranges (parallel work counted once)
-        //   - Pauze                 = max(0, worked − active)
-        //   - Efikasnost %          = active / worked × 100
-        //
-        // Lazy auto-logout (Bojan 25.05.2026): forgotten checkouts get
-        // CAPPED at shift duration + MaxOvertimeHours so a session left
-        // open over the weekend doesn't claim 60h of "work." See
-        // ApplyLazyAutoLogout — open sessions still within their cap are
-        // excluded; sessions past their cap are included with an effective
-        // CheckOutTime at the cap.
+        // Excel Table 2 (Sale/Bojan 29.05.2026): one row per WORKER over the
+        // filtered period. Per-day detail lives in the "Sati radnika" tab; this
+        // is just the per-worker aggregate (+ charts on the FE). Both come from
+        // the same per-worker-per-day computation so the two tabs never drift.
+        var stats = await ComputeWorkerDayStatsAsync(tenantId, from, to, userId, cancellationToken);
 
-        var sessionsQuery = _ordersDb.WorkSessions
-            .AsNoTracking()
-            .Where(ws => ws.TenantId == tenantId
-                && ws.Date >= from
-                && ws.Date <= to);
-
-        if (userId.HasValue)
-            sessionsQuery = sessionsQuery.Where(ws => ws.UserId == userId.Value);
-
-        var rawSessions = await sessionsQuery
-            .Select(ws => new
-            {
-                ws.UserId,
-                ws.Date,
-                ws.CheckInTime,
-                ws.CheckOutTime,
-                ws.DurationMinutes,
-            })
-            .ToListAsync(cancellationToken);
-
-        // Load shift config for lazy auto-logout cap computation.
-        var shiftConfigs = await _identityDb.Shifts
-            .AsNoTracking()
-            .Where(s => s.TenantId == tenantId && s.IsActive)
-            .Select(s => new ShiftConfig(s.StartTime, s.EndTime, s.MaxOvertimeHours))
-            .ToListAsync(cancellationToken);
-
-        var now = DateTime.UtcNow;
-        var sessions = rawSessions
-            .Select(s =>
-            {
-                var effectiveEnd = ComputeEffectiveSessionEnd(s.CheckInTime, s.CheckOutTime, now, shiftConfigs);
-                if (effectiveEnd == null) return null;
-                // ALWAYS derive duration from effectiveEnd, never from the
-                // stored DurationMinutes — otherwise the cap silently
-                // bypasses closed sessions with bogus DB durations (test
-                // catch 26.05.2026).
-                var duration = (int)(effectiveEnd.Value - s.CheckInTime).TotalMinutes;
-                return new
-                {
-                    s.UserId,
-                    s.Date,
-                    s.CheckInTime,
-                    CheckOutTime = effectiveEnd.Value,
-                    Duration = Math.Max(0, duration),
-                };
-            })
-            .Where(x => x != null)
-            .Select(x => x!)
-            .ToList();
-
-        if (sessions.Count == 0)
-            return new WorkEfficiencyReportDto(new List<WorkEfficiencyRowDto>());
-
-        // Pull subprocess logs in the same window for the same workers.
-        // Day-key is derived from StartTime in UTC, same as WorkSession.Date.
-        var fromUtc = DateTime.SpecifyKind(from.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
-        var toUtc = DateTime.SpecifyKind(to.AddDays(1).ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
-
-        var logsQuery = _ordersDb.OrderItemSubProcessLogs
-            .AsNoTracking()
-            .Where(l => l.TenantId == tenantId
-                && l.EndTime.HasValue
-                && l.StartTime >= fromUtc
-                && l.StartTime < toUtc);
-
-        if (userId.HasValue)
-            logsQuery = logsQuery.Where(l => l.UserId == userId.Value);
-
-        var logs = await logsQuery
-            .Select(l => new
-            {
-                l.UserId,
-                l.StartTime,
-                EndTime = l.EndTime!.Value,
-            })
-            .ToListAsync(cancellationToken);
-
-        // Resolve user names — pull once for the unique set of workers.
-        var userIds = sessions.Select(s => s.UserId).Distinct().ToList();
-        var users = await _identityDb.Users
-            .AsNoTracking()
-            .Where(u => userIds.Contains(u.Id))
-            .ToDictionaryAsync(u => u.Id, u => $"{u.FirstName} {u.LastName}", cancellationToken);
-
-        // Group logs per (user, date) and compute wall-clock union.
-        var logsByUserDay = logs
-            .GroupBy(l => new { l.UserId, Date = DateOnly.FromDateTime(l.StartTime) })
-            .ToDictionary(
-                g => g.Key,
-                g => UnionMinutes(g.Select(x => (x.StartTime, x.EndTime)).ToList()));
-
-        var rows = sessions
-            .GroupBy(s => new { s.UserId, s.Date })
+        var rows = stats
+            .GroupBy(s => new { s.UserId, s.FullName })
             .Select(g =>
             {
-                var worked = g.Sum(s => s.Duration);
-                var active = logsByUserDay.TryGetValue(new { g.Key.UserId, g.Key.Date }, out var a) ? a : 0;
-                // Active should never exceed worked time (logs run during sessions
-                // by definition) but cap defensively to avoid >100% efficiency.
-                active = Math.Min(active, worked);
-                var breaks = Math.Max(0, worked - active);
-                var eff = worked > 0 ? Math.Round(100.0 * active / worked, 1) : 0.0;
+                var totalEffective = g.Sum(x => x.EffectiveMinutes);
+                var totalActive = g.Sum(x => x.ActiveMinutes);
+                var efficiency = totalEffective > 0
+                    ? Math.Round(100.0 * totalActive / totalEffective, 1)
+                    : 0.0;
                 return new WorkEfficiencyRowDto(
                     g.Key.UserId,
-                    users.GetValueOrDefault(g.Key.UserId, "Unknown"),
-                    g.Key.Date,
-                    worked,
-                    active,
-                    breaks,
-                    eff);
+                    g.Key.FullName,
+                    g.Sum(x => x.TotalWorkedMinutes),
+                    totalEffective,
+                    totalActive,
+                    g.Sum(x => x.UncoveredMinutes),
+                    efficiency);
             })
-            .OrderBy(r => r.Date)
-            .ThenBy(r => r.FullName)
+            .OrderBy(r => r.FullName)
             .ToList();
 
         return new WorkEfficiencyReportDto(rows);
@@ -1109,9 +1014,170 @@ public class ReportingQueryService : IReportingQueryService
         return new ActiveWorkSessionDto(sessionDto, alarmAt, logoutAt);
     }
 
-    private record ShiftConfig(TimeOnly StartTime, TimeOnly EndTime, int MaxOvertimeHours);
+    /// <summary>
+    /// Shared per-worker-per-day computation behind both the "Sati radnika"
+    /// (daily detail) and "Efikasnost radnog vremena" (per-worker aggregate)
+    /// tabs — Excel "Efikasnost radnog vremena" Table 1, Sale/Bojan 29.05.2026.
+    ///
+    /// Combines all of a worker's sessions for a day (lazy auto-logout cap
+    /// applied per session), splits regular/overtime at the matched shift's
+    /// duration, subtracts the shift break once, and unions sub-process logs
+    /// for "Aktivno na procesima". Assumptions (one row/day, break once/day,
+    /// regular cap = shift duration) are pending Sale/Bojan confirmation.
+    /// </summary>
+    private async Task<List<WorkerDayStat>> ComputeWorkerDayStatsAsync(
+        Guid tenantId,
+        DateOnly from,
+        DateOnly to,
+        Guid? userId,
+        CancellationToken cancellationToken)
+    {
+        // These tabs are about factory-floor workers only — restrict to the
+        // Department role. Admin / Manager / Coordinator / SalesManager /
+        // SuperAdmin may have a (test) check-in session but aren't "radnici".
+        // (Confirmed by Milos 29.05.2026: only the worker role belongs here.)
+        var workerIds = await _identityDb.Users
+            .AsNoTracking()
+            .Where(u => u.TenantId == tenantId && u.Role == UserRole.Department)
+            .Select(u => u.Id)
+            .ToListAsync(cancellationToken);
 
-    private record WorkSessionProjection(Guid UserId, DateOnly Date, int DurationMinutes);
+        var sessionsQuery = _ordersDb.WorkSessions
+            .AsNoTracking()
+            .Where(ws => ws.TenantId == tenantId && ws.Date >= from && ws.Date <= to
+                && workerIds.Contains(ws.UserId));
+        if (userId.HasValue)
+            sessionsQuery = sessionsQuery.Where(ws => ws.UserId == userId.Value);
+
+        var rawSessions = await sessionsQuery
+            .Select(ws => new { ws.UserId, ws.Date, ws.CheckInTime, ws.CheckOutTime })
+            .ToListAsync(cancellationToken);
+
+        var shiftConfigs = await _identityDb.Shifts
+            .AsNoTracking()
+            .Where(s => s.TenantId == tenantId && s.IsActive)
+            .Select(s => new ShiftConfig(s.StartTime, s.EndTime, s.MaxOvertimeHours, s.BreakMinutes))
+            .ToListAsync(cancellationToken);
+
+        var now = DateTime.UtcNow;
+        // Apply the lazy auto-logout cap per session; drop still-running
+        // sessions that haven't hit their cap yet (effectiveEnd == null).
+        var sessions = rawSessions
+            .Select(s =>
+            {
+                var effectiveEnd = ComputeEffectiveSessionEnd(s.CheckInTime, s.CheckOutTime, now, shiftConfigs);
+                if (effectiveEnd == null) return null;
+                var duration = (int)(effectiveEnd.Value - s.CheckInTime).TotalMinutes;
+                return new
+                {
+                    s.UserId,
+                    s.Date,
+                    s.CheckInTime,
+                    CheckOut = effectiveEnd.Value,
+                    Duration = Math.Max(0, duration),
+                };
+            })
+            .Where(x => x != null)
+            .Select(x => x!)
+            .ToList();
+
+        if (sessions.Count == 0)
+            return new List<WorkerDayStat>();
+
+        // Sub-process logs in the same window → wall-clock union per (user, day).
+        var fromUtc = DateTime.SpecifyKind(from.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
+        var toUtc = DateTime.SpecifyKind(to.AddDays(1).ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
+
+        var logsQuery = _ordersDb.OrderItemSubProcessLogs
+            .AsNoTracking()
+            .Where(l => l.TenantId == tenantId
+                && l.EndTime.HasValue
+                && l.StartTime >= fromUtc
+                && l.StartTime < toUtc
+                && workerIds.Contains(l.UserId));
+        if (userId.HasValue)
+            logsQuery = logsQuery.Where(l => l.UserId == userId.Value);
+
+        var logs = await logsQuery
+            .Select(l => new { l.UserId, l.StartTime, EndTime = l.EndTime!.Value })
+            .ToListAsync(cancellationToken);
+
+        var logsByUserDay = logs
+            .GroupBy(l => new { l.UserId, Date = DateOnly.FromDateTime(l.StartTime) })
+            .ToDictionary(
+                g => g.Key,
+                g => UnionMinutes(g.Select(x => (x.StartTime, x.EndTime)).ToList()));
+
+        var userIds = sessions.Select(s => s.UserId).Distinct().ToList();
+        var users = await _identityDb.Users
+            .AsNoTracking()
+            .Where(u => userIds.Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id, u => $"{u.FirstName} {u.LastName}", cancellationToken);
+
+        ShiftConfig? MatchShift(DateTime checkIn)
+        {
+            if (shiftConfigs.Count == 0) return null;
+            var tod = TimeOnly.FromDateTime(checkIn);
+            return shiftConfigs.FirstOrDefault(s => IsTimeInShift(tod, s.StartTime, s.EndTime));
+        }
+
+        return sessions
+            .GroupBy(s => new { s.UserId, s.Date })
+            .Select(g =>
+            {
+                var totalWorked = g.Sum(s => s.Duration);
+                var firstCheckIn = g.Min(s => s.CheckInTime);
+                var lastCheckOut = g.Max(s => s.CheckOut);
+
+                var shift = MatchShift(firstCheckIn);
+                var regularCap = shift != null
+                    ? (int)ShiftDuration(shift.StartTime, shift.EndTime).TotalMinutes
+                    : 8 * 60;
+                var breakMinutes = shift?.BreakMinutes ?? 0;
+
+                var regular = Math.Min(totalWorked, regularCap);
+                var overtime = Math.Max(0, totalWorked - regularCap);
+                var effective = Math.Max(0, totalWorked - breakMinutes);
+
+                var active = logsByUserDay.TryGetValue(new { g.Key.UserId, g.Key.Date }, out var a) ? a : 0;
+                active = Math.Min(active, effective);
+                var uncovered = Math.Max(0, effective - active);
+                var efficiency = effective > 0 ? Math.Round(100.0 * active / effective, 1) : 0.0;
+
+                return new WorkerDayStat(
+                    g.Key.UserId,
+                    users.GetValueOrDefault(g.Key.UserId, "Unknown"),
+                    g.Key.Date,
+                    firstCheckIn,
+                    lastCheckOut,
+                    regular,
+                    overtime,
+                    totalWorked,
+                    effective,
+                    active,
+                    uncovered,
+                    efficiency,
+                    g.Count());
+            })
+            .ToList();
+    }
+
+    private record ShiftConfig(TimeOnly StartTime, TimeOnly EndTime, int MaxOvertimeHours, int BreakMinutes);
+
+    private record WorkerDayStat(
+        Guid UserId,
+        string FullName,
+        DateOnly Date,
+        DateTime? FirstCheckIn,
+        DateTime? LastCheckOut,
+        int RegularMinutes,
+        int OvertimeMinutes,
+        int TotalWorkedMinutes,
+        int EffectiveMinutes,
+        int ActiveMinutes,
+        int UncoveredMinutes,
+        double EfficiencyPercent,
+        int SessionCount);
 
     /// <summary>
     /// Lazy auto-logout per Bojan 25.05.2026 — applies to forgotten checkouts
@@ -1221,14 +1287,24 @@ public class ReportingQueryService : IReportingQueryService
         if (to <= from) return 0;
         if (shifts.Count == 0) return 0;
 
-        // Walk day-by-day from `from`'s date through `to`'s date. For each
-        // day, intersect each shift's window with [from, to].
+        // Walk day-by-day from `from`'s date through `to`'s date and collect
+        // each shift's window (clipped to [from, to]). The windows are then
+        // UNIONed so overlapping active shifts count once — the previous
+        // per-shift sum double-counted any overlap (the doc always said
+        // "union", the code summed).
         var fromUtc = DateTime.SpecifyKind(from, DateTimeKind.Utc);
         var toUtc = DateTime.SpecifyKind(to, DateTimeKind.Utc);
 
-        var totalMinutes = 0;
+        var windows = new List<(DateTime Start, DateTime End)>();
         var dayCursor = fromUtc.Date;
         var lastDay = toUtc.Date;
+
+        void AddClipped(DateTime winStart, DateTime winEnd)
+        {
+            var s = winStart > fromUtc ? winStart : fromUtc;
+            var e = winEnd < toUtc ? winEnd : toUtc;
+            if (e > s) windows.Add((s, e));
+        }
 
         while (dayCursor <= lastDay)
         {
@@ -1238,33 +1314,24 @@ public class ReportingQueryService : IReportingQueryService
                 // ≤ Start, the shift crosses midnight: split into two.
                 if (end > start)
                 {
-                    var winStart = DateTime.SpecifyKind(dayCursor.Add(start.ToTimeSpan()), DateTimeKind.Utc);
-                    var winEnd = DateTime.SpecifyKind(dayCursor.Add(end.ToTimeSpan()), DateTimeKind.Utc);
-                    totalMinutes += IntersectMinutes(fromUtc, toUtc, winStart, winEnd);
+                    AddClipped(
+                        DateTime.SpecifyKind(dayCursor.Add(start.ToTimeSpan()), DateTimeKind.Utc),
+                        DateTime.SpecifyKind(dayCursor.Add(end.ToTimeSpan()), DateTimeKind.Utc));
                 }
                 else
                 {
                     // Cross-midnight: [Start, 24:00) on dayCursor + [00:00, End) on next day.
-                    var win1Start = DateTime.SpecifyKind(dayCursor.Add(start.ToTimeSpan()), DateTimeKind.Utc);
-                    var win1End = DateTime.SpecifyKind(dayCursor.AddDays(1), DateTimeKind.Utc);
-                    totalMinutes += IntersectMinutes(fromUtc, toUtc, win1Start, win1End);
-
-                    var win2Start = DateTime.SpecifyKind(dayCursor.AddDays(1), DateTimeKind.Utc);
-                    var win2End = DateTime.SpecifyKind(dayCursor.AddDays(1).Add(end.ToTimeSpan()), DateTimeKind.Utc);
-                    totalMinutes += IntersectMinutes(fromUtc, toUtc, win2Start, win2End);
+                    AddClipped(
+                        DateTime.SpecifyKind(dayCursor.Add(start.ToTimeSpan()), DateTimeKind.Utc),
+                        DateTime.SpecifyKind(dayCursor.AddDays(1), DateTimeKind.Utc));
+                    AddClipped(
+                        DateTime.SpecifyKind(dayCursor.AddDays(1), DateTimeKind.Utc),
+                        DateTime.SpecifyKind(dayCursor.AddDays(1).Add(end.ToTimeSpan()), DateTimeKind.Utc));
                 }
             }
             dayCursor = dayCursor.AddDays(1);
         }
 
-        return totalMinutes;
-    }
-
-    private static int IntersectMinutes(DateTime aStart, DateTime aEnd, DateTime bStart, DateTime bEnd)
-    {
-        var s = aStart > bStart ? aStart : bStart;
-        var e = aEnd < bEnd ? aEnd : bEnd;
-        if (e <= s) return 0;
-        return (int)(e - s).TotalMinutes;
+        return UnionMinutes(windows);
     }
 }

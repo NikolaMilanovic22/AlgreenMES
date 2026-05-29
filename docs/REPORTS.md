@@ -180,6 +180,13 @@ shifts (`End ≤ Start`, e.g. 22:00–06:00) are split into two windows
 Approved = `Approved + Resolved` (per Bojan); rejected blocks count
 toward `totalSubmitted` but contribute 0 duration to the average.
 
+**0-working-hour blocks are excluded from the average** (Bojan 29.05.2026,
+"izbaciti 0"): an approved/resolved block whose `[CreatedAt, HandledAt]`
+span lands entirely outside every shift window has 0 working hours. It
+still counts toward `totalSubmitted`/`approved`, but is dropped from the
+average denominator so it no longer drags the average toward zero
+(e.g. CNC stops showing 28h = (56+0)/2 and shows 56h).
+
 ## Trajanje izrade proizvoda — najzastupljenija težina + overlap clipping
 
 Per Bojan 25.05.2026:
@@ -190,11 +197,19 @@ T/L equal → L, all three tied → L. Null when no OIP has complexity set.
 
 **Overlap clipping** — when process N+1's `StartedAt` precedes process
 N's `CompletedAt`, the inter-process gap is `max(0, raw_gap)` (zero, not
-negative). Aggregated to one logical slot per ProcessId for the order:
-`Min(StartedAt)` + `Max(CompletedAt)` across all items.
+negative). Rows are per ORDER ITEM (29.05.2026 reshape); within an item,
+OIPs sharing a ProcessId collapse to one slot via `Min(StartedAt)` +
+`Max(CompletedAt)` — used only to order columns and compute the gap.
 
-Two totals: `totalWithoutGapsSeconds` (durations only) and
-`totalWithGapsSeconds` (durations + positive gaps).
+**Trajanje procesa = active time, not Stop−Start** (Bojan 29.05.2026,
+List 2 Q2): each process's `durationSeconds` is the operator's active
+work time — sub-process `TotalDurationMinutes` sum when present, else the
+OIP's own active-timer total — the same basis as the "Vremena po procesu"
+tab, NOT the wall-clock `Completed − Started` span. The slot's
+`Min`/`Max` timestamps drive only the inter-process gap, not the duration.
+
+Two totals: `totalWithoutGapsSeconds` (active durations only) and
+`totalWithGapsSeconds` (active durations + positive gaps).
 
 ## Efikasnost radnog vremena — wall-clock union + lazy auto-logout
 
@@ -209,8 +224,17 @@ Pauze                 = max(0, Pravo vreme rada − Aktivno na procesima)
 Efikasnost %          = Aktivno / Pravo vreme rada × 100
 ```
 
-FE color thresholds (table-only, no chart per spec): ≥80 green / 50–80
-yellow / <50 red.
+**Worker scope** (Milos 29.05.2026): both "Sati radnika" and "Efikasnost
+radnog vremena" include ONLY `Department`-role users (factory-floor workers).
+Admin / Manager / Coordinator / SalesManager / SuperAdmin are excluded even if
+they have a check-in session — filtered in `ComputeWorkerDayStatsAsync`. The FE
+worker-filter dropdowns already query `role=Department`.
+
+FE thresholds (Bojan programmer-notes, sheet 3): efficiency color ≥80 green /
+60–79 yellow / <60 red. Status (Efikasnost tab only): ≥80 Odlično / 60–79
+Prihvatljivo / 40–59 Ispod norme / <40 Neprihvatljivo. Two charts on the
+Efikasnost tab: "Raspodela radnog vremena" (Aktivno + Nepokriveno stacked,
+horizontal per worker) and "Efikasnost po radniku %".
 
 ### Lazy auto-logout — applied to both Efikasnost and Sati radnika
 
