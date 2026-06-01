@@ -104,6 +104,69 @@ public class ShiftConfigTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task Create_and_Update_round_trip_autoLogoutRegularMinutes()
+    {
+        // Chunk 1 (Bojan 29.05.2026 follow-up) — new per-shift field. Verify
+        // POST/PUT/GET all carry the value end-to-end.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        // POST with autoLogoutRegularMinutes=510 (8.5h).
+        var resp = await client.PostAsJsonAsync("/api/shifts", new
+        {
+            Name = "Test Shift",
+            StartTime = "06:00:00",
+            EndTime = "14:00:00",
+            BreakMinutes = 30,
+            MaxOvertimeHours = 6,
+            AutoLogoutAfterHours = 2,
+            AlarmBeforeLogoutMinutes = 5,
+            AutoLogoutRegularMinutes = 510,
+        });
+        resp.StatusCode.Should().Be(HttpStatusCode.Created);
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        var shiftId = doc.RootElement.GetProperty("id").GetGuid();
+        doc.RootElement.GetProperty("autoLogoutRegularMinutes").GetInt32().Should().Be(510);
+
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+            var shift = await db.Shifts.IgnoreQueryFilters().SingleAsync(s => s.Id == shiftId);
+            shift.AutoLogoutRegularMinutes.Should().Be(510);
+        }
+
+        // PUT updates the value.
+        var putResp = await client.PutAsJsonAsync($"/api/shifts/{shiftId}", new
+        {
+            Name = "Test Shift",
+            StartTime = "06:00:00",
+            EndTime = "14:00:00",
+            IsActive = true,
+            BreakMinutes = 30,
+            MaxOvertimeHours = 6,
+            AutoLogoutAfterHours = 2,
+            AlarmBeforeLogoutMinutes = 5,
+            AutoLogoutRegularMinutes = 600, // 10h
+        });
+        putResp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+            var shift = await db.Shifts.IgnoreQueryFilters().SingleAsync(s => s.Id == shiftId);
+            shift.AutoLogoutRegularMinutes.Should().Be(600);
+        }
+
+        // GET returns the updated value in the response payload.
+        var getResp = await client.GetAsync("/api/shifts");
+        getResp.EnsureSuccessStatusCode();
+        using var getDoc = JsonDocument.Parse(await getResp.Content.ReadAsStringAsync());
+        var row = getDoc.RootElement.GetProperty("items").EnumerateArray()
+            .Single(s => s.GetProperty("id").GetGuid() == shiftId);
+        row.GetProperty("autoLogoutRegularMinutes").GetInt32().Should().Be(600);
+    }
+
+    [Fact]
     public async Task CreateShift_blocks_Department_user_with_403()
     {
         // Per ShiftsController: [Authorize(Roles="SuperAdmin,Admin,Manager")].

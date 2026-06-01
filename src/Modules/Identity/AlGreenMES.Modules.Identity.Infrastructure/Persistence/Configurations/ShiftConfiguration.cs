@@ -45,6 +45,13 @@ public class ShiftConfiguration : IEntityTypeConfiguration<Shift>
             .IsRequired()
             .HasDefaultValue(5);
 
+        // Bojan 29.05.2026 follow-up: regular-session auto-logout (e.g. shift 8h,
+        // auto-logout 8.5h → 0.5h goes to overtime within the same session).
+        // Default 0 = legacy behaviour until admin sets a value.
+        builder.Property(s => s.AutoLogoutRegularMinutes)
+            .IsRequired()
+            .HasDefaultValue(0);
+
         builder.Property(s => s.CreatedAt)
             .IsRequired();
     }

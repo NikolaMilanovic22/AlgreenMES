@@ -399,7 +399,8 @@ public static class TestDataSeeder
         int breakMinutes = 0,
         int maxOvertimeHours = 6,
         int autoLogoutAfterHours = 2,
-        int alarmBeforeLogoutMinutes = 5)
+        int alarmBeforeLogoutMinutes = 5,
+        int autoLogoutRegularMinutes = 0)
     {
         using var scope = factory.Services.CreateScope();
         var identityDb = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
@@ -412,7 +413,8 @@ public static class TestDataSeeder
             breakMinutes,
             maxOvertimeHours,
             autoLogoutAfterHours,
-            alarmBeforeLogoutMinutes);
+            alarmBeforeLogoutMinutes,
+            autoLogoutRegularMinutes);
         identityDb.Shifts.Add(shift);
         await identityDb.SaveChangesAsync();
         return shift.Id;
@@ -429,7 +431,8 @@ public static class TestDataSeeder
         Guid tenantId,
         Guid userId,
         DateTime checkInTime,
-        DateTime? checkOutTime = null)
+        DateTime? checkOutTime = null,
+        bool wasAutoClosed = false)
     {
         using var scope = factory.Services.CreateScope();
         var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
@@ -452,7 +455,8 @@ public static class TestDataSeeder
                 .SetProperty(ws => ws.CheckInTime, checkInTime)
                 .SetProperty(ws => ws.CheckOutTime, checkOutTime)
                 .SetProperty(ws => ws.DurationMinutes, duration)
-                .SetProperty(ws => ws.Date, date));
+                .SetProperty(ws => ws.Date, date)
+                .SetProperty(ws => ws.WasAutoClosed, wasAutoClosed));
 
         return session.Id;
     }

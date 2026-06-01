@@ -31,7 +31,8 @@ public class UpdateShiftCommandHandler : IRequestHandler<UpdateShiftCommand, Shi
             request.BreakMinutes,
             request.MaxOvertimeHours,
             request.AutoLogoutAfterHours,
-            request.AlarmBeforeLogoutMinutes);
+            request.AlarmBeforeLogoutMinutes,
+            request.AutoLogoutRegularMinutes);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return shift.Adapt<ShiftDto>();

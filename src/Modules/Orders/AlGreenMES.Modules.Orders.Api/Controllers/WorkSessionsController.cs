@@ -1,4 +1,5 @@
 using AlGreenMES.Modules.Orders.Api.Requests;
+using AlGreenMES.Modules.Orders.Application.Commands.AutoCheckOut;
 using AlGreenMES.Modules.Orders.Application.Commands.CheckIn;
 using AlGreenMES.Modules.Orders.Application.Commands.CheckOut;
 using AlGreenMES.Modules.Orders.Application.Queries.GetActiveWorkSession;
@@ -74,6 +75,20 @@ public class WorkSessionsController : ControllerBase
     {
         var result = await _mediator.Send(
             new CheckOutCommand(request.UserId),
+            cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Tablet calls this when the auto-logout cap is reached (Bojan
+    /// 30.05.2026). Closes the user's open session and marks it auto-closed
+    /// (WasAutoClosed=true). The tablet then shows the auto-logout screen.
+    /// </summary>
+    [HttpPost("auto-checkout")]
+    public async Task<IActionResult> AutoCheckOut([FromBody] CheckOutRequest request, CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(
+            new AutoCheckOutCommand(request.UserId),
             cancellationToken);
         return Ok(result);
     }

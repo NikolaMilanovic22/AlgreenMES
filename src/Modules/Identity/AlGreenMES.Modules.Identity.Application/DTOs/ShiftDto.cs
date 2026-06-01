@@ -11,5 +11,6 @@ public record ShiftDto(
     int MaxOvertimeHours,
     int AutoLogoutAfterHours,
     int AlarmBeforeLogoutMinutes,
+    int AutoLogoutRegularMinutes,
     DateTime CreatedAt,
     DateTime? UpdatedAt);

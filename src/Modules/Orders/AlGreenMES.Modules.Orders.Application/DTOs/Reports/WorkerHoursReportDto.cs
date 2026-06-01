@@ -43,4 +43,8 @@ public record WorkerHoursDayDto(
     int ActiveMinutes,
     int UncoveredMinutes,
     double EfficiencyPercent,
-    int SessionCount);
+    int SessionCount,
+    // True when the day's total worked exceeded the shift's
+    // AutoLogoutRegularMinutes cap (Bojan Excel v2 column M). False when the
+    // shift has no auto-logout cap configured (legacy / 0).
+    bool AutoLogoutApplied);

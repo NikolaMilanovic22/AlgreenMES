@@ -100,15 +100,19 @@ public class WorkEfficiencyReportTests : IntegrationTestBase
         var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Department);
         var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
 
+        // 8h shift bracketing UtcNow + 6h maxOT → cap = checkIn+14h is in the
+        // future for any test-run time-of-day, so the open session is still
+        // legitimately within bounds and must be excluded from the report.
+        var nowUtc = DateTime.UtcNow;
+        var shiftStart = TimeOnly.FromDateTime(nowUtc.AddHours(-1));
+        var shiftEnd = shiftStart.AddHours(8);
         await TestDataSeeder.SeedShiftAsync(
             Factory, t.TenantId,
-            startTime: new TimeOnly(6, 0),
-            endTime: new TimeOnly(14, 0),
+            startTime: shiftStart,
+            endTime: shiftEnd,
             maxOvertimeHours: 6);
 
-        var checkIn = DateTime.UtcNow.AddMinutes(-30);
-        // Force the time-of-day into the seeded shift window.
-        checkIn = new DateTime(checkIn.Year, checkIn.Month, checkIn.Day, 6, 30, 0, DateTimeKind.Utc);
+        var checkIn = nowUtc.AddMinutes(-30);
         await TestDataSeeder.SeedWorkSessionAsync(
             Factory, t.TenantId, t.UserId, checkIn, checkOutTime: null);
 

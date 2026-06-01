@@ -183,4 +183,81 @@ public class WorkerHoursReportTests : IntegrationTestBase
         ids.Should().Contain(worker);       // Department worker present
         ids.Should().NotContain(t.UserId);  // Admin excluded
     }
+
+    [Fact]
+    public async Task WorkerHours_per_worker_overtime_excludes_trivial_daily_amounts()
+    {
+        // Per-worker OT total excludes per-day OT ≤ 30 min (Excel v2 E35 SUMIF
+        // ">0.5h"). Two days: day1 has 25 min OT (excluded), day2 has 60 min OT
+        // (included). Worker total OT = 60 min, NOT 85 min. Per-day OT stays
+        // raw in the daily breakdown.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Department);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        await TestDataSeeder.SeedShiftAsync(
+            Factory, t.TenantId,
+            startTime: new TimeOnly(6, 0),
+            endTime: new TimeOnly(14, 0),
+            maxOvertimeHours: 6);
+
+        var day1 = DateTime.UtcNow.Date.AddDays(-3).AddHours(6);
+        var day2 = DateTime.UtcNow.Date.AddDays(-2).AddHours(6);
+        // Day 1: 8h25m → 480 regular + 25 OT (trivial).
+        await TestDataSeeder.SeedWorkSessionAsync(Factory, t.TenantId, t.UserId, day1, day1.AddMinutes(505));
+        // Day 2: 9h → 480 regular + 60 OT (real).
+        await TestDataSeeder.SeedWorkSessionAsync(Factory, t.TenantId, t.UserId, day2, day2.AddHours(9));
+
+        var from = DateOnly.FromDateTime(day1).AddDays(-1);
+        var to = DateOnly.FromDateTime(day2).AddDays(1);
+        var resp = await client.GetAsync(
+            $"/api/reports/worker-hours?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+
+        var worker = doc.RootElement.GetProperty("workers").EnumerateArray()
+            .Single(w => w.GetProperty("userId").GetGuid() == t.UserId);
+        worker.GetProperty("regularMinutes").GetInt32().Should().Be(960);     // 480 + 480
+        worker.GetProperty("overtimeMinutes").GetInt32().Should().Be(60);     // ONLY day 2 (60 > 30)
+        worker.GetProperty("totalWorkedMinutes").GetInt32().Should().Be(1045); // raw 505 + 540
+
+        // Daily breakdown still shows per-day OT unfiltered (Excel rows 15-34).
+        var daily = worker.GetProperty("dailyBreakdown").EnumerateArray()
+            .OrderBy(d => d.GetProperty("date").GetString())
+            .ToList();
+        daily.Should().HaveCount(2);
+        daily[0].GetProperty("overtimeMinutes").GetInt32().Should().Be(25);
+        daily[1].GetProperty("overtimeMinutes").GetInt32().Should().Be(60);
+    }
+
+    [Fact]
+    public async Task WorkerHours_autoLogoutApplied_flag_set_when_day_exceeds_cap()
+    {
+        // Bojan Excel v2 column M: a day where total worked exceeds the shift's
+        // AutoLogoutRegularMinutes cap is flagged. Shift 8h + 0.5h grace
+        // (cap=510 min). 9h session (540 min) > 510 → flag true.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Department);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        await TestDataSeeder.SeedShiftAsync(
+            Factory, t.TenantId,
+            startTime: new TimeOnly(6, 0),
+            endTime: new TimeOnly(14, 0),
+            maxOvertimeHours: 6,
+            autoLogoutRegularMinutes: 510); // 8.5h
+
+        var day = DateTime.UtcNow.Date.AddDays(-1).AddHours(6);
+        await TestDataSeeder.SeedWorkSessionAsync(Factory, t.TenantId, t.UserId, day, day.AddHours(9));
+
+        var from = DateOnly.FromDateTime(day).AddDays(-1);
+        var to = DateOnly.FromDateTime(day).AddDays(1);
+        var resp = await client.GetAsync(
+            $"/api/reports/worker-hours?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+
+        var worker = doc.RootElement.GetProperty("workers").EnumerateArray()
+            .Single(w => w.GetProperty("userId").GetGuid() == t.UserId);
+        var daily = worker.GetProperty("dailyBreakdown").EnumerateArray().Single();
+        daily.GetProperty("autoLogoutApplied").GetBoolean().Should().BeTrue();
+    }
 }

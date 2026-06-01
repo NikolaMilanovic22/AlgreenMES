@@ -7,4 +7,5 @@ public record WorkSessionDto(
     DateTime? CheckOutTime,
     int? DurationMinutes,
     DateOnly Date,
-    bool IsActive);
+    bool IsActive,
+    bool WasAutoClosed);

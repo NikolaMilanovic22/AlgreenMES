@@ -259,7 +259,7 @@ public class ReportingQueryService : IReportingQueryService
                         d.Date, d.FirstCheckIn, d.LastCheckOut,
                         d.RegularMinutes, d.OvertimeMinutes, d.TotalWorkedMinutes,
                         d.EffectiveMinutes, d.ActiveMinutes, d.UncoveredMinutes,
-                        d.EfficiencyPercent, d.SessionCount))
+                        d.EfficiencyPercent, d.SessionCount, d.AutoLogoutApplied))
                     .ToList();
 
                 var totalEffective = g.Sum(x => x.EffectiveMinutes);
@@ -268,11 +268,18 @@ public class ReportingQueryService : IReportingQueryService
                     ? Math.Round(100.0 * totalActive / totalEffective, 1)
                     : 0.0;
 
+                // Per-worker overtime excludes per-day overtimes ≤ 30 min — these
+                // are noise (a few-minute late checkout) per Bojan Excel v2 E35:
+                // SUMIF(E:E, ">"&0.5, E:E). Each day's own OT column still shows
+                // the raw value; only the worker total is filtered.
+                const int OvertimeNoiseThresholdMinutes = 30;
+                var totalOvertime = g.Sum(x => x.OvertimeMinutes > OvertimeNoiseThresholdMinutes ? x.OvertimeMinutes : 0);
+
                 return new WorkerHoursSummaryDto(
                     g.Key.UserId,
                     g.Key.FullName,
                     g.Sum(x => x.RegularMinutes),
-                    g.Sum(x => x.OvertimeMinutes),
+                    totalOvertime,
                     g.Sum(x => x.TotalWorkedMinutes),
                     totalEffective,
                     totalActive,
@@ -987,7 +994,8 @@ public class ReportingQueryService : IReportingQueryService
             open.CheckOutTime,
             open.DurationMinutes,
             open.Date,
-            IsActive: true);
+            IsActive: true,
+            WasAutoClosed: false);
 
         var shifts = await _identityDb.Shifts
             .AsNoTracking()
@@ -998,17 +1006,47 @@ public class ReportingQueryService : IReportingQueryService
                 s.EndTime,
                 s.MaxOvertimeHours,
                 s.AlarmBeforeLogoutMinutes,
+                s.AutoLogoutAfterHours,
+                s.AutoLogoutRegularMinutes,
             })
             .ToListAsync(cancellationToken);
 
-        var checkInTimeOfDay = TimeOnly.FromDateTime(open.CheckInTime);
-        var shift = shifts.FirstOrDefault(s => IsTimeInShift(checkInTimeOfDay, s.StartTime, s.EndTime));
+        // Regular vs overtime cap (Bojan 30.05.2026): if this user already had
+        // a WasAutoClosed session today, the current open one is an overtime
+        // re-login. Match the shift on the EARLIER session's check-in time
+        // because the re-login itself happens AFTER the shift window ends —
+        // it would otherwise match no shift. Cap = AutoLogoutAfterHours
+        // (per-overtime-session, e.g. 2h). Regular sessions use
+        // AutoLogoutRegularMinutes when configured, else legacy
+        // shift+maxOvertime.
+        var earlierAutoClosedCheckIn = await _ordersDb.WorkSessions
+            .AsNoTracking()
+            .Where(ws => ws.TenantId == tenantId
+                && ws.UserId == userId
+                && ws.Date == open.Date
+                && ws.Id != open.Id
+                && ws.WasAutoClosed)
+            .OrderBy(ws => ws.CheckInTime)
+            .Select(ws => (DateTime?)ws.CheckInTime)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var isOvertimeRelogin = earlierAutoClosedCheckIn.HasValue;
+        var shiftMatchTime = TimeOnly.FromDateTime(
+            isOvertimeRelogin ? earlierAutoClosedCheckIn!.Value : open.CheckInTime);
+        var shift = shifts.FirstOrDefault(s => IsTimeInShift(shiftMatchTime, s.StartTime, s.EndTime));
 
         if (shift == null)
             return new ActiveWorkSessionDto(sessionDto, null, null);
 
-        var shiftDuration = ShiftDuration(shift.StartTime, shift.EndTime);
-        var logoutAt = open.CheckInTime.Add(shiftDuration).AddHours(shift.MaxOvertimeHours);
+        TimeSpan cap;
+        if (isOvertimeRelogin)
+            cap = TimeSpan.FromHours(shift.AutoLogoutAfterHours);
+        else if (shift.AutoLogoutRegularMinutes > 0)
+            cap = TimeSpan.FromMinutes(shift.AutoLogoutRegularMinutes);
+        else
+            cap = ShiftDuration(shift.StartTime, shift.EndTime).Add(TimeSpan.FromHours(shift.MaxOvertimeHours));
+
+        var logoutAt = open.CheckInTime.Add(cap);
         var alarmAt = logoutAt.AddMinutes(-shift.AlarmBeforeLogoutMinutes);
 
         return new ActiveWorkSessionDto(sessionDto, alarmAt, logoutAt);
@@ -1056,7 +1094,7 @@ public class ReportingQueryService : IReportingQueryService
         var shiftConfigs = await _identityDb.Shifts
             .AsNoTracking()
             .Where(s => s.TenantId == tenantId && s.IsActive)
-            .Select(s => new ShiftConfig(s.StartTime, s.EndTime, s.MaxOvertimeHours, s.BreakMinutes))
+            .Select(s => new ShiftConfig(s.StartTime, s.EndTime, s.MaxOvertimeHours, s.BreakMinutes, s.AutoLogoutRegularMinutes))
             .ToListAsync(cancellationToken);
 
         var now = DateTime.UtcNow;
@@ -1144,6 +1182,12 @@ public class ReportingQueryService : IReportingQueryService
                 var uncovered = Math.Max(0, effective - active);
                 var efficiency = effective > 0 ? Math.Round(100.0 * active / effective, 1) : 0.0;
 
+                // Auto-logout-applied flag (Bojan Excel v2 column M): set when the
+                // shift has AutoLogoutRegularMinutes configured AND the day's total
+                // exceeded that cap. 0 = not configured → flag always false.
+                var autoLogoutApplied = shift?.AutoLogoutRegularMinutes > 0
+                    && totalWorked > shift.AutoLogoutRegularMinutes;
+
                 return new WorkerDayStat(
                     g.Key.UserId,
                     users.GetValueOrDefault(g.Key.UserId, "Unknown"),
@@ -1157,12 +1201,13 @@ public class ReportingQueryService : IReportingQueryService
                     active,
                     uncovered,
                     efficiency,
-                    g.Count());
+                    g.Count(),
+                    autoLogoutApplied);
             })
             .ToList();
     }
 
-    private record ShiftConfig(TimeOnly StartTime, TimeOnly EndTime, int MaxOvertimeHours, int BreakMinutes);
+    private record ShiftConfig(TimeOnly StartTime, TimeOnly EndTime, int MaxOvertimeHours, int BreakMinutes, int AutoLogoutRegularMinutes);
 
     private record WorkerDayStat(
         Guid UserId,
@@ -1177,7 +1222,8 @@ public class ReportingQueryService : IReportingQueryService
         int ActiveMinutes,
         int UncoveredMinutes,
         double EfficiencyPercent,
-        int SessionCount);
+        int SessionCount,
+        bool AutoLogoutApplied);
 
     /// <summary>
     /// Lazy auto-logout per Bojan 25.05.2026 — applies to forgotten checkouts

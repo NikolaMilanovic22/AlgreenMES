@@ -178,6 +178,36 @@ public class ProductionEventService : IProductionEventService
             .SendAsync("WorkerCheckedOut", evt, cancellationToken);
     }
 
+    public async Task NotifyWorkerAutoLoggedOutAsync(WorkerAutoLoggedOutEvent evt, CancellationToken cancellationToken = default)
+    {
+        // Bojan 30.05.2026: coordinator should be warned when auto-logout fires.
+        // Broadcast to tenant for live dashboards; persist a per-user Notification
+        // for each dashboard role so it shows up in the notification list.
+        await _hubContext.Clients.Group($"tenant-{evt.TenantId}")
+            .SendAsync("WorkerAutoLoggedOut", evt, cancellationToken);
+
+        var worker = await _userRepository.GetByIdAsync(evt.UserId, cancellationToken);
+        var workerName = worker != null ? $"{worker.FirstName} {worker.LastName}" : "—";
+
+        var title = "Auto-odjava";
+        var message = $"Radnik {workerName} automatski je odjavljen.";
+
+        var allUsers = await _userRepository.GetByTenantIdAsync(evt.TenantId, cancellationToken);
+        var dashboardUserIds = allUsers
+            .Where(u => u.IsActive && DashboardRoles.Contains(u.Role))
+            .Select(u => u.Id)
+            .ToList();
+
+        foreach (var userId in dashboardUserIds)
+        {
+            var notification = Notification.Create(evt.TenantId, userId,
+                NotificationType.WorkerAutoLoggedOut, title, message,
+                "WorkSession", evt.SessionId);
+            await _notificationRepository.AddAsync(notification, cancellationToken);
+        }
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task NotifyDeadlineWarningAsync(DeadlineWarningEvent evt, CancellationToken cancellationToken = default)
     {
         await _hubContext.Clients.Group($"tenant-{evt.TenantId}")

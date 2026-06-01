@@ -8,4 +8,5 @@ public record UpdateShiftRequest(
     int BreakMinutes,
     int MaxOvertimeHours,
     int AutoLogoutAfterHours,
-    int AlarmBeforeLogoutMinutes);
+    int AlarmBeforeLogoutMinutes,
+    int AutoLogoutRegularMinutes);

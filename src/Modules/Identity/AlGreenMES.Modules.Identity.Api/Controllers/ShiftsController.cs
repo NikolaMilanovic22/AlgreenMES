@@ -63,7 +63,8 @@ public class ShiftsController : ControllerBase
                 request.BreakMinutes,
                 request.MaxOvertimeHours,
                 request.AutoLogoutAfterHours,
-                request.AlarmBeforeLogoutMinutes),
+                request.AlarmBeforeLogoutMinutes,
+                request.AutoLogoutRegularMinutes),
             cancellationToken);
 
         return Created($"/api/shifts/{result.Id}", result);
@@ -83,7 +84,8 @@ public class ShiftsController : ControllerBase
                 request.BreakMinutes,
                 request.MaxOvertimeHours,
                 request.AutoLogoutAfterHours,
-                request.AlarmBeforeLogoutMinutes),
+                request.AlarmBeforeLogoutMinutes,
+                request.AutoLogoutRegularMinutes),
             cancellationToken);
 
         return Ok(result);

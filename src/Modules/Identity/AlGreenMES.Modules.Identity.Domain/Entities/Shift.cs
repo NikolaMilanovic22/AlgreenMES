@@ -17,6 +17,11 @@ public class
     public int MaxOvertimeHours { get; private set; }
     public int AutoLogoutAfterHours { get; private set; }
     public int AlarmBeforeLogoutMinutes { get; private set; }
+    // Auto-logout for the REGULAR shift session (Bojan 29.05.2026 follow-up):
+    // hard close-out N minutes after check-in for the first session. Time between
+    // ShiftDuration and this cap counts as overtime within the same session.
+    // 0 = use legacy behaviour (cap = shift + MaxOvertimeHours, no in-session OT).
+    public int AutoLogoutRegularMinutes { get; private set; }
 
     private Shift()
     {
@@ -30,12 +35,13 @@ public class
         int breakMinutes,
         int maxOvertimeHours,
         int autoLogoutAfterHours,
-        int alarmBeforeLogoutMinutes)
+        int alarmBeforeLogoutMinutes,
+        int autoLogoutRegularMinutes)
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new DomainException("SHIFT_NAME_REQUIRED", "Shift name is required.");
 
-        ValidateConfig(breakMinutes, maxOvertimeHours, autoLogoutAfterHours, alarmBeforeLogoutMinutes);
+        ValidateConfig(breakMinutes, maxOvertimeHours, autoLogoutAfterHours, alarmBeforeLogoutMinutes, autoLogoutRegularMinutes);
 
         return new Shift
         {
@@ -47,7 +53,8 @@ public class
             BreakMinutes = breakMinutes,
             MaxOvertimeHours = maxOvertimeHours,
             AutoLogoutAfterHours = autoLogoutAfterHours,
-            AlarmBeforeLogoutMinutes = alarmBeforeLogoutMinutes
+            AlarmBeforeLogoutMinutes = alarmBeforeLogoutMinutes,
+            AutoLogoutRegularMinutes = autoLogoutRegularMinutes
         };
     }
 
@@ -59,12 +66,13 @@ public class
         int breakMinutes,
         int maxOvertimeHours,
         int autoLogoutAfterHours,
-        int alarmBeforeLogoutMinutes)
+        int alarmBeforeLogoutMinutes,
+        int autoLogoutRegularMinutes)
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new DomainException("SHIFT_NAME_REQUIRED", "Shift name is required.");
 
-        ValidateConfig(breakMinutes, maxOvertimeHours, autoLogoutAfterHours, alarmBeforeLogoutMinutes);
+        ValidateConfig(breakMinutes, maxOvertimeHours, autoLogoutAfterHours, alarmBeforeLogoutMinutes, autoLogoutRegularMinutes);
 
         Name = name.Trim();
         StartTime = startTime;
@@ -74,13 +82,15 @@ public class
         MaxOvertimeHours = maxOvertimeHours;
         AutoLogoutAfterHours = autoLogoutAfterHours;
         AlarmBeforeLogoutMinutes = alarmBeforeLogoutMinutes;
+        AutoLogoutRegularMinutes = autoLogoutRegularMinutes;
     }
 
     private static void ValidateConfig(
         int breakMinutes,
         int maxOvertimeHours,
         int autoLogoutAfterHours,
-        int alarmBeforeLogoutMinutes)
+        int alarmBeforeLogoutMinutes,
+        int autoLogoutRegularMinutes)
     {
         if (breakMinutes < 0)
             throw new DomainException("SHIFT_BREAK_INVALID", "Break minutes must be ≥ 0.");
@@ -90,5 +100,7 @@ public class
             throw new DomainException("SHIFT_AUTOLOGOUT_INVALID", "Auto-logout interval must be > 0 hours.");
         if (alarmBeforeLogoutMinutes < 0)
             throw new DomainException("SHIFT_ALARM_INVALID", "Alarm minutes must be ≥ 0.");
+        if (autoLogoutRegularMinutes < 0)
+            throw new DomainException("SHIFT_AUTOLOGOUT_REGULAR_INVALID", "Regular auto-logout minutes must be ≥ 0.");
     }
 }

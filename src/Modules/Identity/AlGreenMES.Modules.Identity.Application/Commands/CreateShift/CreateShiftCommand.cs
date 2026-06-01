@@ -11,4 +11,5 @@ public record CreateShiftCommand(
     int BreakMinutes,
     int MaxOvertimeHours,
     int AutoLogoutAfterHours,
-    int AlarmBeforeLogoutMinutes) : IRequest<ShiftDto>;
+    int AlarmBeforeLogoutMinutes,
+    int AutoLogoutRegularMinutes) : IRequest<ShiftDto>;

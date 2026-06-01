@@ -21,6 +21,10 @@ public class WorkSessionConfiguration : IEntityTypeConfiguration<WorkSession>
         builder.Property(ws => ws.CreatedAt)
             .IsRequired();
 
+        builder.Property(ws => ws.WasAutoClosed)
+            .IsRequired()
+            .HasDefaultValue(false);
+
         builder.Ignore(ws => ws.IsActive);
 
         builder.HasIndex(ws => ws.UserId);
