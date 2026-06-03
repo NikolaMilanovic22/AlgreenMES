@@ -1088,7 +1088,7 @@ public class ReportingQueryService : IReportingQueryService
             sessionsQuery = sessionsQuery.Where(ws => ws.UserId == userId.Value);
 
         var rawSessions = await sessionsQuery
-            .Select(ws => new { ws.UserId, ws.Date, ws.CheckInTime, ws.CheckOutTime })
+            .Select(ws => new { ws.UserId, ws.Date, ws.CheckInTime, ws.CheckOutTime, ws.WasAutoClosed })
             .ToListAsync(cancellationToken);
 
         var shiftConfigs = await _identityDb.Shifts
@@ -1113,6 +1113,7 @@ public class ReportingQueryService : IReportingQueryService
                     s.CheckInTime,
                     CheckOut = effectiveEnd.Value,
                     Duration = Math.Max(0, duration),
+                    s.WasAutoClosed,
                 };
             })
             .Where(x => x != null)
@@ -1126,10 +1127,15 @@ public class ReportingQueryService : IReportingQueryService
         var fromUtc = DateTime.SpecifyKind(from.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
         var toUtc = DateTime.SpecifyKind(to.AddDays(1).ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
 
+        // Bug fix (Bojan 03.06.2026): include OPEN subprocess logs too, not
+        // only ended ones. A worker who's still on a process (timer running on
+        // tablet) contributes their open-log duration to "Aktivno na procesima"
+        // up to the moment their session ended. Without this, a worker like
+        // Milojica who left a process timer running shows Aktivno = 0 in the
+        // report even though they were demonstrably working.
         var logsQuery = _ordersDb.OrderItemSubProcessLogs
             .AsNoTracking()
             .Where(l => l.TenantId == tenantId
-                && l.EndTime.HasValue
                 && l.StartTime >= fromUtc
                 && l.StartTime < toUtc
                 && workerIds.Contains(l.UserId));
@@ -1137,14 +1143,26 @@ public class ReportingQueryService : IReportingQueryService
             logsQuery = logsQuery.Where(l => l.UserId == userId.Value);
 
         var logs = await logsQuery
-            .Select(l => new { l.UserId, l.StartTime, EndTime = l.EndTime!.Value })
+            .Select(l => new { l.UserId, l.StartTime, l.EndTime })
             .ToListAsync(cancellationToken);
+
+        // Per (user, date) latest session checkout — used to clip open logs.
+        var latestCheckOutByUserDay = sessions
+            .GroupBy(s => new { s.UserId, s.Date })
+            .ToDictionary(g => g.Key, g => g.Max(s => s.CheckOut));
 
         var logsByUserDay = logs
             .GroupBy(l => new { l.UserId, Date = DateOnly.FromDateTime(l.StartTime) })
             .ToDictionary(
                 g => g.Key,
-                g => UnionMinutes(g.Select(x => (x.StartTime, x.EndTime)).ToList()));
+                g =>
+                {
+                    // Open logs (EndTime null) clip to that day's latest session
+                    // checkout (worker can't be active past their checkout). If
+                    // no matching session, fall back to `now`.
+                    var clipUpper = latestCheckOutByUserDay.TryGetValue(g.Key, out var co) ? co : now;
+                    return UnionMinutes(g.Select(x => (x.StartTime, x.EndTime ?? clipUpper)).ToList());
+                });
 
         var userIds = sessions.Select(s => s.UserId).Distinct().ToList();
         var users = await _identityDb.Users
@@ -1182,11 +1200,13 @@ public class ReportingQueryService : IReportingQueryService
                 var uncovered = Math.Max(0, effective - active);
                 var efficiency = effective > 0 ? Math.Round(100.0 * active / effective, 1) : 0.0;
 
-                // Auto-logout-applied flag (Bojan Excel v2 column M): set when the
-                // shift has AutoLogoutRegularMinutes configured AND the day's total
-                // exceeded that cap. 0 = not configured → flag always false.
-                var autoLogoutApplied = shift?.AutoLogoutRegularMinutes > 0
-                    && totalWorked > shift.AutoLogoutRegularMinutes;
+                // Auto-logout-applied flag (Bojan Excel v2 column M): derived
+                // from the persisted WasAutoClosed flag on the underlying
+                // session(s). This avoids an off-by-one in the previous
+                // `totalWorked > cap` arithmetic — when the system auto-closes
+                // exactly at the cap, totalWorked equals the cap and a strict-
+                // greater comparison missed it (Bojan caught 03.06.2026).
+                var autoLogoutApplied = g.Any(s => s.WasAutoClosed);
 
                 return new WorkerDayStat(
                     g.Key.UserId,
