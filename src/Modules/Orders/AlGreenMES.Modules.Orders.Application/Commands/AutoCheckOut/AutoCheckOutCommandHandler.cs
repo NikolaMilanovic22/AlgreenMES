@@ -1,4 +1,5 @@
 using AlGreenMES.BuildingBlocks.Common.Exceptions;
+using AlGreenMES.Modules.Orders.Application.Commands.PauseWork;
 using AlGreenMES.Modules.Orders.Application.DTOs;
 using AlGreenMES.Modules.Orders.Application.DTOs.Events;
 using AlGreenMES.Modules.Orders.Application.Interfaces;
@@ -11,20 +12,20 @@ namespace AlGreenMES.Modules.Orders.Application.Commands.AutoCheckOut;
 public class AutoCheckOutCommandHandler : IRequestHandler<AutoCheckOutCommand, WorkSessionDto>
 {
     private readonly IWorkSessionRepository _workSessionRepository;
-    private readonly IOrderItemSubProcessRepository _subProcessRepository;
     private readonly IOrdersUnitOfWork _unitOfWork;
     private readonly IProductionEventService _eventService;
+    private readonly IMediator _mediator;
 
     public AutoCheckOutCommandHandler(
         IWorkSessionRepository workSessionRepository,
-        IOrderItemSubProcessRepository subProcessRepository,
         IOrdersUnitOfWork unitOfWork,
-        IProductionEventService eventService)
+        IProductionEventService eventService,
+        IMediator mediator)
     {
         _workSessionRepository = workSessionRepository;
-        _subProcessRepository = subProcessRepository;
         _unitOfWork = unitOfWork;
         _eventService = eventService;
+        _mediator = mediator;
     }
 
     public async Task<WorkSessionDto> Handle(AutoCheckOutCommand request, CancellationToken cancellationToken)
@@ -33,15 +34,15 @@ public class AutoCheckOutCommandHandler : IRequestHandler<AutoCheckOutCommand, W
         if (session == null)
             throw new DomainException("NOT_CHECKED_IN", "User does not have an active session.");
 
-        // Close any active sub-process logs (same as manual checkout — a worker
-        // who hit the cap might still have a process timer running).
-        var activeLogs = await _subProcessRepository.GetActiveLogsByUserIdAsync(request.UserId, cancellationToken);
-        foreach (var log in activeLogs)
-        {
-            log.End();
-            if (log.DurationMinutes.HasValue)
-                log.OrderItemSubProcess.AddDuration(log.DurationMinutes.Value);
-        }
+        // Pause + end all active sub-process logs. Delegated to PauseWork so
+        // the behaviour stays in lockstep with the tablet's manual logout
+        // flow (CheckOutPage → tabletApi.pause → PauseWorkCommand). Critically,
+        // PauseWork also stamps PausedByStationAt on each sub-process so it
+        // shows as "Pauzirano" to coordinators and can auto-resume on next
+        // station login — auto-logout previously skipped that step and left
+        // sub-processes looking "Rad u toku" with no active worker.
+        // See [auto-logout-must-mirror-manual-logout] in memory.
+        await _mediator.Send(new PauseWorkCommand(request.UserId), cancellationToken);
 
         session.AutoCheckOut(request.When);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
