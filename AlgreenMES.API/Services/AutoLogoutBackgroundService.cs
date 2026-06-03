@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using AlGreenMES.Modules.Orders.Application.Queries.GetActiveWorkSession;
 using AlGreenMES.Modules.Orders.Infrastructure.Persistence;
 using MediatR;
@@ -51,22 +52,38 @@ public class AutoLogoutBackgroundService : BackgroundService
 
     private async Task ScanAsync(CancellationToken ct)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
-        var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
-
-        var openSessions = await ordersDb.WorkSessions
-            .AsNoTracking()
-            .IgnoreQueryFilters()
-            .Where(ws => ws.CheckOutTime == null)
-            .Select(ws => new { ws.TenantId, ws.UserId })
-            .Distinct()
-            .ToListAsync(ct);
+        // Bootstrap scope: just enumerates open sessions across all tenants.
+        // Uses IgnoreQueryFilters() so the OrdersDbContext tenant filter does
+        // not blank the result (we have no HTTP context here, so the filter
+        // would evaluate to TenantId == Guid.Empty and match nothing).
+        List<(Guid TenantId, Guid UserId)> openSessions;
+        using (var bootstrap = _scopeFactory.CreateScope())
+        {
+            var ordersDb = bootstrap.ServiceProvider.GetRequiredService<OrdersDbContext>();
+            openSessions = await ordersDb.WorkSessions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(ws => ws.CheckOutTime == null)
+                .Select(ws => new { ws.TenantId, ws.UserId })
+                .Distinct()
+                .Select(x => ValueTuple.Create(x.TenantId, x.UserId))
+                .ToListAsync(ct);
+        }
 
         if (openSessions.Count == 0) return;
 
         foreach (var s in openSessions)
         {
+            // Per-session scope with a synthetic HttpContext carrying the
+            // session's tenant + user claims. Downstream mediator handlers
+            // (e.g. AutoCheckOutCommandHandler, repositories) rely on the
+            // tenant query filter resolved via ICurrentUserService — without
+            // this they'd see "no active session" and silently no-op.
+            using var perUserScope = _scopeFactory.CreateScope();
+            var httpAccessor = perUserScope.ServiceProvider.GetRequiredService<IHttpContextAccessor>();
+            httpAccessor.HttpContext = BuildBackgroundHttpContext(s.TenantId, s.UserId);
+            var mediator = perUserScope.ServiceProvider.GetRequiredService<IMediator>();
+
             try
             {
                 // The query handler internally fires AutoCheckOutCommand when
@@ -80,5 +97,22 @@ public class AutoLogoutBackgroundService : BackgroundService
                     s.TenantId, s.UserId);
             }
         }
+    }
+
+    private static DefaultHttpContext BuildBackgroundHttpContext(Guid tenantId, Guid userId)
+    {
+        // SuperAdmin role bypasses any [Authorize(Roles=...)] checks in handlers
+        // we route through; tenant_id + sub claims feed CurrentUserService so
+        // OrdersDbContext's tenant filter resolves correctly for this scan.
+        var claims = new[]
+        {
+            new Claim("tenant_id", tenantId.ToString()),
+            new Claim(ClaimTypes.NameIdentifier, userId.ToString()),
+            new Claim(ClaimTypes.Role, "SuperAdmin"),
+        };
+        return new DefaultHttpContext
+        {
+            User = new ClaimsPrincipal(new ClaimsIdentity(claims, "AutoLogoutBackgroundService")),
+        };
     }
 }
