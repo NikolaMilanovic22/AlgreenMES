@@ -270,12 +270,15 @@ public class WorkerHoursReportTests : IntegrationTestBase
         daily.GetProperty("autoLogoutApplied").GetBoolean().Should().BeTrue();
     }
 
-    // NOTE (Bojan 03.06.2026 — open-log active fix): the corresponding
-    // integration test was attempted but kept hitting a concurrency exception
-    // inside SeedSubProcessLogAsync's own ExecuteUpdateAsync (likely an
-    // interceptor interaction). The fix itself is in ReportingQueryService —
-    // open subprocess logs are now included in the active union with EndTime
-    // clipped to the session's checkout. Verified by post-deploy smoke test
-    // against Milojica's session (previously Aktivno=0, should now report
+    // NOTE (Bojan 03.06.2026 — open-log active fix): tried several approaches
+    // to write an integration test for this — all of them hit a
+    // DbUpdateConcurrencyException on the Process+SubProcess save (line 589 in
+    // the prior seeder shape). The pre-existing SeedSubProcessLogAsync hits
+    // the same issue. Suspect an EF 9 + Npgsql + interceptor interaction
+    // around child-collection adds, but it doesn't reproduce in other tests.
+    // The production fix itself is small and well-contained in
+    // ReportingQueryService — open logs are included in the active union with
+    // EndTime clipped to the session's checkout. Verified by post-deploy
+    // smoke test against Milojica's session (was Aktivno=0, now reports
     // actual active time).
 }
