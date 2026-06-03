@@ -56,18 +56,23 @@ public class AutoLogoutBackgroundService : BackgroundService
         // Uses IgnoreQueryFilters() so the OrdersDbContext tenant filter does
         // not blank the result (we have no HTTP context here, so the filter
         // would evaluate to TenantId == Guid.Empty and match nothing).
+        // NOTE: project to an anonymous type — projecting straight to a
+        // ValueTuple via .Select(ValueTuple.Create(...)) makes Npgsql try
+        // to read a Postgres `record` and throws InvalidCastException at
+        // scan time, silently breaking the service. Materialize first,
+        // tuple-ify in-memory.
         List<(Guid TenantId, Guid UserId)> openSessions;
         using (var bootstrap = _scopeFactory.CreateScope())
         {
             var ordersDb = bootstrap.ServiceProvider.GetRequiredService<OrdersDbContext>();
-            openSessions = await ordersDb.WorkSessions
+            var rows = await ordersDb.WorkSessions
                 .AsNoTracking()
                 .IgnoreQueryFilters()
                 .Where(ws => ws.CheckOutTime == null)
                 .Select(ws => new { ws.TenantId, ws.UserId })
                 .Distinct()
-                .Select(x => ValueTuple.Create(x.TenantId, x.UserId))
                 .ToListAsync(ct);
+            openSessions = rows.Select(x => (x.TenantId, x.UserId)).ToList();
         }
 
         if (openSessions.Count == 0) return;
