@@ -362,6 +362,21 @@ public class Program
             // those filters but DI must still resolve the dependency graph.
             // HttpContextAccessor returns a null context off the request path,
             // which both services tolerate.
+            // The migrate path only ever resolves the four DbContexts. It
+            // pulls in the full module wiring so DbContext configuration is
+            // identical to runtime, but that wiring also registers MediatR
+            // handlers whose own dependencies (e.g. IProductionEventService,
+            // IReferenceCheckService) live in the API project and are NOT
+            // exercised here. Disable container validation so the build
+            // succeeds without dragging every cross-module service into the
+            // migrate registration. (On Production deploys validation is
+            // skipped by default — this matches that behavior locally.)
+            builder.Host.UseDefaultServiceProvider(o =>
+            {
+                o.ValidateScopes = false;
+                o.ValidateOnBuild = false;
+            });
+
             builder.Services.AddHttpContextAccessor();
             builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
             builder.Services.AddScoped<ITenantService, TenantService>();
