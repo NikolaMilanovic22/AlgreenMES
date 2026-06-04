@@ -63,6 +63,7 @@ public static class OrdersInfrastructureServiceRegistration
 
         services.AddScoped<IDashboardQueryService, DashboardQueryService>();
         services.AddScoped<IReportingQueryService, ReportingQueryService>();
+        services.AddScoped<IUserProcessLookup, UserProcessLookup>();
 
         return services;
     }

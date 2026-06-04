@@ -1,4 +1,5 @@
 using AlGreenMES.BuildingBlocks.Common.Exceptions;
+using AlGreenMES.Modules.Orders.Application.Commands.PauseStation;
 using AlGreenMES.Modules.Orders.Application.Commands.PauseWork;
 using AlGreenMES.Modules.Orders.Application.DTOs;
 using AlGreenMES.Modules.Orders.Application.DTOs.Events;
@@ -6,6 +7,7 @@ using AlGreenMES.Modules.Orders.Application.Interfaces;
 using AlGreenMES.Modules.Orders.Domain.Repositories;
 using Mapster;
 using MediatR;
+using Microsoft.Extensions.Logging;
 
 namespace AlGreenMES.Modules.Orders.Application.Commands.AutoCheckOut;
 
@@ -15,17 +17,23 @@ public class AutoCheckOutCommandHandler : IRequestHandler<AutoCheckOutCommand, W
     private readonly IOrdersUnitOfWork _unitOfWork;
     private readonly IProductionEventService _eventService;
     private readonly IMediator _mediator;
+    private readonly IUserProcessLookup _userProcessLookup;
+    private readonly ILogger<AutoCheckOutCommandHandler> _logger;
 
     public AutoCheckOutCommandHandler(
         IWorkSessionRepository workSessionRepository,
         IOrdersUnitOfWork unitOfWork,
         IProductionEventService eventService,
-        IMediator mediator)
+        IMediator mediator,
+        IUserProcessLookup userProcessLookup,
+        ILogger<AutoCheckOutCommandHandler> logger)
     {
         _workSessionRepository = workSessionRepository;
         _unitOfWork = unitOfWork;
         _eventService = eventService;
         _mediator = mediator;
+        _userProcessLookup = userProcessLookup;
+        _logger = logger;
     }
 
     public async Task<WorkSessionDto> Handle(AutoCheckOutCommand request, CancellationToken cancellationToken)
@@ -43,6 +51,29 @@ public class AutoCheckOutCommandHandler : IRequestHandler<AutoCheckOutCommand, W
         // sub-processes looking "Rad u toku" with no active worker.
         // See [auto-logout-must-mirror-manual-logout] in memory.
         await _mediator.Send(new PauseWorkCommand(request.UserId), cancellationToken);
+
+        // Mirror the FE manual-logout chain's per-process PauseStation step
+        // (CheckOutPage → processWorkflowApi.pauseStation per user.processes).
+        // This is what handles processes that have NO sub-processes — e.g.
+        // Krojenje on ORD-2026-015 — where PauseWork's subprocess-log walk
+        // finds nothing to pause. Without this, those processes keep ticking
+        // visually after auto-logout (Bojan 04.06.2026 test, slika 1).
+        var processIds = await _userProcessLookup.GetUserProcessIdsAsync(request.UserId, cancellationToken);
+        foreach (var processId in processIds)
+        {
+            try
+            {
+                await _mediator.Send(new PauseStationCommand(processId, session.TenantId, request.UserId), cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                // Don't let a single per-process failure abort the whole
+                // auto-checkout — the session close still needs to happen.
+                _logger.LogWarning(ex,
+                    "PauseStation failed during auto-checkout for user {UserId} process {ProcessId}",
+                    request.UserId, processId);
+            }
+        }
 
         session.AutoCheckOut(request.When);
         await _unitOfWork.SaveChangesAsync(cancellationToken);

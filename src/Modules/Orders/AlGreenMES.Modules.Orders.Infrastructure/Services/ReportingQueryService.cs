@@ -1157,11 +1157,20 @@ public class ReportingQueryService : IReportingQueryService
                 g => g.Key,
                 g =>
                 {
-                    // Open logs (EndTime null) clip to that day's latest session
-                    // checkout (worker can't be active past their checkout). If
-                    // no matching session, fall back to `now`.
+                    // Clip both open AND closed log EndTime to that day's latest
+                    // session checkout. Closed logs can overshoot by a few seconds
+                    // when the BG service runs the actual log.End() after the
+                    // backdated session checkout — Bojan 04.06.2026 testing showed
+                    // Milojica's log running ~2min past the (backdated) checkout,
+                    // inflating Aktivno on the report. Clip to session end so
+                    // Aktivno reflects time WITHIN the session boundaries.
                     var clipUpper = latestCheckOutByUserDay.TryGetValue(g.Key, out var co) ? co : now;
-                    return UnionMinutes(g.Select(x => (x.StartTime, x.EndTime ?? clipUpper)).ToList());
+                    return UnionMinutes(g.Select(x =>
+                    {
+                        var rawEnd = x.EndTime ?? clipUpper;
+                        var end = rawEnd > clipUpper ? clipUpper : rawEnd;
+                        return (x.StartTime, end);
+                    }).ToList());
                 });
 
         var userIds = sessions.Select(s => s.UserId).Distinct().ToList();
@@ -1196,8 +1205,15 @@ public class ReportingQueryService : IReportingQueryService
                 var effective = Math.Max(0, totalWorked - breakMinutes);
 
                 var active = logsByUserDay.TryGetValue(new { g.Key.UserId, g.Key.Date }, out var a) ? a : 0;
-                active = Math.Min(active, effective);
-                var uncovered = Math.Max(0, effective - active);
+                // Cap active at totalWorked (session duration), NOT effective
+                // (which subtracts breakMinutes). Bojan 04.06.2026: Milojica's
+                // actual subprocess work was 8h12min but the report capped to
+                // 8h00m because effective = totalWorked - 30min break. That
+                // ate the overtime into nepokriveno. Aktivno represents raw
+                // active time WITHIN the session; break deduction is for
+                // Efektivno (separate column).
+                active = Math.Min(active, totalWorked);
+                var uncovered = Math.Max(0, totalWorked - active);
                 var efficiency = effective > 0 ? Math.Round(100.0 * active / effective, 1) : 0.0;
 
                 // Auto-logout-applied flag (Bojan Excel v2 column M): derived
