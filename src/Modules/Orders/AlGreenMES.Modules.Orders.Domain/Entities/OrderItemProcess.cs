@@ -16,6 +16,18 @@ public class OrderItemProcess : TenantEntity
     public DateTime? CompletedAt { get; private set; }
     public int TotalDurationMinutes { get; private set; }
 
+    /// <summary>
+    /// The worker who STARTED this process (Bojan 04.06.2026 — needed so
+    /// process-level work, i.e. processes without sub-processes like Krojenje,
+    /// can be attributed per-user in the Sati radnika report). For processes
+    /// with sub-processes the per-user time still lives on subprocess logs;
+    /// this field only matters for processes-without-subprocesses. Set at
+    /// StartProcessWork; resumed-from-pause keeps the original starter
+    /// (the typical case is the same worker resuming). Null on historical
+    /// rows that pre-date the column.
+    /// </summary>
+    public Guid? StartedByUserId { get; private set; }
+
     public bool IsWithdrawn { get; private set; }
     public DateTime? WithdrawnAt { get; private set; }
     public Guid? WithdrawnByUserId { get; private set; }
@@ -78,12 +90,13 @@ public class OrderItemProcess : TenantEntity
         };
     }
 
-    public void Start()
+    public void Start(Guid? startedByUserId = null)
     {
         if (Status != ProcessStatus.Pending)
             throw new DomainException("INVALID_STATUS", "Can only start pending processes.");
         Status = ProcessStatus.InProgress;
         StartedAt = DateTime.UtcNow;
+        StartedByUserId = startedByUserId;
         UpdatedAt = DateTime.UtcNow;
     }
 

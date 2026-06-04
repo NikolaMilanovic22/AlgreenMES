@@ -1146,12 +1146,47 @@ public class ReportingQueryService : IReportingQueryService
             .Select(l => new { l.UserId, l.StartTime, l.EndTime })
             .ToListAsync(cancellationToken);
 
+        // Bug fix (Bojan 04.06.2026): process-level work (processes without
+        // sub-processes, e.g. Krojenje on ORD-2026-015) was completely missing
+        // from Aktivno because no subprocess log gets created for them. As of
+        // the StartedByUserId migration (20260604172120), OrderItemProcess
+        // tracks who started it; here we treat each such process's active
+        // window (StartedAt → PausedAt ?? CompletedAt ?? clipUpper) as an
+        // additional "log-equivalent" interval for the same UnionMinutes calc.
+        // Only counts processes whose StartedByUserId is set AND whose own
+        // SubProcess collection has no non-withdrawn rows (process-level work).
+        var processQuery = _ordersDb.OrderItemProcesses
+            .AsNoTracking()
+            .Where(p => p.TenantId == tenantId
+                && p.StartedByUserId.HasValue
+                && p.StartedAt.HasValue
+                && p.StartedAt >= fromUtc
+                && p.StartedAt < toUtc
+                && workerIds.Contains(p.StartedByUserId!.Value)
+                && !p.SubProcesses.Any(sp => !sp.IsWithdrawn));
+        if (userId.HasValue)
+            processQuery = processQuery.Where(p => p.StartedByUserId == userId.Value);
+
+        var processLogs = await processQuery
+            .Select(p => new {
+                UserId = p.StartedByUserId!.Value,
+                StartTime = p.StartedAt!.Value,
+                EndTime = p.PausedAt ?? p.CompletedAt,
+            })
+            .ToListAsync(cancellationToken);
+
         // Per (user, date) latest session checkout — used to clip open logs.
         var latestCheckOutByUserDay = sessions
             .GroupBy(s => new { s.UserId, s.Date })
             .ToDictionary(g => g.Key, g => g.Max(s => s.CheckOut));
 
-        var logsByUserDay = logs
+        // Combine sub-process logs and process-level intervals, then union per
+        // (user, day). Both kinds are clipped to session checkout.
+        var allLogs = logs
+            .Concat(processLogs)
+            .ToList();
+
+        var logsByUserDay = allLogs
             .GroupBy(l => new { l.UserId, Date = DateOnly.FromDateTime(l.StartTime) })
             .ToDictionary(
                 g => g.Key,

@@ -74,7 +74,7 @@ public class StartProcessWorkCommandHandler : IRequestHandler<StartProcessWorkCo
             }
         }
 
-        process.Start();
+        process.Start(request.UserId);
         _logger.LogInformation("[StartProcess] Process started. Starting first sub-process...");
 
         // Load production process to get SubProcess SequenceOrder for correct ordering
