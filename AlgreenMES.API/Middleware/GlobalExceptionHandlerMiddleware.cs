@@ -63,6 +63,24 @@ public class GlobalExceptionHandlerMiddleware
                 error = new { code = ex.Code, message = ex.Message }
             });
         }
+        catch (Microsoft.AspNetCore.Http.BadHttpRequestException ex)
+        {
+            // Client cut the connection mid-request (tab closed, navigation,
+            // network drop) — surfaces here as "Unexpected end of request
+            // content." or similar. Not a server bug; log at Warning so
+            // Sentry doesn't page on every dropped /auth/refresh poll, and
+            // return 400 instead of bubbling to 500.
+            _logger.LogWarning(ex, "Bad HTTP request: {Message}", ex.Message);
+            await WriteResponseAsync(context, HttpStatusCode.BadRequest, new
+            {
+                error = new { code = "BAD_REQUEST", message = "Malformed or interrupted request." }
+            });
+        }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        {
+            // Client aborted the request — nothing to log, nothing to return
+            // (the connection is already gone). Avoid Sentry noise.
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unhandled exception");
