@@ -12,6 +12,13 @@ public class OrderItemProcessLogConfiguration : IEntityTypeConfiguration<OrderIt
 
         builder.HasKey(l => l.Id);
 
+        // Id is client-generated (TenantEntity sets Guid.NewGuid() in the
+        // constructor). Without ValueGeneratedNever() EF expects the DB to
+        // generate it and triggers an INSERT-with-read-back path that fails
+        // with DbUpdateConcurrencyException ("1 row expected, 0 affected").
+        // Same pattern as OrderItemSubProcessLogConfiguration.
+        builder.Property(l => l.Id).ValueGeneratedNever();
+
         builder.Property(l => l.OrderItemProcessId).IsRequired();
         builder.Property(l => l.UserId).IsRequired();
         builder.Property(l => l.StartTime).IsRequired();
