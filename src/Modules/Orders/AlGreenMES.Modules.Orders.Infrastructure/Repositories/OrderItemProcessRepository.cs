@@ -32,6 +32,7 @@ public class OrderItemProcessRepository : IOrderItemProcessRepository
         return await _dbContext.OrderItemProcesses
             .Include(p => p.SubProcesses)
                 .ThenInclude(sp => sp.Logs)
+            .Include(p => p.ProcessLogs)
             .Include(p => p.OrderItem)
                 .ThenInclude(oi => oi.Order)
             .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
@@ -42,6 +43,7 @@ public class OrderItemProcessRepository : IOrderItemProcessRepository
         return await _dbContext.OrderItemProcesses
             .Include(p => p.SubProcesses)
                 .ThenInclude(sp => sp.Logs)
+            .Include(p => p.ProcessLogs)
             .Include(p => p.OrderItem)
                 .ThenInclude(oi => oi.Order)
             .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
@@ -60,6 +62,7 @@ public class OrderItemProcessRepository : IOrderItemProcessRepository
         return await _dbContext.OrderItemProcesses
             .Include(p => p.SubProcesses)
                 .ThenInclude(sp => sp.Logs)
+            .Include(p => p.ProcessLogs)
             .Where(p => p.TenantId == tenantId
                 && p.ProcessId == processId
                 && p.Status == Domain.Enums.ProcessStatus.InProgress)
