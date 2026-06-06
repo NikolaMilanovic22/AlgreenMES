@@ -60,5 +60,8 @@ public class OrderItemProcessConfiguration : IEntityTypeConfiguration<OrderItemP
 
         builder.Metadata.FindNavigation(nameof(OrderItemProcess.SubProcesses))!
             .SetPropertyAccessMode(PropertyAccessMode.Field);
+
+        builder.Metadata.FindNavigation(nameof(OrderItemProcess.ProcessLogs))!
+            .SetPropertyAccessMode(PropertyAccessMode.Field);
     }
 }

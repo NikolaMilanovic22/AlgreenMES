@@ -45,7 +45,7 @@ public class ResumeStationCommandHandler : IRequestHandler<ResumeStationCommand>
                 // Only auto-resume processes paused by station logout —
                 // manually paused processes stay paused.
                 if (process.PausedByStationAt.HasValue && process.PausedAt.HasValue)
-                    process.ResumeTimer(); // also clears PausedByStationAt
+                    process.ResumeTimer(request.UserId); // also clears PausedByStationAt
             }
         }
 

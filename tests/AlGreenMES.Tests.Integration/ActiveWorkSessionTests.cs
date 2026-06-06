@@ -137,27 +137,23 @@ public class ActiveWorkSessionTests : IntegrationTestBase
         var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
         var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
 
-        // Shift bracketed around UtcNow so check-in matches; regular cap 8.5h,
-        // overtime per-session cap 2h.
-        var nowUtc = DateTime.UtcNow;
-        var shiftStart = TimeOnly.FromDateTime(nowUtc.AddHours(-9));
-        var shiftEnd = shiftStart.AddHours(8);
+        // Night-shift wrapping midnight so check-ins at 00:00 today match
+        // (avoids time-of-day flakiness with relative shiftStart math).
         await TestDataSeeder.SeedShiftAsync(
             Factory, t.TenantId,
-            startTime: shiftStart,
-            endTime: shiftEnd,
+            startTime: new TimeOnly(23, 0),
+            endTime: new TimeOnly(7, 0),
             maxOvertimeHours: 6,
             autoLogoutAfterHours: 2,
-            autoLogoutRegularMinutes: 510); // 8.5h
+            autoLogoutRegularMinutes: 510);
 
-        // Earlier today: a regular session that was auto-closed (the worker hit
-        // the 8.5h cap).
-        var earlierCheckIn = nowUtc.AddHours(-9);
-        var earlierCheckOut = earlierCheckIn.AddMinutes(510); // 8.5h
+        // Earlier today: a regular auto-closed session. Anchored at today's
+        // midnight UTC so its Date column matches the open session's date.
+        var today = DateTime.UtcNow.Date;
         await TestDataSeeder.SeedWorkSessionAsync(
-            Factory, t.TenantId, t.UserId, earlierCheckIn, earlierCheckOut, wasAutoClosed: true);
+            Factory, t.TenantId, t.UserId, today, today.AddMinutes(510), wasAutoClosed: true);
 
-        // Just now: worker re-logged in for overtime.
+        var nowUtc = DateTime.UtcNow;
         var overtimeCheckIn = nowUtc.AddMinutes(-1);
         await TestDataSeeder.SeedWorkSessionAsync(
             Factory, t.TenantId, t.UserId, overtimeCheckIn, checkOutTime: null);
@@ -322,26 +318,23 @@ public class ActiveWorkSessionTests : IntegrationTestBase
         var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
         var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
 
-        var nowUtc = DateTime.UtcNow;
-        var shiftStart = TimeOnly.FromDateTime(nowUtc.AddHours(-11));
-        var shiftEnd = shiftStart.AddHours(8);
         await TestDataSeeder.SeedShiftAsync(
             Factory, t.TenantId,
-            startTime: shiftStart,
-            endTime: shiftEnd,
+            startTime: new TimeOnly(23, 0),
+            endTime: new TimeOnly(7, 0),
             maxOvertimeHours: 6,
             autoLogoutAfterHours: 2,
             autoLogoutRegularMinutes: 510);
 
-        // Two auto-closed sessions earlier today.
-        var firstCheckIn = nowUtc.AddHours(-11);
+        // Two auto-closed sessions earlier today (regular + 1 OT).
+        var today = DateTime.UtcNow.Date;
         await TestDataSeeder.SeedWorkSessionAsync(
-            Factory, t.TenantId, t.UserId, firstCheckIn, firstCheckIn.AddMinutes(510), wasAutoClosed: true);
-        var secondCheckIn = nowUtc.AddHours(-2);
+            Factory, t.TenantId, t.UserId, today, today.AddMinutes(510), wasAutoClosed: true);
         await TestDataSeeder.SeedWorkSessionAsync(
-            Factory, t.TenantId, t.UserId, secondCheckIn, secondCheckIn.AddHours(2), wasAutoClosed: true);
+            Factory, t.TenantId, t.UserId, today.AddMinutes(510), today.AddMinutes(630), wasAutoClosed: true);
 
         // Third (re-login again).
+        var nowUtc = DateTime.UtcNow;
         var thirdCheckIn = nowUtc.AddMinutes(-1);
         await TestDataSeeder.SeedWorkSessionAsync(
             Factory, t.TenantId, t.UserId, thirdCheckIn, checkOutTime: null);
@@ -351,7 +344,111 @@ public class ActiveWorkSessionTests : IntegrationTestBase
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
 
         var logout = doc.RootElement.GetProperty("logoutAtUtc").GetDateTime();
+        // Only 2h of OT used (1 OT session) → 4h remaining → cap = min(2h, 4h) = 2h.
         logout.Should().BeCloseTo(thirdCheckIn.AddHours(2), TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public async Task Current_caps_overtime_at_max_overtime_hours_cumulative()
+    {
+        // Bojan/Sale 06.06.2026 (Bug E) — workers were able to keep re-logging in
+        // past MaxOvertimeHours indefinitely because the per-session cap was
+        // always 2h, with no cumulative ceiling. Now the cap shrinks to the
+        // remaining quota: when 6h has been used, cap = 0 → immediate close.
+        //
+        // Use a fixed day 2 days ago so all 14.5h of sessions land on the same
+        // Date column regardless of when the test runs. Open session is also
+        // on that historical day → cap=0 → logoutAt is in the past → the lazy
+        // safety net immediately closes the session → 204.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        // Day starts at midnight UTC of 2 days ago. Use a night-shift
+        // (23:00–07:00 wraps midnight) so check-ins at 00:00 still match
+        // the shift's time-of-day window.
+        var day = DateTime.UtcNow.Date.AddDays(-2);
+        await TestDataSeeder.SeedShiftAsync(
+            Factory, t.TenantId,
+            startTime: new TimeOnly(23, 0),
+            endTime: new TimeOnly(7, 0),
+            maxOvertimeHours: 6,
+            autoLogoutAfterHours: 2,
+            autoLogoutRegularMinutes: 510);
+
+        // Regular session 00:00 → 08:30 (510min cap).
+        var firstCheckIn = day;
+        await TestDataSeeder.SeedWorkSessionAsync(
+            Factory, t.TenantId, t.UserId, firstCheckIn, firstCheckIn.AddMinutes(510), wasAutoClosed: true);
+
+        // 3 × 2h OT sessions = 6h cumulative OT used. All on the same day.
+        for (int i = 0; i < 3; i++)
+        {
+            var ci = day.AddMinutes(510 + i * 120);   // 08:30, 10:30, 12:30
+            await TestDataSeeder.SeedWorkSessionAsync(
+                Factory, t.TenantId, t.UserId, ci, ci.AddHours(2), wasAutoClosed: true);
+        }
+
+        // 5th login on the same day → no OT left. Open session, no checkout.
+        var newCheckIn = day.AddMinutes(510 + 3 * 120); // 14:30
+        var sessionId = await TestDataSeeder.SeedWorkSessionAsync(
+            Factory, t.TenantId, t.UserId, newCheckIn, checkOutTime: null);
+
+        var resp = await client.GetAsync("/api/work-sessions/current");
+        resp.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        using var scope = Factory.Services.CreateScope();
+        var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
+        var session = await ordersDb.WorkSessions
+            .IgnoreQueryFilters()
+            .SingleAsync(ws => ws.Id == sessionId);
+        session.WasAutoClosed.Should().BeTrue();
+        session.CheckOutTime.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Current_caps_overtime_at_remaining_quota_when_partial()
+    {
+        // 4.5h of OT already used → 1.5h remaining. Per-session cap is 2h,
+        // so cap = min(2h, 1.5h) = 1.5h. The open session is "just now"
+        // (close to real DateTime.UtcNow) so logoutAt is in the future →
+        // /current returns 200 with a populated logoutAtUtc.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        var nowUtc = DateTime.UtcNow;
+        // Night-shift that wraps midnight, matched against today's midnight
+        // (which is the earlier-auto-closed firstCheckIn used for shift
+        // matching).
+        await TestDataSeeder.SeedShiftAsync(
+            Factory, t.TenantId,
+            startTime: new TimeOnly(23, 0),
+            endTime: new TimeOnly(7, 0),
+            maxOvertimeHours: 6,
+            autoLogoutAfterHours: 2,
+            autoLogoutRegularMinutes: 510);
+
+        // All earlier sessions on TODAY's date (matches open's Date). The
+        // dummy timestamps just need to add up: regular 510 + OT1 120 + OT2
+        // 150 = 4.5h cumulative OT used.
+        var today = nowUtc.Date;
+        await TestDataSeeder.SeedWorkSessionAsync(
+            Factory, t.TenantId, t.UserId, today, today.AddMinutes(510), wasAutoClosed: true);
+        await TestDataSeeder.SeedWorkSessionAsync(
+            Factory, t.TenantId, t.UserId, today.AddMinutes(510), today.AddMinutes(630), wasAutoClosed: true);
+        await TestDataSeeder.SeedWorkSessionAsync(
+            Factory, t.TenantId, t.UserId, today.AddMinutes(630), today.AddMinutes(780), wasAutoClosed: true);
+
+        var newCheckIn = nowUtc.AddMinutes(-1);
+        await TestDataSeeder.SeedWorkSessionAsync(
+            Factory, t.TenantId, t.UserId, newCheckIn, checkOutTime: null);
+
+        var resp = await client.GetAsync("/api/work-sessions/current");
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+
+        var logout = doc.RootElement.GetProperty("logoutAtUtc").GetDateTime();
+        // 1.5h remaining quota → cap = 90 min from new check-in.
+        logout.Should().BeCloseTo(newCheckIn.AddMinutes(90), TimeSpan.FromSeconds(2));
     }
 
     [Fact]

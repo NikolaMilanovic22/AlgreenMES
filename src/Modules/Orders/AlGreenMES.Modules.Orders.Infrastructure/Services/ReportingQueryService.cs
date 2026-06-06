@@ -1019,7 +1019,14 @@ public class ReportingQueryService : IReportingQueryService
         // (per-overtime-session, e.g. 2h). Regular sessions use
         // AutoLogoutRegularMinutes when configured, else legacy
         // shift+maxOvertime.
-        var earlierAutoClosedCheckIn = await _ordersDb.WorkSessions
+        // All earlier auto-closed sessions today — used to:
+        //   (a) detect overtime re-login (any earlier auto-close today)
+        //   (b) shift-match against the FIRST one (the regular session, the
+        //       only one that was inside the actual shift time-of-day window)
+        //   (c) enforce the cumulative MaxOvertimeHours cap (Bojan/Sale
+        //       06.06.2026 — workers were able to keep re-logging in past
+        //       6h overtime indefinitely).
+        var earlierAutoClosed = await _ordersDb.WorkSessions
             .AsNoTracking()
             .Where(ws => ws.TenantId == tenantId
                 && ws.UserId == userId
@@ -1027,12 +1034,12 @@ public class ReportingQueryService : IReportingQueryService
                 && ws.Id != open.Id
                 && ws.WasAutoClosed)
             .OrderBy(ws => ws.CheckInTime)
-            .Select(ws => (DateTime?)ws.CheckInTime)
-            .FirstOrDefaultAsync(cancellationToken);
+            .Select(ws => new { ws.CheckInTime, ws.DurationMinutes })
+            .ToListAsync(cancellationToken);
 
-        var isOvertimeRelogin = earlierAutoClosedCheckIn.HasValue;
+        var isOvertimeRelogin = earlierAutoClosed.Count > 0;
         var shiftMatchTime = TimeOnly.FromDateTime(
-            isOvertimeRelogin ? earlierAutoClosedCheckIn!.Value : open.CheckInTime);
+            isOvertimeRelogin ? earlierAutoClosed[0].CheckInTime : open.CheckInTime);
         var shift = shifts.FirstOrDefault(s => IsTimeInShift(shiftMatchTime, s.StartTime, s.EndTime));
 
         if (shift == null)
@@ -1040,7 +1047,19 @@ public class ReportingQueryService : IReportingQueryService
 
         TimeSpan cap;
         if (isOvertimeRelogin)
-            cap = TimeSpan.FromHours(shift.AutoLogoutAfterHours);
+        {
+            // Skip the first (regular session, capped at the regular cap, not
+            // counted as overtime). Sum durations of all subsequent auto-closed
+            // sessions = cumulative overtime already used today.
+            var otUsedMinutes = earlierAutoClosed.Skip(1).Sum(s => s.DurationMinutes ?? 0);
+            var maxOtMinutes = shift.MaxOvertimeHours * 60;
+            var quotaLeftMinutes = maxOtMinutes - otUsedMinutes;
+            var perSessionCap = TimeSpan.FromHours(shift.AutoLogoutAfterHours);
+
+            cap = quotaLeftMinutes <= 0
+                ? TimeSpan.Zero // no overtime left — close immediately
+                : TimeSpan.FromMinutes(Math.Min(quotaLeftMinutes, perSessionCap.TotalMinutes));
+        }
         else if (shift.AutoLogoutRegularMinutes > 0)
             cap = TimeSpan.FromMinutes(shift.AutoLogoutRegularMinutes);
         else
@@ -1146,32 +1165,27 @@ public class ReportingQueryService : IReportingQueryService
             .Select(l => new { l.UserId, l.StartTime, l.EndTime })
             .ToListAsync(cancellationToken);
 
-        // Bug fix (Bojan 04.06.2026): process-level work (processes without
-        // sub-processes, e.g. Krojenje on ORD-2026-015) was completely missing
-        // from Aktivno because no subprocess log gets created for them. As of
-        // the StartedByUserId migration (20260604172120), OrderItemProcess
-        // tracks who started it; here we treat each such process's active
-        // window (StartedAt → PausedAt ?? CompletedAt ?? clipUpper) as an
-        // additional "log-equivalent" interval for the same UnionMinutes calc.
-        // Only counts processes whose StartedByUserId is set AND whose own
-        // SubProcess collection has no non-withdrawn rows (process-level work).
-        var processQuery = _ordersDb.OrderItemProcesses
+        // Bug fix (Bojan 06.06.2026): process-level work is now tracked via
+        // dedicated OrderItemProcessLog rows — one per work period — so
+        // pause/resume cycles and offline gaps stop being counted as
+        // continuously active. Mirrors how subprocess logs already work.
+        // Earlier (04.06) approximation used (StartedAt → PausedAt ??
+        // CompletedAt) on the OIP itself; that overcounted whenever the
+        // process was paused then resumed within the report window.
+        var processLogsQuery = _ordersDb.OrderItemProcessLogs
             .AsNoTracking()
-            .Where(p => p.TenantId == tenantId
-                && p.StartedByUserId.HasValue
-                && p.StartedAt.HasValue
-                && p.StartedAt >= fromUtc
-                && p.StartedAt < toUtc
-                && workerIds.Contains(p.StartedByUserId!.Value)
-                && !p.SubProcesses.Any(sp => !sp.IsWithdrawn));
+            .Where(l => l.TenantId == tenantId
+                && l.StartTime >= fromUtc
+                && l.StartTime < toUtc
+                && workerIds.Contains(l.UserId));
         if (userId.HasValue)
-            processQuery = processQuery.Where(p => p.StartedByUserId == userId.Value);
+            processLogsQuery = processLogsQuery.Where(l => l.UserId == userId.Value);
 
-        var processLogs = await processQuery
-            .Select(p => new {
-                UserId = p.StartedByUserId!.Value,
-                StartTime = p.StartedAt!.Value,
-                EndTime = p.PausedAt ?? p.CompletedAt,
+        var processLogs = await processLogsQuery
+            .Select(l => new {
+                l.UserId,
+                l.StartTime,
+                EndTime = (DateTime?)l.EndTime,
             })
             .ToListAsync(cancellationToken);
 

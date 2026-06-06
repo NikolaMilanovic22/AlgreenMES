@@ -305,24 +305,14 @@ public class WorkerHoursReportTests : IntegrationTestBase
         await TestDataSeeder.SeedWorkSessionAsync(
             Factory, t.TenantId, t.UserId, day, day.AddHours(8));
 
-        // Krojenje-like process with no sub-processes. Seed the OIP, then
-        // backfill StartedByUserId + StartedAt + PausedAt to simulate a worker
-        // who started the process at check-in and got paused by auto-logout.
+        // Krojenje-like process with no sub-processes. Seed an
+        // OrderItemProcessLog covering the full session (since 06.06 the
+        // report reads from logs, not from OIP.StartedAt/PausedAt directly).
         var processId = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId);
         var categoryId = await TestDataSeeder.SeedProductCategoryAsync(Factory, t.TenantId);
         var oipId = await TestDataSeeder.SeedOrderItemProcessAsync(
             Factory, t.TenantId, t.UserId, processId, categoryId, ProcessStatus.InProgress);
-
-        using (var scope = Factory.Services.CreateScope())
-        {
-            var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
-            await ordersDb.OrderItemProcesses
-                .IgnoreQueryFilters()
-                .Where(p => p.Id == oipId)
-                .ExecuteUpdateAsync(set => set
-                    .SetProperty(p => p.StartedAt, day)
-                    .SetProperty(p => p.StartedByUserId, (Guid?)t.UserId));
-        }
+        await SeedProcessLogAsync(t.TenantId, oipId, t.UserId, day, day.AddHours(8));
 
         var from = DateOnly.FromDateTime(day).AddDays(-1);
         var to = DateOnly.FromDateTime(day).AddDays(1);
@@ -334,10 +324,22 @@ public class WorkerHoursReportTests : IntegrationTestBase
         var worker = doc.RootElement.GetProperty("workers").EnumerateArray()
             .Single(w => w.GetProperty("userId").GetGuid() == t.UserId);
         var daily = worker.GetProperty("dailyBreakdown").EnumerateArray().Single();
-        // Process active window: StartedAt (day) → clipUpper (day+8h, the
-        // session checkout). 8h = 480 min of active time, capped by
-        // totalWorked.
         daily.GetProperty("activeMinutes").GetInt32().Should().Be(480);
+    }
+
+    /// <summary>Helper: seed an OrderItemProcessLog with explicit timestamps.</summary>
+    private async Task SeedProcessLogAsync(Guid tenantId, Guid oipId, Guid userId, DateTime start, DateTime? end)
+    {
+        using var scope = Factory.Services.CreateScope();
+        var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
+        await ordersDb.Database.ExecuteSqlInterpolatedAsync($@"
+            INSERT INTO orders.order_item_process_logs
+                (id, order_item_process_id, user_id, tenant_id, start_time, end_time, duration_seconds, created_at)
+            VALUES
+                ({Guid.NewGuid()}, {oipId}, {userId}, {tenantId},
+                 {start}, {end},
+                 {(end.HasValue ? (int?)(end.Value - start).TotalSeconds : null)},
+                 NOW())");
     }
 
     [Fact]
@@ -363,23 +365,11 @@ public class WorkerHoursReportTests : IntegrationTestBase
         await TestDataSeeder.SeedWorkSessionAsync(
             Factory, t.TenantId, t.UserId, day, day.AddMinutes(510));
 
-        // Seed a process-level work interval that covers the entire session
-        // (StartedByUserId path — avoids the SeedSubProcessLog seeder issue).
         var processId = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId);
         var categoryId = await TestDataSeeder.SeedProductCategoryAsync(Factory, t.TenantId);
         var oipId = await TestDataSeeder.SeedOrderItemProcessAsync(
             Factory, t.TenantId, t.UserId, processId, categoryId, ProcessStatus.InProgress);
-
-        using (var scope = Factory.Services.CreateScope())
-        {
-            var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
-            await ordersDb.OrderItemProcesses
-                .IgnoreQueryFilters()
-                .Where(p => p.Id == oipId)
-                .ExecuteUpdateAsync(set => set
-                    .SetProperty(p => p.StartedAt, day)
-                    .SetProperty(p => p.StartedByUserId, (Guid?)t.UserId));
-        }
+        await SeedProcessLogAsync(t.TenantId, oipId, t.UserId, day, day.AddMinutes(510));
 
         var from = DateOnly.FromDateTime(day).AddDays(-1);
         var to = DateOnly.FromDateTime(day).AddDays(1);
@@ -424,26 +414,15 @@ public class WorkerHoursReportTests : IntegrationTestBase
         await TestDataSeeder.SeedWorkSessionAsync(
             Factory, t.TenantId, t.UserId, day, day.AddHours(8));
 
-        // Process started at day, "paused" 5 min PAST the session checkout
-        // (simulating the BG service running log.End() after the backdated
-        // session checkout). The report should clip the interval at the
-        // session checkout, not include the 5-min overshoot.
+        // Process log "ended" 5 min PAST the session checkout (simulating
+        // the BG service running log.End() after the backdated session
+        // checkout). The report should clip the interval at the session
+        // checkout, not include the 5-min overshoot.
         var processId = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId);
         var categoryId = await TestDataSeeder.SeedProductCategoryAsync(Factory, t.TenantId);
         var oipId = await TestDataSeeder.SeedOrderItemProcessAsync(
             Factory, t.TenantId, t.UserId, processId, categoryId, ProcessStatus.InProgress);
-
-        using (var scope = Factory.Services.CreateScope())
-        {
-            var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
-            await ordersDb.OrderItemProcesses
-                .IgnoreQueryFilters()
-                .Where(p => p.Id == oipId)
-                .ExecuteUpdateAsync(set => set
-                    .SetProperty(p => p.StartedAt, day)
-                    .SetProperty(p => p.PausedAt, day.AddHours(8).AddMinutes(5))
-                    .SetProperty(p => p.StartedByUserId, (Guid?)t.UserId));
-        }
+        await SeedProcessLogAsync(t.TenantId, oipId, t.UserId, day, day.AddHours(8).AddMinutes(5));
 
         var from = DateOnly.FromDateTime(day).AddDays(-1);
         var to = DateOnly.FromDateTime(day).AddDays(1);
@@ -457,5 +436,57 @@ public class WorkerHoursReportTests : IntegrationTestBase
         var daily = worker.GetProperty("dailyBreakdown").EnumerateArray().Single();
         // Clipped at session checkout — 480 min, NOT 485.
         daily.GetProperty("activeMinutes").GetInt32().Should().Be(480);
+    }
+
+    [Fact]
+    public async Task WorkerHours_active_excludes_paused_periods_between_logs()
+    {
+        // Bojan/Sale 06.06.2026 (Bug D) — process-level work was treated as
+        // (StartedAt → PausedAt ?? CompletedAt) which counted offline gaps
+        // (e.g. auto-logout → relogin) AND in-session manual pauses as
+        // continuously active. After the log-table fix each Start/Resume
+        // creates a new log and each Pause/Complete ends one; the report
+        // unions only the open log intervals. A 1-hour mid-day gap between
+        // two work periods must NOT count as active.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Department);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        await TestDataSeeder.SeedShiftAsync(
+            Factory, t.TenantId,
+            startTime: new TimeOnly(6, 0),
+            endTime: new TimeOnly(14, 0),
+            maxOvertimeHours: 6);
+
+        var day = DateTime.UtcNow.Date.AddDays(-1).AddHours(6);
+        // Single 9h session that covers both work periods + the gap.
+        await TestDataSeeder.SeedWorkSessionAsync(
+            Factory, t.TenantId, t.UserId, day, day.AddHours(9));
+
+        var processId = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId);
+        var categoryId = await TestDataSeeder.SeedProductCategoryAsync(Factory, t.TenantId);
+        var oipId = await TestDataSeeder.SeedOrderItemProcessAsync(
+            Factory, t.TenantId, t.UserId, processId, categoryId, ProcessStatus.InProgress);
+
+        // Two work periods with a 1h gap in between:
+        //   [day → day+4h] : 4h active
+        //   [day+5h → day+9h] : 4h active
+        // Gap [day+4h → day+5h] : NOT active (worker paused / went to lunch).
+        await SeedProcessLogAsync(t.TenantId, oipId, t.UserId, day, day.AddHours(4));
+        await SeedProcessLogAsync(t.TenantId, oipId, t.UserId, day.AddHours(5), day.AddHours(9));
+
+        var from = DateOnly.FromDateTime(day).AddDays(-1);
+        var to = DateOnly.FromDateTime(day).AddDays(1);
+        var resp = await client.GetAsync(
+            $"/api/reports/worker-hours?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+
+        var worker = doc.RootElement.GetProperty("workers").EnumerateArray()
+            .Single(w => w.GetProperty("userId").GetGuid() == t.UserId);
+        var daily = worker.GetProperty("dailyBreakdown").EnumerateArray().Single();
+        // 8h active (two 4h periods unioned). NOT 9h — the 1h gap is excluded.
+        daily.GetProperty("activeMinutes").GetInt32().Should().Be(480);
+        // Uncovered = totalWorked (540) − active (480) = 60 min — i.e. the gap.
+        daily.GetProperty("uncoveredMinutes").GetInt32().Should().Be(60);
     }
 }

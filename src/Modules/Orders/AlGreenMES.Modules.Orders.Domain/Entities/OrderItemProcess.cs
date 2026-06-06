@@ -72,6 +72,29 @@ public class OrderItemProcess : TenantEntity
     private readonly List<OrderItemSubProcess> _subProcesses = new();
     public IReadOnlyCollection<OrderItemSubProcess> SubProcesses => _subProcesses.AsReadOnly();
 
+    /// <summary>
+    /// Per-work-period logs for process-level work (only populated for
+    /// processes WITHOUT sub-processes — those with sub-processes use
+    /// OrderItemSubProcessLog instead). Bojan 06.06.2026: tracks each
+    /// Start→Pause/Resume cycle so Aktivno / Nepokriveno correctly excludes
+    /// offline gaps and mid-session pauses.
+    /// </summary>
+    private readonly List<OrderItemProcessLog> _processLogs = new();
+    public IReadOnlyCollection<OrderItemProcessLog> ProcessLogs => _processLogs.AsReadOnly();
+
+    private void EndOpenProcessLog()
+    {
+        var open = _processLogs.FirstOrDefault(l => l.EndTime == null);
+        open?.End();
+    }
+
+    private void StartProcessLog(Guid userId)
+    {
+        // Defensive: end any stray open log first (shouldn't normally happen).
+        EndOpenProcessLog();
+        _processLogs.Add(OrderItemProcessLog.Start(TenantId, Id, userId));
+    }
+
     private OrderItemProcess()
     {
     }
@@ -98,6 +121,14 @@ public class OrderItemProcess : TenantEntity
         StartedAt = DateTime.UtcNow;
         StartedByUserId = startedByUserId;
         UpdatedAt = DateTime.UtcNow;
+
+        // Process-level work log only kicks in for processes WITHOUT
+        // sub-processes — those route their time through subprocess logs
+        // (which Start() will trigger separately via StartProcessWork
+        // selecting the first sub-process and calling StartLog).
+        var hasSubProcesses = _subProcesses.Any(sp => !sp.IsWithdrawn);
+        if (!hasSubProcesses && startedByUserId.HasValue)
+            StartProcessLog(startedByUserId.Value);
     }
 
     public void Complete()
@@ -116,6 +147,7 @@ public class OrderItemProcess : TenantEntity
         Status = ProcessStatus.Completed;
         CompletedAt = DateTime.UtcNow;
         UpdatedAt = DateTime.UtcNow;
+        EndOpenProcessLog();
     }
 
     public void Block(Guid userId, string reason)
@@ -138,6 +170,7 @@ public class OrderItemProcess : TenantEntity
         PausedAt = null;
         ResumedAt = null;
         UpdatedAt = DateTime.UtcNow;
+        EndOpenProcessLog();
     }
 
     public void Unblock(Guid userId, bool resetTime = false)
@@ -187,6 +220,7 @@ public class OrderItemProcess : TenantEntity
         StoppedByUserId = userId;
         StoppedReason = reason;
         UpdatedAt = DateTime.UtcNow;
+        EndOpenProcessLog();
     }
 
     public void Withdraw(Guid userId, string reason)
@@ -199,6 +233,7 @@ public class OrderItemProcess : TenantEntity
         WithdrawnReason = reason;
         Status = ProcessStatus.Withdrawn;
         UpdatedAt = DateTime.UtcNow;
+        EndOpenProcessLog();
     }
 
     public void Pause()
@@ -215,6 +250,7 @@ public class OrderItemProcess : TenantEntity
         PausedByStationAt = null; // manual pause — not auto-resumable on next login
         ResumedAt = null;
         UpdatedAt = DateTime.UtcNow;
+        EndOpenProcessLog();
     }
 
     /// <summary>
@@ -235,6 +271,7 @@ public class OrderItemProcess : TenantEntity
         PausedByStationAt = DateTime.UtcNow;
         ResumedAt = null;
         UpdatedAt = DateTime.UtcNow;
+        EndOpenProcessLog();
     }
 
     public void ReturnToPending()
@@ -245,6 +282,7 @@ public class OrderItemProcess : TenantEntity
         ResumedAt = null;
         if (StartedAt == null) StartedAt = DateTime.UtcNow;
         UpdatedAt = DateTime.UtcNow;
+        EndOpenProcessLog();
 
         foreach (var sub in _subProcesses)
         {
@@ -263,6 +301,7 @@ public class OrderItemProcess : TenantEntity
         ResumedAt = null;
         PausedAt = null;
         UpdatedAt = DateTime.UtcNow;
+        EndOpenProcessLog();
 
         // Close open sub-process logs and reset sub-process timers
         foreach (var sub in _subProcesses)
@@ -276,7 +315,7 @@ public class OrderItemProcess : TenantEntity
         }
     }
 
-    public void ResumeTimer()
+    public void ResumeTimer(Guid? resumedByUserId = null)
     {
         if (!PausedAt.HasValue)
             throw new DomainException("NOT_PAUSED", "Process is not paused.");
@@ -285,6 +324,13 @@ public class OrderItemProcess : TenantEntity
         PausedByStationAt = null; // resumed — no longer eligible for auto-resume
         ResumedAt = DateTime.UtcNow;
         UpdatedAt = DateTime.UtcNow;
+
+        // New work period starts now. Only emit a log for processes without
+        // sub-processes — those with sub-processes route their resume through
+        // OrderItemSubProcess.StartLog.
+        var hasSubProcesses = _subProcesses.Any(sp => !sp.IsWithdrawn);
+        if (!hasSubProcesses && resumedByUserId.HasValue)
+            StartProcessLog(resumedByUserId.Value);
     }
 
     public void Restart(bool resetTime)
