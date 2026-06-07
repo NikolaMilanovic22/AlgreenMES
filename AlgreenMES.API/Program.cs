@@ -82,15 +82,28 @@ public class Program
                 var sentryDsn = context.Configuration["Sentry:Dsn"];
                 if (!string.IsNullOrWhiteSpace(sentryDsn))
                 {
-                    configuration.WriteTo.Sentry(o =>
-                    {
-                        o.Dsn = sentryDsn;
-                        o.Environment = context.Configuration["Sentry:Environment"] ?? "development";
-                        o.Release = context.Configuration["Sentry:Release"];
-                        o.InitializeSdk = false;
-                        o.MinimumBreadcrumbLevel = LogEventLevel.Information;
-                        o.MinimumEventLevel = LogEventLevel.Error;
-                    });
+                    // Sub-logger so we can drop client-cancellation noise from
+                    // the Sentry sink only — keep it in console/file for local
+                    // debugging. The cancellation chain looks like:
+                    //   client tab closes → request aborted → CancellationToken
+                    //   propagates to EF Core query → OperationCanceledException
+                    //   (or TaskCanceledException) → EF Core ConnectionError log
+                    //   (with the OCE attached as the exception).
+                    // GlobalExceptionHandlerMiddleware swallows the OCE
+                    // downstream, but UseSerilogRequestLogging sits INSIDE that
+                    // handler and has already logged at Error by the time we
+                    // swallow — so Sentry still gets paged. Filter here.
+                    configuration.WriteTo.Logger(l => l
+                        .Filter.ByExcluding(e => e.Exception is OperationCanceledException)
+                        .WriteTo.Sentry(o =>
+                        {
+                            o.Dsn = sentryDsn;
+                            o.Environment = context.Configuration["Sentry:Environment"] ?? "development";
+                            o.Release = context.Configuration["Sentry:Release"];
+                            o.InitializeSdk = false;
+                            o.MinimumBreadcrumbLevel = LogEventLevel.Information;
+                            o.MinimumEventLevel = LogEventLevel.Error;
+                        }));
                 }
             });
 
@@ -268,6 +281,18 @@ public class Program
             // them.
             app.UseSerilogRequestLogging(options =>
             {
+                // Downgrade cancelled-request completion logs to Information so
+                // the Sentry sink (Error+) skips them. Bare safety net — the
+                // sub-logger filter on Exception is OperationCanceledException
+                // already drops these from Sentry, but this also keeps the
+                // request-logging line out of error metrics / dashboards.
+                options.GetLevel = (httpContext, elapsed, ex) =>
+                {
+                    if (ex is OperationCanceledException && httpContext.RequestAborted.IsCancellationRequested)
+                        return LogEventLevel.Information;
+                    if (ex != null) return LogEventLevel.Error;
+                    return httpContext.Response.StatusCode >= 500 ? LogEventLevel.Error : LogEventLevel.Information;
+                };
                 options.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
                 {
                     var correlationId = httpContext.Request.Headers["X-Correlation-Id"].FirstOrDefault()
