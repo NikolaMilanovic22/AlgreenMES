@@ -21,12 +21,12 @@ public class OrderItemSubProcess : TenantEntity
     public DateTime? UpdatedAt { get; private set; }
 
     /// <summary>
-    /// When set, this sub-process was paused by a tablet-station logout
-    /// (its open log was closed in PauseStation). Next ResumeStation call
-    /// should auto-resume it (StartLog). Null means manually paused or
-    /// never running — must not auto-resume.
+    /// When set, this sub-process was paused by a tablet logout (its open
+    /// log was closed by PauseOnLogoutCommandHandler). The next worker
+    /// login (ResumeOnLoginCommand) should auto-resume it (StartLog). Null
+    /// means manually paused or never running — must not auto-resume.
     /// </summary>
-    public DateTime? PausedByStationAt { get; private set; }
+    public DateTime? PausedOnLogoutAt { get; private set; }
 
     public OrderItemProcess OrderItemProcess { get; private set; } = null!;
 
@@ -107,18 +107,18 @@ public class OrderItemSubProcess : TenantEntity
 
         var log = OrderItemSubProcessLog.Start(TenantId, Id, userId);
         _logs.Add(log);
-        PausedByStationAt = null; // started — no longer eligible for auto-resume
+        PausedOnLogoutAt = null; // started — no longer eligible for auto-resume
         UpdatedAt = DateTime.UtcNow;
         return log;
     }
 
     /// <summary>
-    /// Mark this sub-process as paused by a tablet-station logout so the
-    /// next ResumeStation call can auto-restart its log.
+    /// Mark this sub-process as paused by a tablet logout so the next
+    /// worker login (ResumeOnLoginCommand) can auto-restart its log.
     /// </summary>
-    public void PauseByStation()
+    public void PauseOnLogout()
     {
-        PausedByStationAt = DateTime.UtcNow;
+        PausedOnLogoutAt = DateTime.UtcNow;
         UpdatedAt = DateTime.UtcNow;
     }
 

@@ -1,5 +1,5 @@
 using AlGreenMES.BuildingBlocks.Common.Exceptions;
-using AlGreenMES.Modules.Orders.Application.Commands.PauseStation;
+using AlGreenMES.Modules.Orders.Application.Commands.PauseOnLogout;
 using AlGreenMES.Modules.Orders.Application.Commands.PauseWork;
 using AlGreenMES.Modules.Orders.Application.DTOs;
 using AlGreenMES.Modules.Orders.Application.DTOs.Events;
@@ -45,15 +45,15 @@ public class AutoCheckOutCommandHandler : IRequestHandler<AutoCheckOutCommand, W
         // Pause + end all active sub-process logs. Delegated to PauseWork so
         // the behaviour stays in lockstep with the tablet's manual logout
         // flow (CheckOutPage → tabletApi.pause → PauseWorkCommand). Critically,
-        // PauseWork also stamps PausedByStationAt on each sub-process so it
+        // PauseWork also stamps PausedOnLogoutAt on each sub-process so it
         // shows as "Pauzirano" to coordinators and can auto-resume on next
-        // station login — auto-logout previously skipped that step and left
+        // worker login — auto-logout previously skipped that step and left
         // sub-processes looking "Rad u toku" with no active worker.
         // See [auto-logout-must-mirror-manual-logout] in memory.
         await _mediator.Send(new PauseWorkCommand(request.UserId), cancellationToken);
 
-        // Mirror the FE manual-logout chain's per-process PauseStation step
-        // (CheckOutPage → processWorkflowApi.pauseStation per user.processes).
+        // Mirror the FE manual-logout chain's per-process PauseOnLogout step
+        // (CheckOutPage → processWorkflowApi.pauseOnLogout per user.processes).
         // This is what handles processes that have NO sub-processes — e.g.
         // Krojenje on ORD-2026-015 — where PauseWork's subprocess-log walk
         // finds nothing to pause. Without this, those processes keep ticking
@@ -63,14 +63,14 @@ public class AutoCheckOutCommandHandler : IRequestHandler<AutoCheckOutCommand, W
         {
             try
             {
-                await _mediator.Send(new PauseStationCommand(processId, session.TenantId, request.UserId), cancellationToken);
+                await _mediator.Send(new PauseOnLogoutCommand(processId, session.TenantId, request.UserId), cancellationToken);
             }
             catch (Exception ex)
             {
                 // Don't let a single per-process failure abort the whole
                 // auto-checkout — the session close still needs to happen.
                 _logger.LogWarning(ex,
-                    "PauseStation failed during auto-checkout for user {UserId} process {ProcessId}",
+                    "PauseOnLogout failed during auto-checkout for user {UserId} process {ProcessId}",
                     request.UserId, processId);
             }
         }

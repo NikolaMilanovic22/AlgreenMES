@@ -8,7 +8,7 @@ namespace AlGreenMES.Modules.Orders.Domain.Entities;
 /// e.g. Krojenje). Mirrors OrderItemSubProcessLog so the reporting code can
 /// treat both kinds the same way.
 ///
-/// Created at Start / ResumeTimer; ended at Pause / PauseByStation /
+/// Created at Start / ResumeTimer; ended at Pause / PauseOnLogout /
 /// Complete / Stop. Multiple logs per process across Start→Pause→Resume→
 /// Pause→Resume… cycles, each carrying the user who was working that
 /// period. Bojan 06.06.2026: needed because the previous (StartedAt →

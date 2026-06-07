@@ -3,14 +3,14 @@ using AlGreenMES.Modules.Orders.Domain.Enums;
 using AlGreenMES.Modules.Orders.Domain.Repositories;
 using MediatR;
 
-namespace AlGreenMES.Modules.Orders.Application.Commands.PauseStation;
+namespace AlGreenMES.Modules.Orders.Application.Commands.PauseOnLogout;
 
-public class PauseStationCommandHandler : IRequestHandler<PauseStationCommand>
+public class PauseOnLogoutCommandHandler : IRequestHandler<PauseOnLogoutCommand>
 {
     private readonly IOrderItemProcessRepository _processRepository;
     private readonly IOrdersUnitOfWork _unitOfWork;
 
-    public PauseStationCommandHandler(
+    public PauseOnLogoutCommandHandler(
         IOrderItemProcessRepository processRepository,
         IOrdersUnitOfWork unitOfWork)
     {
@@ -18,7 +18,7 @@ public class PauseStationCommandHandler : IRequestHandler<PauseStationCommand>
         _unitOfWork = unitOfWork;
     }
 
-    public async Task Handle(PauseStationCommand request, CancellationToken cancellationToken)
+    public async Task Handle(PauseOnLogoutCommand request, CancellationToken cancellationToken)
     {
         var activeProcesses = await _processRepository.GetInProgressByProcessIdAsync(
             request.ProcessId, request.TenantId, cancellationToken);
@@ -36,11 +36,11 @@ public class PauseStationCommandHandler : IRequestHandler<PauseStationCommand>
                     if (openLog != null)
                     {
                         // Sub-process was actively running — close the log and
-                        // mark for auto-resume on next station login.
+                        // mark for auto-resume on next worker login.
                         openLog.End();
                         if (openLog.DurationMinutes.HasValue)
                             activeSub.AddDuration(openLog.DurationMinutes.Value);
-                        activeSub.PauseByStation();
+                        activeSub.PauseOnLogout();
                     }
                     // else: sub-process is InProgress but has no open log,
                     // meaning a worker manually paused it. Leave alone.
@@ -48,10 +48,10 @@ public class PauseStationCommandHandler : IRequestHandler<PauseStationCommand>
             }
             else
             {
-                // PauseByStation is a no-op when the process is already paused
+                // PauseOnLogout is a no-op when the process is already paused
                 // (manual pause), so manual pauses won't be marked for
                 // auto-resume.
-                process.PauseByStation();
+                process.PauseOnLogout();
             }
         }
 

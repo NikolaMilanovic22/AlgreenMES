@@ -3,14 +3,14 @@ using AlGreenMES.Modules.Orders.Domain.Enums;
 using AlGreenMES.Modules.Orders.Domain.Repositories;
 using MediatR;
 
-namespace AlGreenMES.Modules.Orders.Application.Commands.ResumeStation;
+namespace AlGreenMES.Modules.Orders.Application.Commands.ResumeOnLogin;
 
-public class ResumeStationCommandHandler : IRequestHandler<ResumeStationCommand>
+public class ResumeOnLoginCommandHandler : IRequestHandler<ResumeOnLoginCommand>
 {
     private readonly IOrderItemProcessRepository _processRepository;
     private readonly IOrdersUnitOfWork _unitOfWork;
 
-    public ResumeStationCommandHandler(
+    public ResumeOnLoginCommandHandler(
         IOrderItemProcessRepository processRepository,
         IOrdersUnitOfWork unitOfWork)
     {
@@ -18,7 +18,7 @@ public class ResumeStationCommandHandler : IRequestHandler<ResumeStationCommand>
         _unitOfWork = unitOfWork;
     }
 
-    public async Task Handle(ResumeStationCommand request, CancellationToken cancellationToken)
+    public async Task Handle(ResumeOnLoginCommand request, CancellationToken cancellationToken)
     {
         var activeProcesses = await _processRepository.GetInProgressByProcessIdAsync(
             request.ProcessId, request.TenantId, cancellationToken);
@@ -30,30 +30,30 @@ public class ResumeStationCommandHandler : IRequestHandler<ResumeStationCommand>
             {
                 var activeSub = process.SubProcesses
                     .FirstOrDefault(sp => sp.Status == SubProcessStatus.InProgress);
-                // Only auto-resume sub-processes that the station paused at
+                // Only auto-resume sub-processes that were paused by a tablet
                 // logout AND where THE SAME worker was the last one working
                 // on it. Bug 07.06.2026 (Milos): a different qualified worker
                 // logging in was auto-resuming sub-processes paused by other
                 // workers, inflating Aktivno na procesima and silently
                 // re-attributing the work.
                 if (activeSub != null
-                    && activeSub.PausedByStationAt.HasValue
+                    && activeSub.PausedOnLogoutAt.HasValue
                     && WasLastWorkedBy(activeSub, request.UserId))
                 {
                     var openLog = activeSub.GetOpenLog();
                     if (openLog == null)
-                        activeSub.StartLog(request.UserId); // also clears PausedByStationAt
+                        activeSub.StartLog(request.UserId); // also clears PausedOnLogoutAt
                 }
             }
             else
             {
-                // Only auto-resume processes paused by station logout —
+                // Only auto-resume processes paused by tablet logout —
                 // manually paused processes stay paused. Same per-worker
                 // scoping as the sub-process branch above.
-                if (process.PausedByStationAt.HasValue
+                if (process.PausedOnLogoutAt.HasValue
                     && process.PausedAt.HasValue
                     && WasLastWorkedBy(process, request.UserId))
-                    process.ResumeTimer(request.UserId); // also clears PausedByStationAt
+                    process.ResumeTimer(request.UserId); // also clears PausedOnLogoutAt
             }
         }
 

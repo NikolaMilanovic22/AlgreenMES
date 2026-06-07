@@ -11,18 +11,18 @@ using Xunit;
 namespace AlGreenMES.Tests.Integration;
 
 /// <summary>
-/// ResumeStationCommand — fires when a worker logs in on the tablet. Bug
-/// 07.06.2026: was auto-resuming ALL paused-by-station OIPs of the worker's
+/// ResumeOnLoginCommand — fires when a worker logs in on the tablet. Bug
+/// 07.06.2026: was auto-resuming ALL paused-on-logout OIPs of the worker's
 /// qualified processes, including ones paused by OTHER workers. New
 /// behaviour: only auto-resume work where the most-recent log's UserId
 /// matches the logging-in worker.
 /// </summary>
-public class ResumeStationTests : IntegrationTestBase
+public class ResumeOnLoginTests : IntegrationTestBase
 {
-    public ResumeStationTests(AlgreenWebApplicationFactory factory) : base(factory) { }
+    public ResumeOnLoginTests(AlgreenWebApplicationFactory factory) : base(factory) { }
 
     [Fact]
-    public async Task ResumeStation_skips_OIP_last_worked_by_a_different_user()
+    public async Task ResumeOnLogin_skips_OIP_last_worked_by_a_different_user()
     {
         var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Department); // worker A
         var workerB = await TestDataSeeder.SeedAdditionalUserAsync(Factory, t.TenantId, UserRole.Department);
@@ -32,7 +32,7 @@ public class ResumeStationTests : IntegrationTestBase
         var oipId = await TestDataSeeder.SeedOrderItemProcessAsync(
             Factory, t.TenantId, t.UserId, processId, categoryId, ProcessStatus.InProgress);
 
-        // Worker B paused this OIP (open log with UserId=workerB + PausedByStationAt set).
+        // Worker B paused this OIP (open log with UserId=workerB + PausedOnLogoutAt set).
         using (var scope = Factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
@@ -47,17 +47,17 @@ public class ResumeStationTests : IntegrationTestBase
                 .Where(p => p.Id == oipId)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(p => p.PausedAt, (DateTime?)now.AddMinutes(-30))
-                    .SetProperty(p => p.PausedByStationAt, (DateTime?)now.AddMinutes(-30))
+                    .SetProperty(p => p.PausedOnLogoutAt, (DateTime?)now.AddMinutes(-30))
                     .SetProperty(p => p.StartedByUserId, (Guid?)workerB));
         }
 
-        // Worker A logs in and ResumeStation fires for the process. Going
+        // Worker A logs in and ResumeOnLogin fires for the process. Going
         // through the HTTP endpoint so the tenant claim is on the request
         // — calling the mediator directly would hit the OrdersDbContext
         // tenant filter with Guid.Empty and return zero processes.
         var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
         var resumeResp = await client.PostAsJsonAsync(
-            "/api/order-item-processes/resume-station",
+            "/api/order-item-processes/resume-on-login",
             new { processId, userId = t.UserId });
         resumeResp.IsSuccessStatusCode.Should().BeTrue();
 
@@ -73,12 +73,12 @@ public class ResumeStationTests : IntegrationTestBase
             var oip = await db.OrderItemProcesses
                 .IgnoreQueryFilters()
                 .SingleAsync(p => p.Id == oipId);
-            oip.PausedByStationAt.Should().NotBeNull(); // still flagged as paused-by-logout
+            oip.PausedOnLogoutAt.Should().NotBeNull(); // still flagged as paused-on-logout
         }
     }
 
     [Fact]
-    public async Task ResumeStation_resumes_OIP_last_worked_by_same_user()
+    public async Task ResumeOnLogin_resumes_OIP_last_worked_by_same_user()
     {
         var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Department);
 
@@ -102,14 +102,14 @@ public class ResumeStationTests : IntegrationTestBase
                 .Where(p => p.Id == oipId)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(p => p.PausedAt, (DateTime?)now.AddMinutes(-30))
-                    .SetProperty(p => p.PausedByStationAt, (DateTime?)now.AddMinutes(-30))
+                    .SetProperty(p => p.PausedOnLogoutAt, (DateTime?)now.AddMinutes(-30))
                     .SetProperty(p => p.StartedByUserId, (Guid?)t.UserId));
         }
 
         // Same worker logs back in.
         var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
         var resumeResp = await client.PostAsJsonAsync(
-            "/api/order-item-processes/resume-station",
+            "/api/order-item-processes/resume-on-login",
             new { processId, userId = t.UserId });
         resumeResp.IsSuccessStatusCode.Should().BeTrue();
 

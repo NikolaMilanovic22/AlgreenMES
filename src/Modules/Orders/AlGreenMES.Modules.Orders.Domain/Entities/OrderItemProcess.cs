@@ -46,12 +46,12 @@ public class OrderItemProcess : TenantEntity
     public DateTime? PausedAt { get; private set; }
     public DateTime? ResumedAt { get; private set; }
     /// <summary>
-    /// When set, this process was paused by a tablet-station logout and
-    /// should auto-resume on the next ResumeStation call. Null means
-    /// either "not paused" or "paused manually by a worker" (which must
-    /// not auto-resume).
+    /// When set, this process was paused by a tablet logout and should
+    /// auto-resume on the next worker login (ResumeOnLoginCommand).
+    /// Null means either "not paused" or "paused manually by a worker"
+    /// (which must not auto-resume).
     /// </summary>
-    public DateTime? PausedByStationAt { get; private set; }
+    public DateTime? PausedOnLogoutAt { get; private set; }
 
     /// <summary>
     /// Sale/Bojan can manually mark a row to be excluded from the /reports
@@ -247,19 +247,19 @@ public class OrderItemProcess : TenantEntity
         TotalDurationMinutes += sessionSeconds;
 
         PausedAt = DateTime.UtcNow;
-        PausedByStationAt = null; // manual pause — not auto-resumable on next login
+        PausedOnLogoutAt = null; // manual pause — not auto-resumable on next login
         ResumedAt = null;
         UpdatedAt = DateTime.UtcNow;
         EndOpenProcessLog();
     }
 
     /// <summary>
-    /// Pause because the worker is logging out of the tablet station.
-    /// Sets PausedByStationAt so the next tablet login auto-resumes this
+    /// Pause because the worker is logging out of the tablet. Sets
+    /// PausedOnLogoutAt so the next tablet login auto-resumes this
     /// process. Skips if already paused (manually) — manual pauses must
     /// NOT auto-resume.
     /// </summary>
-    public void PauseByStation()
+    public void PauseOnLogout()
     {
         if (PausedAt.HasValue) return;
 
@@ -268,7 +268,7 @@ public class OrderItemProcess : TenantEntity
         TotalDurationMinutes += sessionSeconds;
 
         PausedAt = DateTime.UtcNow;
-        PausedByStationAt = DateTime.UtcNow;
+        PausedOnLogoutAt = DateTime.UtcNow;
         ResumedAt = null;
         UpdatedAt = DateTime.UtcNow;
         EndOpenProcessLog();
@@ -321,7 +321,7 @@ public class OrderItemProcess : TenantEntity
             throw new DomainException("NOT_PAUSED", "Process is not paused.");
 
         PausedAt = null;
-        PausedByStationAt = null; // resumed — no longer eligible for auto-resume
+        PausedOnLogoutAt = null; // resumed — no longer eligible for auto-resume
         ResumedAt = DateTime.UtcNow;
         UpdatedAt = DateTime.UtcNow;
 
