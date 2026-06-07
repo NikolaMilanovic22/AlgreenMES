@@ -9,11 +9,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
-namespace AlGreenMES.Modules.Orders.Infrastructure.Migrations
+namespace AlGreenMES.Modules.Orders.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(OrdersDbContext))]
-    [Migration("20260210203013_InitialOrders")]
-    partial class InitialOrders
+    [Migration("20260224123139_AddPushSubscriptionTable")]
+    partial class AddPushSubscriptionTable
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -620,9 +620,9 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
-                    b.Property<Guid>("WorkSessionId")
+                    b.Property<Guid>("UserId")
                         .HasColumnType("uuid")
-                        .HasColumnName("work_session_id");
+                        .HasColumnName("user_id");
 
                     b.HasKey("Id")
                         .HasName("pk_order_item_sub_process_logs");
@@ -630,10 +630,64 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Migrations
                     b.HasIndex("OrderItemSubProcessId")
                         .HasDatabaseName("ix_order_item_sub_process_logs_order_item_sub_process_id");
 
-                    b.HasIndex("WorkSessionId")
-                        .HasDatabaseName("ix_order_item_sub_process_logs_work_session_id");
+                    b.HasIndex("UserId")
+                        .HasDatabaseName("ix_order_item_sub_process_logs_user_id");
 
                     b.ToTable("order_item_sub_process_logs", "orders");
+                });
+
+            modelBuilder.Entity("AlGreenMES.Modules.Orders.Domain.Entities.PushSubscription", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AuthKey")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("auth_key");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Endpoint")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("endpoint");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("is_active");
+
+                    b.Property<string>("P256dhKey")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("p256dh_key");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_push_subscriptions");
+
+                    b.HasIndex("UserId")
+                        .HasDatabaseName("ix_push_subscriptions_user_id");
+
+                    b.HasIndex("UserId", "Endpoint")
+                        .IsUnique()
+                        .HasDatabaseName("ix_push_subscriptions_user_id_endpoint")
+                        .HasFilter("is_active = true");
+
+                    b.ToTable("push_subscriptions", "orders");
                 });
 
             modelBuilder.Entity("AlGreenMES.Modules.Orders.Domain.Entities.WorkSession", b =>
@@ -655,8 +709,8 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
-                    b.Property<DateTime>("Date")
-                        .HasColumnType("timestamp with time zone")
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date")
                         .HasColumnName("date");
 
                     b.Property<int?>("DurationMinutes")
@@ -778,16 +832,7 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Migrations
                         .IsRequired()
                         .HasConstraintName("fk_order_item_sub_process_logs_order_item_sub_processes_order_");
 
-                    b.HasOne("AlGreenMES.Modules.Orders.Domain.Entities.WorkSession", "WorkSession")
-                        .WithMany()
-                        .HasForeignKey("WorkSessionId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
-                        .HasConstraintName("fk_order_item_sub_process_logs_work_sessions_work_session_id");
-
                     b.Navigation("OrderItemSubProcess");
-
-                    b.Navigation("WorkSession");
                 });
 
             modelBuilder.Entity("AlGreenMES.Modules.Orders.Domain.Entities.Order", b =>

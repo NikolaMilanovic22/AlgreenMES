@@ -2,7 +2,7 @@
 
 #nullable disable
 
-namespace AlGreenMES.Modules.Orders.Infrastructure.Migrations
+namespace AlGreenMES.Modules.Orders.Infrastructure.Persistence.Migrations
 {
     /// <inheritdoc />
     public partial class ReplaceWorkSessionIdWithUserId : Migration

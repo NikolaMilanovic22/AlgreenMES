@@ -9,11 +9,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
-namespace AlGreenMES.Modules.Orders.Infrastructure.Migrations
+namespace AlGreenMES.Modules.Orders.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(OrdersDbContext))]
-    [Migration("20260224115557_ReplaceWorkSessionIdWithUserId")]
-    partial class ReplaceWorkSessionIdWithUserId
+    [Migration("20260210203013_InitialOrders")]
+    partial class InitialOrders
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -620,9 +620,9 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
-                    b.Property<Guid>("UserId")
+                    b.Property<Guid>("WorkSessionId")
                         .HasColumnType("uuid")
-                        .HasColumnName("user_id");
+                        .HasColumnName("work_session_id");
 
                     b.HasKey("Id")
                         .HasName("pk_order_item_sub_process_logs");
@@ -630,8 +630,8 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Migrations
                     b.HasIndex("OrderItemSubProcessId")
                         .HasDatabaseName("ix_order_item_sub_process_logs_order_item_sub_process_id");
 
-                    b.HasIndex("UserId")
-                        .HasDatabaseName("ix_order_item_sub_process_logs_user_id");
+                    b.HasIndex("WorkSessionId")
+                        .HasDatabaseName("ix_order_item_sub_process_logs_work_session_id");
 
                     b.ToTable("order_item_sub_process_logs", "orders");
                 });
@@ -655,8 +655,8 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
-                    b.Property<DateOnly>("Date")
-                        .HasColumnType("date")
+                    b.Property<DateTime>("Date")
+                        .HasColumnType("timestamp with time zone")
                         .HasColumnName("date");
 
                     b.Property<int?>("DurationMinutes")
@@ -778,7 +778,16 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Migrations
                         .IsRequired()
                         .HasConstraintName("fk_order_item_sub_process_logs_order_item_sub_processes_order_");
 
+                    b.HasOne("AlGreenMES.Modules.Orders.Domain.Entities.WorkSession", "WorkSession")
+                        .WithMany()
+                        .HasForeignKey("WorkSessionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_order_item_sub_process_logs_work_sessions_work_session_id");
+
                     b.Navigation("OrderItemSubProcess");
+
+                    b.Navigation("WorkSession");
                 });
 
             modelBuilder.Entity("AlGreenMES.Modules.Orders.Domain.Entities.Order", b =>

@@ -31,11 +31,21 @@ public class AutoLogoutBackgroundService : BackgroundService
     {
         _logger.LogInformation("AutoLogoutBackgroundService started, interval {Interval}", _checkInterval);
 
+        var scanCount = 0;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                await ScanAsync(stoppingToken);
+                var openSessionsCount = await ScanAsync(stoppingToken);
+                scanCount++;
+                // Heartbeat — one Information log every successful scan so a
+                // silent ExecuteAsync crash (e.g. ValueTuple cast bug from
+                // 03.06.2026 or tenant-context bug) shows up in Sentry as
+                // "no heartbeat" rather than waiting for users to notice
+                // that auto-logout stopped working. Cheap: 30 lines/hour.
+                _logger.LogInformation(
+                    "AutoLogoutBackgroundService scan #{ScanCount} OK, {OpenSessions} open session(s) processed",
+                    scanCount, openSessionsCount);
                 await Task.Delay(_checkInterval, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -50,7 +60,8 @@ public class AutoLogoutBackgroundService : BackgroundService
         }
     }
 
-    private async Task ScanAsync(CancellationToken ct)
+    /// <returns>Number of open sessions enumerated in this scan.</returns>
+    private async Task<int> ScanAsync(CancellationToken ct)
     {
         // Bootstrap scope: just enumerates open sessions across all tenants.
         // Uses IgnoreQueryFilters() so the OrdersDbContext tenant filter does
@@ -75,7 +86,7 @@ public class AutoLogoutBackgroundService : BackgroundService
             openSessions = rows.Select(x => (x.TenantId, x.UserId)).ToList();
         }
 
-        if (openSessions.Count == 0) return;
+        if (openSessions.Count == 0) return 0;
 
         foreach (var s in openSessions)
         {
@@ -102,6 +113,8 @@ public class AutoLogoutBackgroundService : BackgroundService
                     s.TenantId, s.UserId);
             }
         }
+
+        return openSessions.Count;
     }
 
     private static DefaultHttpContext BuildBackgroundHttpContext(Guid tenantId, Guid userId)
