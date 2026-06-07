@@ -8,6 +8,178 @@ Mirrored to `easy-mes-be` (skyhard) — keep both in sync when editing.
 
 ---
 
+## 2026-06-07 — "Station" rename + quality-of-life batch
+
+### Refactored
+- **Pause/Resume rename**: `PauseStation*`/`ResumeStation*` → `PauseOnLogout*`/
+  `ResumeOnLogin*` across entity props, methods, commands, routes (`POST
+  /pause-on-logout`, `/resume-on-login`), and DB column
+  (`paused_by_station_at` → `paused_on_logout_at`). Pure rename — no
+  behaviour change. `StationRequest` → `WorkerProcessRequest`. The old
+  naming was a leftover from an early prototype with physical stations.
+- **`ResumeOnLoginCommand` per-worker scoping** (was bleeding into other
+  workers' paused OIPs). Now only auto-resumes when the most-recent
+  `OrderItemProcessLog` / `OrderItemSubProcessLog` `UserId` matches the
+  logging-in user; falls back to `StartedByUserId` for pre-06.06 rows.
+  Two new `ResumeStationTests` (→ now `ResumeOnLoginTests`) cover skip +
+  resume.
+- **Orders Migrations folder consolidated**. All migrations + ModelSnapshot
+  in `Persistence/Migrations/`. EF tooling no longer needs `--output-dir`.
+
+### Added
+- **`StartProcessWorkTests`** — covers the `ValueGeneratedNever` +
+  `Include(ProcessLogs)` fixes from 06.06 + already-started guard.
+
+### Migrations
+- `20260607103142_RenamePausedByStationAtToPausedOnLogoutAt` — uses
+  `RenameColumn` (data preserved) on `order_item_processes` and
+  `order_item_sub_processes`.
+
+---
+
+## 2026-06-06 — OrderItemProcessLog entity + Bojan/Sale Bug D-H batch
+
+### Added
+- **`OrderItemProcessLog` entity + `order_item_process_logs` table** —
+  per-work-period log for process-level work (mirrors
+  `OrderItemSubProcessLog` for processes WITHOUT sub-processes, e.g.
+  Krojenje). Tracks each Start→Pause/Resume cycle with the working user.
+  Reporting code now queries logs directly (was using the
+  `StartedAt → PausedAt ?? CompletedAt` shortcut, which overcounted
+  offline gaps / auto-logout windows as active).
+- **Tablet auto-logout beep** (Web Audio oscillator) — 880Hz/300ms on
+  warning window enter, 440Hz/1200ms on modal show.
+
+### Fixed
+- **`ResumeOnLogin` cumulative OT cap (Bug E)** — when relogin happens
+  during overtime quota, per-session cap shrinks to remaining quota
+  (`min(quotaLeftMinutes, perSessionCap)`), so the worker can't
+  silently overrun MaxOvertimeHours by reopening sessions.
+- **Trend chart Min line + range Area band** (Bug D). Tooltip + clip-label
+  fix (`margin.right: 40`, XAxis padding 16/16). Efikasnost charts
+  switched horizontal → vertical bars.
+- **Dangling open process logs** (Bug F-style) — repo methods
+  (`GetByIdWithOrderDetailsAsync`, `GetByIdWithFullDetailsAsync`,
+  `GetInProgressByProcessIdAsync`) now `.Include(p => p.ProcessLogs)`
+  so `EndOpenProcessLog()` actually closes them. Local cleanup SQL ran
+  for 16 dangling rows; staging + easy-mes already clean.
+- **`OrderItemProcessLog.Id` `ValueGeneratedNever()`** — without it EF
+  treated Id as DB-generated and threw `DbUpdateConcurrencyException`
+  at `StartProcessWork`.
+- **Client-disconnect noise** — `GlobalExceptionHandlerMiddleware` now
+  catches `BadHttpRequestException` → 400 + Warning (no Sentry page) and
+  `OperationCanceledException` when `RequestAborted` → silent. Stops
+  weekly Sentry digest from filling with torn-connection 500s.
+- **Tablet `/queue` N+1** — `tablet-process-definitions` batched into a
+  single `processesApi.getAll({ pageSize: 200 })` call (was firing one
+  request per process row).
+
+### Tests
+- 4 new `WorkerHoursReportTests` + 2 `ActiveWorkSessionTests` Bug E
+  scenarios + fixed 2 pre-existing flaky overtime tests
+  (time-of-day-dependent shift-start anchoring).
+
+### Migrations
+- `20260606081854_AddOrderItemProcessLogs` — table + backfill SQL
+  (`gen_random_uuid()`).
+
+---
+
+## 2026-06-04 — Bug B + Bug C (Bojan testing 04.06)
+
+### Fixed
+- **Bug B — process-level Aktivno attributed per user**. Previously a
+  process WITHOUT sub-processes summed all worker time into a single
+  bucket; now per-user via `OrderItemProcess.StartedByUserId`.
+- **Bug C — cap + clip on trend chart**. Robust stats already applied
+  in 05-27; clip-label fix here so labels don't overflow the SVG.
+- **Auto-logout pauses processes WITHOUT sub-processes** — `PauseWork`
+  walks sub-process logs only, so Krojenje-style processes kept ticking
+  after auto-logout. AutoCheckOut now mirrors FE manual-logout by
+  firing `PauseOnLogoutCommand` per user-process (in addition to
+  `PauseWork`).
+- **Auto-logout pauses sub-processes** (mirrors manual logout). Logout
+  business logic must be identical, only diff allowed = backdated time
+  + `WasAutoClosed` flag + `AutoLoggedOut` event.
+
+### Tests
+- Integration tests for Bug B (process-level Aktivno) + Bug C (cap +
+  clip math).
+
+---
+
+## 2026-06-03 — AutoLogout BG service hardening + seed cleanup
+
+### Fixed
+- **`AutoLogoutBackgroundService` `InvalidCastException`** — projecting
+  to `ValueTuple` via `Select(ValueTuple.Create(...))` made Npgsql try
+  to read a Postgres `record` type. Materialize to anonymous type first,
+  then tuple-ify in memory. Heartbeat log added (one Information line
+  per scan) so silent crashes show up as "no heartbeat" in Sentry.
+- **`AutoLogoutBackgroundService` missing tenant context** — synthetic
+  `HttpContext` with `tenant_id`, `sub`, and `SuperAdmin` role claims so
+  `OrdersDbContext`'s tenant filter resolves correctly (was returning
+  zero open sessions every scan).
+- Three Bojan-reported bugs from 03.06.2026 testing (auto-logout flow
+  edge cases — see commit `c203e0d` for specifics).
+- `--migrate` flag works in Development; safer shift cleanup
+  (deletes the 3 duplicate "smjena" rows in the cleanup migration).
+
+---
+
+## 2026-06-02 — AutoLogout enforcement + WorkSession events
+
+### Added
+- **`AutoLogoutBackgroundService`** — proactive safety net every 2 min,
+  scans all open `WorkSessions` across tenants and fires
+  `AutoCheckOutCommand` for any past its cap. Routes through mediator
+  so cap math + notifications + `WasAutoClosed` flag stay in one place.
+- **`WorkSession.WasAutoClosed`** flag + `AutoLoggedOut` event.
+- Cap calculation: `CheckIn + ShiftDuration + MaxOvertimeHours`. Switch
+  shows spinner during BE save + error toast (Uključi/Isključi from
+  Reports row).
+
+### Migrations
+- `20260601205742_AddWasAutoClosedToWorkSession`
+
+---
+
+## 2026-05-29 — Apply Sale/Bojan answers + role restrictions
+
+### Fixed
+- **Worker reports restricted to Department role** (Sati radnika +
+  Efikasnost). Coordinators/managers/sales no longer show up as zero-
+  hour rows.
+- **Trajanje izrade proizvoda**: one row per order item, complexityShare,
+  process duration = operator active time (sub-process sum / OIP total)
+  rather than Stop−Start wall-clock.
+- **Blokade po procesu**: average duration excludes 0-working-hour
+  blocks.
+- **Sati radnika / Efikasnost**: per-worker-per-day, regular/overtime
+  split at shift duration, effective = worked − break, active =
+  subprocess log union.
+
+### Tests
+- Integration tests for all of the above; `REPORTS.md` updated.
+
+---
+
+## 2026-05-27 — Trend MIN/MAX → two-pass robust stats (Bojan round 3)
+
+### Fixed
+- **Trend MIN/MAX**. Both prior interpretations (MINIFS/MAXIFS;
+  literal μ±σ) were wrong. New: two-pass robust stats — Pass 1 μ₀/σ₀
+  on raw, Pass 2 μ′/σ′ on samples in `[μ₀±σ₀]`. `MIN = max(0, μ′−σ′)`,
+  `MAX = μ′+σ′`, `Realni prosek = μ′`. Same robust stats for the
+  Normativ baseline. Tighter, visually meaningful band centered on
+  the cleaned mean. PREDKROJENJE/S example: MIN ≈ 0, MAX ≈ 28.43
+  (was 0.67 / 46 before).
+
+### Tests
+- `Trend_robust_min_max_uses_cleaned_mean_plus_minus_sigma`.
+
+---
+
 ## 2026-05-26 — Three new /reports analyses + lazy auto-logout
 
 ### Added
