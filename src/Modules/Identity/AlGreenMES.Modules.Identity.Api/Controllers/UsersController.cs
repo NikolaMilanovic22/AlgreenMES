@@ -90,7 +90,7 @@ public class UsersController : ControllerBase
     public async Task<IActionResult> UpdateUser(Guid id, [FromBody] UpdateUserRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
-            new UpdateUserCommand(id, _tenantService.GetCurrentTenantId(), request.FirstName, request.LastName, request.Role, request.IsActive, request.CanIncludeWithdrawnInAnalysis, request.ProcessIds),
+            new UpdateUserCommand(id, _tenantService.GetCurrentTenantId(), request.FirstName, request.LastName, request.Role, request.IsActive, request.CanIncludeWithdrawnInAnalysis, request.ProcessIds, request.AdditionalRoles),
             cancellationToken);
 
         return Ok(result);

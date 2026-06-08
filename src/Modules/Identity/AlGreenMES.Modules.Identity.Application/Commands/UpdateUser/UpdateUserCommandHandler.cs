@@ -72,11 +72,19 @@ public class UpdateUserCommandHandler : IRequestHandler<UpdateUserCommand, UserD
         else if (request.Role != UserRole.Department)
             user.AssignProcesses(request.TenantId, []);
 
+        // Multi-role assignment (Saša 08.06.2026). Null = leave existing
+        // additional roles alone; non-null = replace them with the given
+        // list. Same caller-authorisation gate as primary role.
+        if (request.AdditionalRoles != null)
+        {
+            if (!isCallerSuperAdmin)
+                throw new ForbiddenException("FORBIDDEN_ROLE_CHANGE", "Only SuperAdmin can change a user's additional roles.");
+            user.AssignAdditionalRoles(request.TenantId, request.AdditionalRoles);
+        }
+
         // Sprint 3.0 F-3 — revoke outstanding refresh tokens when role changes
         // so the affected user can't keep an old-role session alive via refresh.
-        // The currently-issued access JWT remains valid until expiry (60 min);
-        // tightening further would need a per-user security_stamp claim.
-        if (isRoleChange)
+        if (isRoleChange || request.AdditionalRoles != null)
             await _refreshTokenRepository.RevokeAllForUserAsync(user.Id, cancellationToken);
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
