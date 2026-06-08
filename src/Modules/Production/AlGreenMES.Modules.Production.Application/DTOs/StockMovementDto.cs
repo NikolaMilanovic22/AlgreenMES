@@ -5,8 +5,8 @@ namespace AlGreenMES.Modules.Production.Application.DTOs;
 public record StockMovementDto(
     Guid Id,
     Guid MaterialId,
-    string MaterialKod,
-    string MaterialNaziv,
+    string MaterialCode,
+    string MaterialName,
     string Unit,
     string Category,
     decimal? DimensionX,
