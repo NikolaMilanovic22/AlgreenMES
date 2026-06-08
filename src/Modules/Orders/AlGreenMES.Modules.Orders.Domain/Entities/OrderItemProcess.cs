@@ -274,6 +274,35 @@ public class OrderItemProcess : TenantEntity
         EndOpenProcessLog();
     }
 
+    /// <summary>
+    /// Mark the parent OIP as auto-logged-out without setting PausedAt.
+    /// Used by PauseOnLogoutCommand for sub-process style processes — the
+    /// parent OIP's timer doesn't run (sub-process logs carry the time),
+    /// so we only need a flag for ResumeOnLogin to distinguish auto-logout
+    /// from a manual pause. Saša 08.06.2026 (Bug 2): sub-processes weren't
+    /// resuming on OT relogin in some cases because the sub-level
+    /// PausedOnLogoutAt didn't make it through the PauseWork → PauseOnLogout
+    /// chain — anchoring the marker on the parent is more robust.
+    /// </summary>
+    public void MarkAutoPausedOnLogout()
+    {
+        if (PausedOnLogoutAt.HasValue) return;
+        PausedOnLogoutAt = DateTime.UtcNow;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Clears the auto-logout marker on the parent OIP without touching
+    /// PausedAt / ResumedAt / logs. Used by ResumeOnLogin for sub-process
+    /// style processes after auto-resuming the active sub-process.
+    /// </summary>
+    public void ClearAutoLogoutMarker()
+    {
+        if (!PausedOnLogoutAt.HasValue) return;
+        PausedOnLogoutAt = null;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
     public void ReturnToPending()
     {
         // Return to InProgress+Paused - worker clicks Resume on tablet

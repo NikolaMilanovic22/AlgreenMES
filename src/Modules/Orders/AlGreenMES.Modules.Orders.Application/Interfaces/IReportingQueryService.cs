@@ -82,4 +82,17 @@ public interface IReportingQueryService
         Guid tenantId,
         Guid userId,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// True when the worker has used up their MaxOvertimeHours for today —
+    /// i.e. an OT re-login at this moment would have zero quota left and
+    /// should be blocked at check-in. False if the worker still has any
+    /// regular-shift or overtime time remaining today, or if no shift
+    /// matches today (defensive: allow login when we can't compute a cap).
+    /// Mirrors the cap math in <see cref="GetActiveWorkSessionAsync"/>.
+    /// </summary>
+    Task<bool> IsOvertimeQuotaExhaustedAsync(
+        Guid tenantId,
+        Guid userId,
+        CancellationToken cancellationToken = default);
 }

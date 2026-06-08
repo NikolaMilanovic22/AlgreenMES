@@ -36,13 +36,23 @@ public class ResumeOnLoginCommandHandler : IRequestHandler<ResumeOnLoginCommand>
                 // logging in was auto-resuming sub-processes paused by other
                 // workers, inflating Aktivno na procesima and silently
                 // re-attributing the work.
+                //
+                // Check EITHER marker (sub or parent OIP). Saša 08.06.2026
+                // (Bug 2): in production, the sub-level PausedOnLogoutAt
+                // sometimes didn't survive every auto-logout code path, so
+                // sub-processes stayed paused after OT relogin. The parent
+                // OIP marker (PauseOnLogoutCommandHandler 08.06.2026) is a
+                // more reliable anchor — check either to cover both cases.
+                var wasAutoLoggedOut = activeSub?.PausedOnLogoutAt.HasValue == true
+                                       || process.PausedOnLogoutAt.HasValue;
                 if (activeSub != null
-                    && activeSub.PausedOnLogoutAt.HasValue
+                    && wasAutoLoggedOut
                     && WasLastWorkedBy(activeSub, request.UserId))
                 {
                     var openLog = activeSub.GetOpenLog();
                     if (openLog == null)
-                        activeSub.StartLog(request.UserId); // also clears PausedOnLogoutAt
+                        activeSub.StartLog(request.UserId); // also clears sub.PausedOnLogoutAt
+                    process.ClearAutoLogoutMarker();
                 }
             }
             else

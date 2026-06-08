@@ -760,6 +760,30 @@ public class ReportingQueryService : IReportingQueryService
             .Select(p => new { p.Id, p.Code, p.Name, p.SequenceOrder })
             .ToDictionaryAsync(x => x.Id, cancellationToken);
 
+        // Saša 08.06.2026 (Bug 3): when exactly one product category is
+        // filtered, override the global Process.SequenceOrder with the
+        // category-specific ProductCategoryProcess.SequenceOrder (the
+        // "lista zavisnosti" — each category has its own per-category
+        // workflow order). Without this override, processes are ordered
+        // by the global SequenceOrder, which may not match the order the
+        // chosen category actually runs them in.
+        Dictionary<Guid, int>? categorySequenceOverride = null;
+        if (productCategoryIds is { Count: 1 })
+        {
+            var pcpcCategoryId = productCategoryIds[0];
+            categorySequenceOverride = await _productionDb.ProductCategoryProcesses
+                .AsNoTracking()
+                .Where(pcp => pcp.TenantId == tenantId
+                    && pcp.ProductCategoryId == pcpcCategoryId
+                    && processIds.Contains(pcp.ProcessId))
+                .Select(pcp => new { pcp.ProcessId, pcp.SequenceOrder })
+                .ToDictionaryAsync(x => x.ProcessId, x => x.SequenceOrder, cancellationToken);
+        }
+        int GetSequence(Guid processId) =>
+            categorySequenceOverride is { } map && map.TryGetValue(processId, out var s)
+                ? s
+                : processes[processId].SequenceOrder;
+
         var categoryIds = items.Select(i => i.ProductCategoryId).Distinct().ToList();
         var categories = await _productionDb.ProductCategories
             .AsNoTracking()
@@ -802,7 +826,7 @@ public class ReportingQueryService : IReportingQueryService
                     .Select(g => new
                     {
                         ProcessId = g.Key,
-                        Sequence = processes[g.Key].SequenceOrder,
+                        Sequence = GetSequence(g.Key),
                         StartedAt = g.Min(x => x.StartedAt!.Value),
                         CompletedAt = g.Max(x => x.CompletedAt!.Value),
                         // Σ active time over the OIP(s) of this process.
@@ -842,7 +866,7 @@ public class ReportingQueryService : IReportingQueryService
                         procInfo.Id,
                         procInfo.Code,
                         procInfo.Name,
-                        procInfo.SequenceOrder,
+                        slot.Sequence,
                         slot.StartedAt,
                         slot.CompletedAt,
                         durationSec,
@@ -1069,6 +1093,51 @@ public class ReportingQueryService : IReportingQueryService
         var alarmAt = logoutAt.AddMinutes(-shift.AlarmBeforeLogoutMinutes);
 
         return new ActiveWorkSessionDto(sessionDto, alarmAt, logoutAt);
+    }
+
+    public async Task<bool> IsOvertimeQuotaExhaustedAsync(
+        Guid tenantId,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        // Mirrors the cap math in GetActiveWorkSessionAsync but for the
+        // *next* check-in attempt (no open session yet). Used by
+        // CheckInCommandHandler to block tablet login after MaxOvertimeHours
+        // is exhausted — Saša 08.06.2026 (Bug 1): workers were still able to
+        // log back in past the cap, the resume succeeded, but the lazy auto-
+        // logout immediately closed the session again, leaving the tablet
+        // showing "logged in" while the dashboard / orders had no active
+        // operator.
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var earlierAutoClosed = await _ordersDb.WorkSessions
+            .AsNoTracking()
+            .Where(ws => ws.TenantId == tenantId
+                && ws.UserId == userId
+                && ws.Date == today
+                && ws.WasAutoClosed)
+            .OrderBy(ws => ws.CheckInTime)
+            .Select(ws => new { ws.CheckInTime, ws.DurationMinutes })
+            .ToListAsync(cancellationToken);
+
+        if (earlierAutoClosed.Count == 0)
+            return false; // first session of the day — definitely allowed
+
+        var shifts = await _identityDb.Shifts
+            .AsNoTracking()
+            .Where(s => s.TenantId == tenantId && s.IsActive)
+            .Select(s => new { s.StartTime, s.EndTime, s.MaxOvertimeHours })
+            .ToListAsync(cancellationToken);
+
+        var shiftMatchTime = TimeOnly.FromDateTime(earlierAutoClosed[0].CheckInTime);
+        var shift = shifts.FirstOrDefault(s => IsTimeInShift(shiftMatchTime, s.StartTime, s.EndTime));
+        if (shift == null)
+            return false; // defensive: can't compute a cap, don't block
+
+        // Skip the first (regular session) — only count OT-session durations
+        // toward the MaxOvertimeHours cap.
+        var otUsedMinutes = earlierAutoClosed.Skip(1).Sum(s => s.DurationMinutes ?? 0);
+        var maxOtMinutes = shift.MaxOvertimeHours * 60;
+        return otUsedMinutes >= maxOtMinutes;
     }
 
     /// <summary>

@@ -494,4 +494,69 @@ public class ActiveWorkSessionTests : IntegrationTestBase
         // → mapped to 4xx by the global exception handler.
         resp.StatusCode.Should().NotBe(HttpStatusCode.OK);
     }
+
+    [Fact]
+    public async Task CheckIn_blocked_when_overtime_quota_exhausted()
+    {
+        // Saša 08.06.2026 (Bug 1): the worker could still log in past
+        // MaxOvertimeHours. ResumeOnLogin would briefly resume their work,
+        // then the lazy auto-logout immediately closed the session —
+        // leaving the tablet UI "logged in" while the dashboard saw no
+        // active operator. CheckInCommandHandler now throws
+        // DomainException("OVERTIME_EXHAUSTED") → 400.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        var day = DateTime.UtcNow.Date;
+        // Night-shift wrapping midnight so 00:00 check-ins land inside it.
+        await TestDataSeeder.SeedShiftAsync(
+            Factory, t.TenantId,
+            startTime: new TimeOnly(23, 0),
+            endTime: new TimeOnly(7, 0),
+            maxOvertimeHours: 2,
+            autoLogoutAfterHours: 2,
+            autoLogoutRegularMinutes: 510);
+
+        // Regular session 00:00 → 08:30.
+        await TestDataSeeder.SeedWorkSessionAsync(
+            Factory, t.TenantId, t.UserId, day, day.AddMinutes(510), wasAutoClosed: true);
+        // Full 2h OT session — quota exhausted.
+        await TestDataSeeder.SeedWorkSessionAsync(
+            Factory, t.TenantId, t.UserId, day.AddMinutes(510), day.AddMinutes(630), wasAutoClosed: true);
+
+        var resp = await client.PostAsJsonAsync(
+            "/api/work-sessions/check-in", new { userId = t.UserId });
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        doc.RootElement.GetProperty("error").GetProperty("code").GetString()
+            .Should().Be("OVERTIME_EXHAUSTED");
+    }
+
+    [Fact]
+    public async Task CheckIn_allowed_when_overtime_quota_partially_used()
+    {
+        // Same setup as the blocked case but with only 1h of OT used (not
+        // 2h) — still 1h quota left, so check-in succeeds.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        var day = DateTime.UtcNow.Date;
+        await TestDataSeeder.SeedShiftAsync(
+            Factory, t.TenantId,
+            startTime: new TimeOnly(23, 0),
+            endTime: new TimeOnly(7, 0),
+            maxOvertimeHours: 2,
+            autoLogoutAfterHours: 2,
+            autoLogoutRegularMinutes: 510);
+
+        await TestDataSeeder.SeedWorkSessionAsync(
+            Factory, t.TenantId, t.UserId, day, day.AddMinutes(510), wasAutoClosed: true);
+        await TestDataSeeder.SeedWorkSessionAsync(
+            Factory, t.TenantId, t.UserId, day.AddMinutes(510), day.AddMinutes(570), wasAutoClosed: true);
+
+        var resp = await client.PostAsJsonAsync(
+            "/api/work-sessions/check-in", new { userId = t.UserId });
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
 }

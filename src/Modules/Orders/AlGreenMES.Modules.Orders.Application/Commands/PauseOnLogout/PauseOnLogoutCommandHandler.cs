@@ -33,17 +33,28 @@ public class PauseOnLogoutCommandHandler : IRequestHandler<PauseOnLogoutCommand>
                 if (activeSub != null)
                 {
                     var openLog = activeSub.GetOpenLog();
+                    var hadOpenLog = openLog != null;
                     if (openLog != null)
                     {
-                        // Sub-process was actively running — close the log and
-                        // mark for auto-resume on next worker login.
+                        // Sub-process was actively running — close the log
+                        // and mark for auto-resume on next worker login.
                         openLog.End();
                         if (openLog.DurationMinutes.HasValue)
                             activeSub.AddDuration(openLog.DurationMinutes.Value);
                         activeSub.PauseOnLogout();
                     }
-                    // else: sub-process is InProgress but has no open log,
-                    // meaning a worker manually paused it. Leave alone.
+
+                    // Also mark the parent OIP whenever this is an auto-
+                    // logout (open log just closed here, OR PauseWorkCommand-
+                    // Handler already closed it and set sub.PausedOnLogoutAt).
+                    // A manually-paused sub-process has neither, so the parent
+                    // marker stays null and ResumeOnLogin will skip it. Saša
+                    // 08.06.2026 (Bug 2): sub-processes weren't resuming on
+                    // OT relogin in production because the sub-level
+                    // PausedOnLogoutAt didn't survive every code path —
+                    // anchoring the marker on the parent OIP is more robust.
+                    if (hadOpenLog || activeSub.PausedOnLogoutAt.HasValue)
+                        process.MarkAutoPausedOnLogout();
                 }
             }
             else
