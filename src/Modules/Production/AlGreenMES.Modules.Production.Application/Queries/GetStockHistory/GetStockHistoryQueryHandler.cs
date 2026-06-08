@@ -18,7 +18,8 @@ public class GetIstorijaQueryHandler : IRequestHandler<GetIstorijaQuery, PagedRe
     {
         var page = await _stockRepo.GetPagedAsync(
             request.TenantId, request.Type, request.MaterialId, request.DocRef,
-            request.From, request.To, request.Page, request.PageSize, cancellationToken);
+            request.From, request.To, request.Page, request.PageSize,
+            request.SortBy, request.SortDirection, cancellationToken);
 
         return page.MapItems(s => new StockMovementDto(
             s.Id, s.MaterialId, s.Material.Code, s.Material.Name, s.Material.Unit,

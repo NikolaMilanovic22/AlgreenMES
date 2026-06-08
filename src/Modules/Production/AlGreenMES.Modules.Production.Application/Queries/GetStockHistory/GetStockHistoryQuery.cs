@@ -13,4 +13,6 @@ public record GetIstorijaQuery(
     DateTime? From,
     DateTime? To,
     int Page,
-    int PageSize) : IRequest<PagedResult<StockMovementDto>>;
+    int PageSize,
+    string? SortBy = null,
+    string? SortDirection = null) : IRequest<PagedResult<StockMovementDto>>;

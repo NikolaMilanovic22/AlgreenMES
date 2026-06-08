@@ -23,6 +23,8 @@ public interface IStockMovementRepository
         DateTime? to,
         int page,
         int pageSize,
+        string? sortBy = null,
+        string? sortDirection = null,
         CancellationToken cancellationToken = default);
 }
 

@@ -65,6 +65,8 @@ public class StockMovementRepository : IStockMovementRepository
         DateTime? to,
         int page,
         int pageSize,
+        string? sortBy = null,
+        string? sortDirection = null,
         CancellationToken cancellationToken = default)
     {
         var q = _dbContext.StockMovements
@@ -89,8 +91,21 @@ public class StockMovementRepository : IStockMovementRepository
             q = q.Where(s => s.MovementDate <= t);
         }
 
-        return await q.OrderByDescending(s => s.MovementDate)
-                      .ThenByDescending(s => s.CreatedAt)
-                      .ToPagedResultAsync(page, pageSize, cancellationToken);
+        var desc = !string.Equals(sortDirection, "asc", StringComparison.OrdinalIgnoreCase);
+        IOrderedQueryable<StockMovement> ordered = (sortBy?.ToLowerInvariant()) switch
+        {
+            "type"              => desc ? q.OrderByDescending(s => s.Type)                : q.OrderBy(s => s.Type),
+            "materialcode"      => desc ? q.OrderByDescending(s => s.Material.Code)       : q.OrderBy(s => s.Material.Code),
+            "materialname"      => desc ? q.OrderByDescending(s => s.Material.Name)       : q.OrderBy(s => s.Material.Name),
+            "quantity"          => desc ? q.OrderByDescending(s => s.Quantity)            : q.OrderBy(s => s.Quantity),
+            "unitprice"         => desc ? q.OrderByDescending(s => s.UnitPrice)           : q.OrderBy(s => s.UnitPrice),
+            "totalprice"        => desc ? q.OrderByDescending(s => s.TotalPrice)          : q.OrderBy(s => s.TotalPrice),
+            "documentreference" => desc ? q.OrderByDescending(s => s.DocumentReference)   : q.OrderBy(s => s.DocumentReference),
+            "category"          => desc ? q.OrderByDescending(s => s.Material.Category)   : q.OrderBy(s => s.Material.Category),
+            _                   => desc ? q.OrderByDescending(s => s.MovementDate)        : q.OrderBy(s => s.MovementDate),
+        };
+
+        return await ordered.ThenByDescending(s => s.CreatedAt)
+                            .ToPagedResultAsync(page, pageSize, cancellationToken);
     }
 }

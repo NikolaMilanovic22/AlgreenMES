@@ -50,10 +50,12 @@ public class MagacinController : ControllerBase
         [FromQuery] DateTime? to,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50,
+        [FromQuery] string? sortBy = null,
+        [FromQuery] string? sortDirection = null,
         CancellationToken cancellationToken = default)
     {
         var result = await _mediator.Send(
-            new GetIstorijaQuery(_tenantService.GetCurrentTenantId(), type, materialId, docRef, from, to, page, pageSize),
+            new GetIstorijaQuery(_tenantService.GetCurrentTenantId(), type, materialId, docRef, from, to, page, pageSize, sortBy, sortDirection),
             cancellationToken);
         return Ok(result);
     }
