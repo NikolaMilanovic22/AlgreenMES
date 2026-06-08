@@ -1,14 +1,14 @@
 namespace AlGreenMES.Modules.Production.Application.DTOs;
 
-/// <summary>Status zaliha — derived from quantity vs material thresholds.</summary>
+/// <summary>Stock status — derived from quantity vs material thresholds.</summary>
 public enum StockStatus
 {
     Ok,
-    IspodMin,
-    IznadMax
+    BelowMin,
+    AboveMax
 }
 
-public record StanjeRowDto(
+public record StockBalanceRowDto(
     Guid MaterialId,
     string Code,
     string Name,

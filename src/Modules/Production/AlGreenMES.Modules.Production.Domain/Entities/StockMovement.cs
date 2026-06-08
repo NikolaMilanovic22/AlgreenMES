@@ -63,5 +63,5 @@ public class StockMovement : AuditableEntity
     }
 
     /// <summary>Signed quantity for Stanje math. Ulaz = +, Izlaz = -.</summary>
-    public decimal SignedQuantity => Type == StockMovementType.Ulaz ? Quantity : -Quantity;
+    public decimal SignedQuantity => Type == StockMovementType.Inflow ? Quantity : -Quantity;
 }

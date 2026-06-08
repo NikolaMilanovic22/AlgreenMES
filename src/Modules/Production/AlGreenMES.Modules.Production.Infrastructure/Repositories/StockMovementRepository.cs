@@ -35,7 +35,7 @@ public class StockMovementRepository : IStockMovementRepository
             .GroupBy(r => r.MaterialId)
             .Select(g =>
             {
-                var qty = g.Sum(r => r.Type == StockMovementType.Ulaz ? r.Quantity : -r.Quantity);
+                var qty = g.Sum(r => r.Type == StockMovementType.Inflow ? r.Quantity : -r.Quantity);
                 // Latest by enumeration order (already sorted ascending) =>
                 // last item is most recent. Saša 08.06.2026: always use last
                 // entered price for Izlaz (no FIFO/LIFO in v1).

@@ -18,9 +18,9 @@ namespace AlGreenMES.Tests.Integration;
 ///   * Multi-role: a Coordinator + Magacioner (combined roles) can hit the
 ///     Magacioner-gated endpoints. Coordinator-only is rejected.
 /// </summary>
-public class MagacinTests : IntegrationTestBase
+public class WarehouseTests : IntegrationTestBase
 {
-    public MagacinTests(AlgreenWebApplicationFactory factory) : base(factory) { }
+    public WarehouseTests(AlgreenWebApplicationFactory factory) : base(factory) { }
 
     private async Task<Guid> SeedMaterialAsync(HttpClient client, string code, string name = "Test", int min = 5, int max = 50)
     {
@@ -80,16 +80,16 @@ public class MagacinTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task Ulaz_then_Stanje_reflects_quantity_and_unit_price()
+    public async Task Inflow_then_Stock_reflects_quantity_and_unit_price()
     {
         var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
         var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
 
         var materialId = await SeedMaterialAsync(client, "M002", "Lim", min: 3, max: 30);
 
-        var ulazResp = await client.PostAsJsonAsync("/api/magacin/entries", new
+        var ulazResp = await client.PostAsJsonAsync("/api/warehouse/entries", new
         {
-            type = "Ulaz",
+            type = "Inflow",
             documentReference = "2026/100",
             movementDate = DateTime.UtcNow,
             notes = (string?)null,
@@ -97,7 +97,7 @@ public class MagacinTests : IntegrationTestBase
         });
         ulazResp.IsSuccessStatusCode.Should().BeTrue();
 
-        var stanjeResp = await client.GetAsync("/api/magacin/stanje");
+        var stanjeResp = await client.GetAsync("/api/warehouse/stock");
         stanjeResp.StatusCode.Should().Be(HttpStatusCode.OK);
         var stanje = await stanjeResp.Content.ReadFromJsonAsync<List<StanjeResp>>();
         var row = stanje!.Single(s => s.MaterialId == materialId);
@@ -108,7 +108,7 @@ public class MagacinTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task Izlaz_without_explicit_price_falls_back_to_last_ulaz_price()
+    public async Task Outflow_without_explicit_price_falls_back_to_last_inflow_price()
     {
         // Saša 08.06.2026 — "Cena ide uvek zadnja".
         var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
@@ -116,18 +116,18 @@ public class MagacinTests : IntegrationTestBase
 
         var materialId = await SeedMaterialAsync(client, "M003");
 
-        await client.PostAsJsonAsync("/api/magacin/entries", new
+        await client.PostAsJsonAsync("/api/warehouse/entries", new
         {
-            type = "Ulaz",
+            type = "Inflow",
             documentReference = "2026/200",
             movementDate = DateTime.UtcNow.AddMinutes(-10),
             notes = (string?)null,
             lines = new[] { new { materialId, quantity = 10m, unitPrice = (decimal?)5000m, notes = (string?)null } }
         });
 
-        var izlazResp = await client.PostAsJsonAsync("/api/magacin/entries", new
+        var izlazResp = await client.PostAsJsonAsync("/api/warehouse/entries", new
         {
-            type = "Izlaz",
+            type = "Outflow",
             documentReference = "ORD-2026-006",
             movementDate = DateTime.UtcNow,
             notes = (string?)null,
@@ -137,14 +137,14 @@ public class MagacinTests : IntegrationTestBase
         var izlazRows = await izlazResp.Content.ReadFromJsonAsync<List<StockMovementResp>>();
         izlazRows!.Single().UnitPrice.Should().Be(5000m);
 
-        var stanjeResp = await client.GetAsync("/api/magacin/stanje");
+        var stanjeResp = await client.GetAsync("/api/warehouse/stock");
         var stanje = await stanjeResp.Content.ReadFromJsonAsync<List<StanjeResp>>();
         var row = stanje!.Single(s => s.MaterialId == materialId);
         row.Quantity.Should().Be(7m); // 10 - 3
     }
 
     [Fact]
-    public async Task Stanje_status_flags_reflect_min_and_max_thresholds()
+    public async Task Stock_status_flags_reflect_min_and_max_thresholds()
     {
         var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
         var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
@@ -154,9 +154,9 @@ public class MagacinTests : IntegrationTestBase
         var ok = await SeedMaterialAsync(client, "M-OK", min: 5, max: 100);
         var above = await SeedMaterialAsync(client, "M-ABOVE", min: 0, max: 5);
 
-        await client.PostAsJsonAsync("/api/magacin/entries", new
+        await client.PostAsJsonAsync("/api/warehouse/entries", new
         {
-            type = "Ulaz", documentReference = "B/1", movementDate = DateTime.UtcNow, notes = (string?)null,
+            type = "Inflow", documentReference = "B/1", movementDate = DateTime.UtcNow, notes = (string?)null,
             lines = new[]
             {
                 new { materialId = below, quantity = 2m, unitPrice = (decimal?)1m, notes = (string?)null },
@@ -165,29 +165,29 @@ public class MagacinTests : IntegrationTestBase
             }
         });
 
-        var stanjeResp = await client.GetAsync("/api/magacin/stanje");
+        var stanjeResp = await client.GetAsync("/api/warehouse/stock");
         var stanje = (await stanjeResp.Content.ReadFromJsonAsync<List<StanjeResp>>())!;
-        stanje.Single(s => s.MaterialId == below).Status.Should().Be("IspodMin");
+        stanje.Single(s => s.MaterialId == below).Status.Should().Be("BelowMin");
         stanje.Single(s => s.MaterialId == ok).Status.Should().Be("Ok");
-        stanje.Single(s => s.MaterialId == above).Status.Should().Be("IznadMax");
+        stanje.Single(s => s.MaterialId == above).Status.Should().Be("AboveMax");
     }
 
     [Fact]
-    public async Task Magacin_endpoints_reject_Coordinator_without_Magacioner_role()
+    public async Task Warehouse_endpoints_reject_Coordinator_without_Magacioner_role()
     {
         // Coordinator alone cannot hit Magacioner-gated endpoints (POST /entries).
         var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Coordinator);
         var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
 
-        var resp = await client.PostAsJsonAsync("/api/magacin/entries", new
+        var resp = await client.PostAsJsonAsync("/api/warehouse/entries", new
         {
-            type = "Ulaz", documentReference = "X/1", movementDate = DateTime.UtcNow, notes = (string?)null,
+            type = "Inflow", documentReference = "X/1", movementDate = DateTime.UtcNow, notes = (string?)null,
             lines = Array.Empty<object>(),
         });
         resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
 
         // But CAN read Stanje / Istorija (Coordinator is on the read allowlist).
-        var stanje = await client.GetAsync("/api/magacin/stanje");
+        var stanje = await client.GetAsync("/api/warehouse/stock");
         stanje.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 }

@@ -17,7 +17,7 @@ namespace AlGreenMES.Modules.Production.Api.Controllers;
 /// + Magacioner can post stock entries.
 /// </summary>
 [ApiController]
-[Route("api/magacin")]
+[Route("api/warehouse")]
 [Authorize]
 public class MagacinController : ControllerBase
 {
@@ -32,7 +32,7 @@ public class MagacinController : ControllerBase
         _currentUser = currentUser;
     }
 
-    [HttpGet("stanje")]
+    [HttpGet("stock")]
     [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator,Magacioner")]
     public async Task<IActionResult> GetStanje(CancellationToken cancellationToken)
     {
@@ -40,7 +40,7 @@ public class MagacinController : ControllerBase
         return Ok(result);
     }
 
-    [HttpGet("istorija")]
+    [HttpGet("history")]
     [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator,Magacioner")]
     public async Task<IActionResult> GetIstorija(
         [FromQuery] StockMovementType? type,
