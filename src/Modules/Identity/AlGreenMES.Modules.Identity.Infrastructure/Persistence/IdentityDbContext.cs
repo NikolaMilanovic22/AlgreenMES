@@ -12,6 +12,7 @@ public class IdentityDbContext : DbContext, IIdentityUnitOfWork
 
     public DbSet<User> Users => Set<User>();
     public DbSet<UserProcess> UserProcesses => Set<UserProcess>();
+    public DbSet<UserRoleAssignment> UserRoleAssignments => Set<UserRoleAssignment>();
     public DbSet<Shift> Shifts => Set<Shift>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 

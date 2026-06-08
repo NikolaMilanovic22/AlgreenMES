@@ -34,10 +34,18 @@ public class JwtTokenService : IJwtTokenService
             new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
             new(JwtRegisteredClaimNames.Email, user.Email),
             new("tenant_id", user.TenantId.ToString()),
-            new(ClaimTypes.Role, user.Role.ToString()),
             new("first_name", user.FirstName),
             new("last_name", user.LastName)
         };
+
+        // One Role claim per effective role (primary + additional). Saša
+        // 08.06.2026 — a user can be e.g. Coordinator + Magacioner; both
+        // claims emitted so [Authorize(Roles = "Magacioner")] picks them up
+        // without further changes.
+        foreach (var role in user.EffectiveRoles)
+        {
+            claims.Add(new Claim(ClaimTypes.Role, role.ToString()));
+        }
 
         var token = new JwtSecurityToken(
             issuer: issuer,

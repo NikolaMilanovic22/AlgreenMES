@@ -47,6 +47,8 @@ public static class ProductionInfrastructureServiceRegistration
         services.AddScoped<IProcessRepository, ProcessRepository>();
         services.AddScoped<IProductCategoryRepository, ProductCategoryRepository>();
         services.AddScoped<ISpecialRequestTypeRepository, SpecialRequestTypeRepository>();
+        services.AddScoped<IMaterialRepository, MaterialRepository>();
+        services.AddScoped<IStockMovementRepository, StockMovementRepository>();
 
         return services;
     }

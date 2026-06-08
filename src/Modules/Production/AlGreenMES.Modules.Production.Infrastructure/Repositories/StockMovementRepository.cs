@@ -1,0 +1,96 @@
+using AlGreenMES.BuildingBlocks.Common.Pagination;
+using AlGreenMES.Modules.Production.Domain.Entities;
+using AlGreenMES.Modules.Production.Domain.Enums;
+using AlGreenMES.Modules.Production.Domain.Repositories;
+using AlGreenMES.Modules.Production.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+
+namespace AlGreenMES.Modules.Production.Infrastructure.Repositories;
+
+public class StockMovementRepository : IStockMovementRepository
+{
+    private readonly ProductionDbContext _dbContext;
+
+    public StockMovementRepository(ProductionDbContext dbContext)
+    {
+        _dbContext = dbContext;
+    }
+
+    public Task AddAsync(StockMovement movement, CancellationToken cancellationToken = default) =>
+        _dbContext.StockMovements.AddAsync(movement, cancellationToken).AsTask();
+
+    public async Task<IReadOnlyList<StockBalanceRow>> GetBalancesAsync(Guid tenantId, CancellationToken cancellationToken = default)
+    {
+        // Pull all movements for the tenant (typically small enough — and the
+        // Stanje page wants everything anyway). Compute Stanje + last-price
+        // per material in-memory; clearer than a DISTINCT ON in LINQ.
+        var rows = await _dbContext.StockMovements
+            .AsNoTracking()
+            .Where(s => s.TenantId == tenantId)
+            .OrderBy(s => s.MovementDate).ThenBy(s => s.CreatedAt)
+            .Select(s => new { s.MaterialId, s.Type, s.Quantity, s.UnitPrice })
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .GroupBy(r => r.MaterialId)
+            .Select(g =>
+            {
+                var qty = g.Sum(r => r.Type == StockMovementType.Ulaz ? r.Quantity : -r.Quantity);
+                // Latest by enumeration order (already sorted ascending) =>
+                // last item is most recent. Saša 08.06.2026: always use last
+                // entered price for Izlaz (no FIFO/LIFO in v1).
+                var latestPrice = g.Last().UnitPrice;
+                return new StockBalanceRow(g.Key, qty, latestPrice);
+            })
+            .ToList();
+    }
+
+    public async Task<decimal?> GetLatestUnitPriceAsync(Guid tenantId, Guid materialId, CancellationToken cancellationToken = default)
+    {
+        return await _dbContext.StockMovements
+            .AsNoTracking()
+            .Where(s => s.TenantId == tenantId && s.MaterialId == materialId)
+            .OrderByDescending(s => s.MovementDate)
+            .ThenByDescending(s => s.CreatedAt)
+            .Select(s => (decimal?)s.UnitPrice)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task<PagedResult<StockMovement>> GetPagedAsync(
+        Guid tenantId,
+        StockMovementType? type,
+        Guid? materialId,
+        string? docRef,
+        DateTime? from,
+        DateTime? to,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken = default)
+    {
+        var q = _dbContext.StockMovements
+            .Include(s => s.Material)
+            .Where(s => s.TenantId == tenantId);
+
+        if (type.HasValue) q = q.Where(s => s.Type == type.Value);
+        if (materialId.HasValue) q = q.Where(s => s.MaterialId == materialId.Value);
+        if (!string.IsNullOrWhiteSpace(docRef))
+        {
+            var ref_ = docRef.ToLower();
+            q = q.Where(s => s.DocumentReference.ToLower().Contains(ref_));
+        }
+        if (from.HasValue)
+        {
+            var f = DateTime.SpecifyKind(from.Value.Date, DateTimeKind.Utc);
+            q = q.Where(s => s.MovementDate >= f);
+        }
+        if (to.HasValue)
+        {
+            var t = DateTime.SpecifyKind(to.Value.Date.AddDays(1).AddTicks(-1), DateTimeKind.Utc);
+            q = q.Where(s => s.MovementDate <= t);
+        }
+
+        return await q.OrderByDescending(s => s.MovementDate)
+                      .ThenByDescending(s => s.CreatedAt)
+                      .ToPagedResultAsync(page, pageSize, cancellationToken);
+    }
+}

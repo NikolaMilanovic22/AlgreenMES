@@ -19,6 +19,7 @@ public class UserRepository : IUserRepository
     {
         return await _dbContext.Users
             .Include(u => u.UserProcesses)
+            .Include(u => u.AdditionalRoles)
             .FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
     }
 
@@ -26,14 +27,17 @@ public class UserRepository : IUserRepository
     {
         return await _dbContext.Users
             .Include(u => u.UserProcesses)
+            .Include(u => u.AdditionalRoles)
             .FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
     }
 
     public async Task<User?> GetByIdIgnoreFiltersAsync(Guid id, CancellationToken cancellationToken = default)
     {
         // Refresh flow runs unauthenticated — bypass HasQueryFilter, caller validates tenant explicitly.
+        // Include AdditionalRoles so the regenerated JWT carries the full role set.
         return await _dbContext.Users
             .IgnoreQueryFilters()
+            .Include(u => u.AdditionalRoles)
             .FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
     }
 
@@ -44,6 +48,7 @@ public class UserRepository : IUserRepository
         return await _dbContext.Users
             .IgnoreQueryFilters()
             .Include(u => u.UserProcesses)
+            .Include(u => u.AdditionalRoles)
             .FirstOrDefaultAsync(u => u.Email == normalizedEmail && u.TenantId == tenantId, cancellationToken);
     }
 
@@ -54,6 +59,7 @@ public class UserRepository : IUserRepository
         return await _dbContext.Users
             .IgnoreQueryFilters()
             .Include(u => u.UserProcesses)
+            .Include(u => u.AdditionalRoles)
             .FirstOrDefaultAsync(u => u.Email == normalizedEmail && u.TenantId == tenantId, cancellationToken);
     }
 
@@ -82,6 +88,7 @@ public class UserRepository : IUserRepository
     {
         return await _dbContext.Users
             .Include(u => u.UserProcesses)
+            .Include(u => u.AdditionalRoles)
             .Where(u => u.TenantId == tenantId && u.IsActive && u.UserProcesses.Any(up => up.ProcessId == processId))
             .ToListAsync(cancellationToken);
     }
@@ -90,6 +97,7 @@ public class UserRepository : IUserRepository
     {
         return await _dbContext.Users
             .Include(u => u.UserProcesses)
+            .Include(u => u.AdditionalRoles)
             .Where(u => u.TenantId == tenantId && u.Role == UserRole.Department && u.IsActive)
             .OrderBy(u => u.LastName).ThenBy(u => u.FirstName)
             .ToListAsync(cancellationToken);

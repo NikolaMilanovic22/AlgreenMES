@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using AlGreenMES.Modules.Production.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AlGreenMES.Modules.Production.Infrastructure.Migrations
 {
     [DbContext(typeof(ProductionDbContext))]
-    partial class ProductionDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260608160358_AddStockMovements")]
+    partial class AddStockMovements
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -31,18 +34,6 @@ namespace AlGreenMES.Modules.Production.Infrastructure.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
-                    b.Property<string>("Category")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
-                        .HasColumnName("category");
-
-                    b.Property<string>("Code")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)")
-                        .HasColumnName("code");
-
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -51,58 +42,70 @@ namespace AlGreenMES.Modules.Production.Infrastructure.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("created_by_user_id");
 
-                    b.Property<decimal?>("DimensionX")
+                    b.Property<decimal?>("DimenzijaX")
                         .HasPrecision(18, 3)
                         .HasColumnType("numeric(18,3)")
-                        .HasColumnName("dimension_x");
+                        .HasColumnName("dimenzija_x");
 
-                    b.Property<decimal?>("DimensionY")
+                    b.Property<decimal?>("DimenzijaY")
                         .HasPrecision(18, 3)
                         .HasColumnType("numeric(18,3)")
-                        .HasColumnName("dimension_y");
+                        .HasColumnName("dimenzija_y");
 
-                    b.Property<decimal?>("DimensionZ")
+                    b.Property<decimal?>("DimenzijaZ")
                         .HasPrecision(18, 3)
                         .HasColumnType("numeric(18,3)")
-                        .HasColumnName("dimension_z");
+                        .HasColumnName("dimenzija_z");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean")
                         .HasColumnName("is_active");
 
-                    b.Property<string>("Location")
+                    b.Property<string>("JedinicaMere")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("jedinica_mere");
+
+                    b.Property<string>("Kategorija")
+                        .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
-                        .HasColumnName("location");
+                        .HasColumnName("kategorija");
 
-                    b.Property<int>("MaxQuantity")
+                    b.Property<string>("Kod")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("kod");
+
+                    b.Property<int>("MaxKolicina")
                         .HasColumnType("integer")
-                        .HasColumnName("max_quantity");
+                        .HasColumnName("max_kolicina");
 
-                    b.Property<int>("MinQuantity")
+                    b.Property<int>("MinKolicina")
                         .HasColumnType("integer")
-                        .HasColumnName("min_quantity");
+                        .HasColumnName("min_kolicina");
 
-                    b.Property<string>("Name")
+                    b.Property<string>("Napomena")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("napomena");
+
+                    b.Property<string>("Naziv")
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)")
-                        .HasColumnName("name");
+                        .HasColumnName("naziv");
 
-                    b.Property<string>("Notes")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)")
-                        .HasColumnName("notes");
+                    b.Property<string>("Pozicija")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("pozicija");
 
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
-
-                    b.Property<string>("Unit")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)")
-                        .HasColumnName("unit");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -115,12 +118,12 @@ namespace AlGreenMES.Modules.Production.Infrastructure.Migrations
                     b.HasKey("Id")
                         .HasName("pk_materials");
 
-                    b.HasIndex("TenantId", "Category")
-                        .HasDatabaseName("ix_materials_tenant_id_category");
+                    b.HasIndex("TenantId", "Kategorija")
+                        .HasDatabaseName("ix_materials_tenant_id_kategorija");
 
-                    b.HasIndex("TenantId", "Code")
+                    b.HasIndex("TenantId", "Kod")
                         .IsUnique()
-                        .HasDatabaseName("ix_materials_tenant_id_code");
+                        .HasDatabaseName("ix_materials_tenant_id_kod");
 
                     b.ToTable("materials", "production");
                 });
@@ -434,10 +437,10 @@ namespace AlGreenMES.Modules.Production.Infrastructure.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("movement_date");
 
-                    b.Property<string>("Notes")
+                    b.Property<string>("Napomena")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)")
-                        .HasColumnName("notes");
+                        .HasColumnName("napomena");
 
                     b.Property<decimal>("Quantity")
                         .HasPrecision(18, 3)
