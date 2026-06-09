@@ -26,6 +26,12 @@ public class StockMovementConfiguration : IEntityTypeConfiguration<StockMovement
             .HasForeignKey(s => s.MaterialId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        builder.HasOne(s => s.Process)
+            .WithMany()
+            .HasForeignKey(s => s.ProcessId)
+            .OnDelete(DeleteBehavior.Restrict)
+            .IsRequired(false);
+
         builder.HasIndex(s => new { s.TenantId, s.MaterialId });
         builder.HasIndex(s => new { s.TenantId, s.MovementDate });
         builder.HasIndex(s => new { s.TenantId, s.DocumentReference });

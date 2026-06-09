@@ -26,7 +26,16 @@ public class StockMovement : AuditableEntity
     public string DocumentReference { get; private set; } = null!;
     public string? Notes { get; private set; }
 
+    /// <summary>
+    /// Optional production process the Izlaz is consumed by. Saša 09.06.2026:
+    /// optional in v1, will become mandatory in a later phase that auto-links
+    /// movements to the corresponding process on the referenced order. Only
+    /// makes sense for Outflow; Inflow always sets this to null.
+    /// </summary>
+    public Guid? ProcessId { get; private set; }
+
     public Material Material { get; private set; } = null!;
+    public Process? Process { get; private set; }
 
     private StockMovement() { }
 
@@ -39,7 +48,8 @@ public class StockMovement : AuditableEntity
         DateTime movementDate,
         string documentReference,
         string? notes,
-        Guid? createdByUserId = null)
+        Guid? createdByUserId = null,
+        Guid? processId = null)
     {
         if (quantity <= 0) throw new DomainException("STOCK_QTY_INVALID", "Količina mora biti veća od 0.");
         if (unitPrice < 0) throw new DomainException("STOCK_PRICE_NEGATIVE", "TotalValue ne sme biti negativna.");
@@ -56,7 +66,8 @@ public class StockMovement : AuditableEntity
             TotalPrice = Math.Round(quantity * unitPrice, 2),
             MovementDate = movementDate == default ? DateTime.UtcNow : movementDate,
             DocumentReference = documentReference.Trim(),
-            Notes = notes?.Trim()
+            Notes = notes?.Trim(),
+            ProcessId = type == StockMovementType.Outflow ? processId : null,
         };
         if (createdByUserId.HasValue) sm.SetCreated(createdByUserId.Value);
         return sm;

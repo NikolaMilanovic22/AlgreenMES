@@ -16,7 +16,8 @@ public record CreateStockEntryCommand(
     DateTime MovementDate,
     string? Notes,
     IReadOnlyList<StockEntryLine> Lines,
-    Guid? CreatedByUserId) : IRequest<IReadOnlyList<StockMovementDto>>;
+    Guid? CreatedByUserId,
+    Guid? ProcessId = null) : IRequest<IReadOnlyList<StockMovementDto>>;
 
 public record StockEntryLine(
     Guid MaterialId,

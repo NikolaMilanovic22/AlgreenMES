@@ -7,7 +7,8 @@ public record CreateStockEntryRequest(
     string DocumentReference,
     DateTime MovementDate,
     string? Notes,
-    IReadOnlyList<StockEntryLineRequest> Lines);
+    IReadOnlyList<StockEntryLineRequest> Lines,
+    Guid? ProcessId = null);
 
 public record StockEntryLineRequest(
     Guid MaterialId,

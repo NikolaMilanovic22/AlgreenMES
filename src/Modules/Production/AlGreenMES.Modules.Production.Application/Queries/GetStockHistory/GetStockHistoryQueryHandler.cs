@@ -25,6 +25,7 @@ public class GetStockHistoryQueryHandler : IRequestHandler<GetStockHistoryQuery,
             s.Id, s.MaterialId, s.Material.Code, s.Material.Name, s.Material.Unit,
             s.Material.Category, s.Material.DimensionX, s.Material.DimensionY, s.Material.DimensionZ,
             s.Type, s.Quantity, s.UnitPrice, s.TotalPrice,
-            s.MovementDate, s.DocumentReference, s.Notes, s.CreatedAt));
+            s.MovementDate, s.DocumentReference, s.Notes, s.CreatedAt,
+            s.ProcessId, s.Process != null ? $"{s.Process.Code} — {s.Process.Name}" : null));
     }
 }

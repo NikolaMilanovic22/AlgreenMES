@@ -72,7 +72,8 @@ public class WarehouseController : ControllerBase
             request.MovementDate,
             request.Notes,
             request.Lines.Select(l => new StockEntryLine(l.MaterialId, l.Quantity, l.UnitPrice, l.Notes)).ToList(),
-            _currentUser.GetCurrentUserId()), cancellationToken);
+            _currentUser.GetCurrentUserId(),
+            request.ProcessId), cancellationToken);
         return Ok(result);
     }
 }

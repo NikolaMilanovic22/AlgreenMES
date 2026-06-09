@@ -82,7 +82,8 @@ public class CreateStockEntryCommandHandler : IRequestHandler<CreateStockEntryCo
                 request.MovementDate,
                 request.DocumentReference,
                 line.Notes ?? request.Notes,
-                request.CreatedByUserId);
+                request.CreatedByUserId,
+                request.ProcessId);
 
             await _stockRepo.AddAsync(movement, cancellationToken);
             movements.Add(movement);
@@ -90,7 +91,8 @@ public class CreateStockEntryCommandHandler : IRequestHandler<CreateStockEntryCo
                 movement.Id, material.Id, material.Code, material.Name, material.Unit,
                 material.Category, material.DimensionX, material.DimensionY, material.DimensionZ,
                 movement.Type, movement.Quantity, movement.UnitPrice, movement.TotalPrice,
-                movement.MovementDate, movement.DocumentReference, movement.Notes, movement.CreatedAt));
+                movement.MovementDate, movement.DocumentReference, movement.Notes, movement.CreatedAt,
+                movement.ProcessId, null));
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);

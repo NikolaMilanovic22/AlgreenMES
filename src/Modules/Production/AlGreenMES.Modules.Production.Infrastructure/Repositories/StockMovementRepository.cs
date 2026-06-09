@@ -94,6 +94,7 @@ public class StockMovementRepository : IStockMovementRepository
     {
         var q = _dbContext.StockMovements
             .Include(s => s.Material)
+            .Include(s => s.Process)
             .Where(s => s.TenantId == tenantId);
 
         if (type.HasValue) q = q.Where(s => s.Type == type.Value);

@@ -19,4 +19,6 @@ public record StockMovementDto(
     DateTime MovementDate,
     string DocumentReference,
     string? Notes,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    Guid? ProcessId,
+    string? ProcessName);
