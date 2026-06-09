@@ -56,6 +56,28 @@ public class StockMovementRepository : IStockMovementRepository
             .FirstOrDefaultAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyDictionary<Guid, decimal>> GetQuantitiesAsync(
+        Guid tenantId,
+        IReadOnlyCollection<Guid> materialIds,
+        CancellationToken cancellationToken = default)
+    {
+        var ids = materialIds.Distinct().ToList();
+        if (ids.Count == 0) return new Dictionary<Guid, decimal>();
+
+        var rows = await _dbContext.StockMovements
+            .AsNoTracking()
+            .Where(s => s.TenantId == tenantId && ids.Contains(s.MaterialId))
+            .GroupBy(s => s.MaterialId)
+            .Select(g => new
+            {
+                MaterialId = g.Key,
+                Quantity = g.Sum(s => s.Type == StockMovementType.Inflow ? s.Quantity : -s.Quantity),
+            })
+            .ToListAsync(cancellationToken);
+
+        return rows.ToDictionary(r => r.MaterialId, r => r.Quantity);
+    }
+
     public async Task<PagedResult<StockMovement>> GetPagedAsync(
         Guid tenantId,
         StockMovementType? type,

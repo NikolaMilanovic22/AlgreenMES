@@ -14,6 +14,12 @@ public interface IStockMovementRepository
     /// <summary>Last unit price entered for a material (any movement type). Null if no movements.</summary>
     Task<decimal?> GetLatestUnitPriceAsync(Guid tenantId, Guid materialId, CancellationToken cancellationToken = default);
 
+    /// <summary>Current on-hand quantity per material (Inflow − Outflow). Materials with no movements omitted.</summary>
+    Task<IReadOnlyDictionary<Guid, decimal>> GetQuantitiesAsync(
+        Guid tenantId,
+        IReadOnlyCollection<Guid> materialIds,
+        CancellationToken cancellationToken = default);
+
     Task<PagedResult<StockMovement>> GetPagedAsync(
         Guid tenantId,
         StockMovementType? type,

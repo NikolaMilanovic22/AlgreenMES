@@ -37,6 +37,29 @@ public class CreateStockEntryCommandHandler : IRequestHandler<CreateStockEntryCo
         if (missing.Count > 0)
             throw new NotFoundException("Material", missing[0]);
 
+        // Izlaz: refuse to take stock below zero. No LOTs / no FIFO yet
+        // (Saša 08.06.2026), but "nedostaje na stanju" still applies.
+        if (request.Type == StockMovementType.Outflow)
+        {
+            var requestedByMaterial = request.Lines
+                .GroupBy(l => l.MaterialId)
+                .ToDictionary(g => g.Key, g => g.Sum(l => l.Quantity));
+            var available = await _stockRepo.GetQuantitiesAsync(
+                request.TenantId, requestedByMaterial.Keys.ToList(), cancellationToken);
+
+            foreach (var (matId, qtyRequested) in requestedByMaterial)
+            {
+                var onHand = available.TryGetValue(matId, out var v) ? v : 0m;
+                if (onHand < qtyRequested)
+                {
+                    var m = materials[matId];
+                    throw new DomainException(
+                        "STOCK_INSUFFICIENT",
+                        $"Nedovoljno na stanju za '{m.Code} — {m.Name}': trenutno {onHand} {m.Unit}, traženo {qtyRequested} {m.Unit}.");
+                }
+            }
+        }
+
         // For Izlaz: if UnitPrice not provided, fall back to latest entered
         // unit price per Saša 08.06.2026 ("totalValue ide uvek zadnja").
         var movements = new List<StockMovement>(request.Lines.Count);
