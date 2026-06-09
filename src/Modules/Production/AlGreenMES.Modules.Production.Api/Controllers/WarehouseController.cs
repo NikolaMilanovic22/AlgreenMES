@@ -1,7 +1,7 @@
 using AlGreenMES.Modules.Production.Api.Requests;
 using AlGreenMES.Modules.Production.Application.Commands.CreateStockEntry;
-using AlGreenMES.Modules.Production.Application.Queries.GetIstorija;
-using AlGreenMES.Modules.Production.Application.Queries.GetStanje;
+using AlGreenMES.Modules.Production.Application.Queries.GetStockHistory;
+using AlGreenMES.Modules.Production.Application.Queries.GetStockBalances;
 using AlGreenMES.Modules.Production.Domain.Enums;
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using MediatR;
@@ -19,13 +19,13 @@ namespace AlGreenMES.Modules.Production.Api.Controllers;
 [ApiController]
 [Route("api/warehouse")]
 [Authorize]
-public class MagacinController : ControllerBase
+public class WarehouseController : ControllerBase
 {
     private readonly IMediator _mediator;
     private readonly ITenantService _tenantService;
     private readonly ICurrentUserService _currentUser;
 
-    public MagacinController(IMediator mediator, ITenantService tenantService, ICurrentUserService currentUser)
+    public WarehouseController(IMediator mediator, ITenantService tenantService, ICurrentUserService currentUser)
     {
         _mediator = mediator;
         _tenantService = tenantService;
@@ -34,15 +34,15 @@ public class MagacinController : ControllerBase
 
     [HttpGet("stock")]
     [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator,Magacioner")]
-    public async Task<IActionResult> GetStanje(CancellationToken cancellationToken)
+    public async Task<IActionResult> GetStockBalances(CancellationToken cancellationToken)
     {
-        var result = await _mediator.Send(new GetStanjeQuery(_tenantService.GetCurrentTenantId()), cancellationToken);
+        var result = await _mediator.Send(new GetStockBalancesQuery(_tenantService.GetCurrentTenantId()), cancellationToken);
         return Ok(result);
     }
 
     [HttpGet("history")]
     [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator,Magacioner")]
-    public async Task<IActionResult> GetIstorija(
+    public async Task<IActionResult> GetStockHistory(
         [FromQuery] StockMovementType? type,
         [FromQuery] Guid? materialId,
         [FromQuery] string? docRef,
@@ -52,10 +52,11 @@ public class MagacinController : ControllerBase
         [FromQuery] int pageSize = 50,
         [FromQuery] string? sortBy = null,
         [FromQuery] string? sortDirection = null,
+        [FromQuery] string? category = null,
         CancellationToken cancellationToken = default)
     {
         var result = await _mediator.Send(
-            new GetIstorijaQuery(_tenantService.GetCurrentTenantId(), type, materialId, docRef, from, to, page, pageSize, sortBy, sortDirection),
+            new GetStockHistoryQuery(_tenantService.GetCurrentTenantId(), type, materialId, docRef, from, to, page, pageSize, sortBy, sortDirection, category),
             cancellationToken);
         return Ok(result);
     }

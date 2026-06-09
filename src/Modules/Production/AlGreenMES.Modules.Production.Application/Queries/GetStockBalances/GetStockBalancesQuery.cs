@@ -1,6 +1,6 @@
 using AlGreenMES.Modules.Production.Application.DTOs;
 using MediatR;
 
-namespace AlGreenMES.Modules.Production.Application.Queries.GetStanje;
+namespace AlGreenMES.Modules.Production.Application.Queries.GetStockBalances;
 
-public record GetStanjeQuery(Guid TenantId) : IRequest<IReadOnlyList<StockBalanceRowDto>>;
+public record GetStockBalancesQuery(Guid TenantId) : IRequest<IReadOnlyList<StockBalanceRowDto>>;

@@ -2,20 +2,20 @@ using AlGreenMES.Modules.Production.Application.DTOs;
 using AlGreenMES.Modules.Production.Domain.Repositories;
 using MediatR;
 
-namespace AlGreenMES.Modules.Production.Application.Queries.GetStanje;
+namespace AlGreenMES.Modules.Production.Application.Queries.GetStockBalances;
 
-public class GetStanjeQueryHandler : IRequestHandler<GetStanjeQuery, IReadOnlyList<StockBalanceRowDto>>
+public class GetStockBalancesQueryHandler : IRequestHandler<GetStockBalancesQuery, IReadOnlyList<StockBalanceRowDto>>
 {
     private readonly IMaterialRepository _materialRepo;
     private readonly IStockMovementRepository _stockRepo;
 
-    public GetStanjeQueryHandler(IMaterialRepository materialRepo, IStockMovementRepository stockRepo)
+    public GetStockBalancesQueryHandler(IMaterialRepository materialRepo, IStockMovementRepository stockRepo)
     {
         _materialRepo = materialRepo;
         _stockRepo = stockRepo;
     }
 
-    public async Task<IReadOnlyList<StockBalanceRowDto>> Handle(GetStanjeQuery request, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<StockBalanceRowDto>> Handle(GetStockBalancesQuery request, CancellationToken cancellationToken)
     {
         var materials = await _materialRepo.GetByTenantIdAsync(request.TenantId, cancellationToken);
         var balances = (await _stockRepo.GetBalancesAsync(request.TenantId, cancellationToken))

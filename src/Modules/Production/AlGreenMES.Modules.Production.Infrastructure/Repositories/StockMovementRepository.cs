@@ -89,6 +89,7 @@ public class StockMovementRepository : IStockMovementRepository
         int pageSize,
         string? sortBy = null,
         string? sortDirection = null,
+        string? category = null,
         CancellationToken cancellationToken = default)
     {
         var q = _dbContext.StockMovements
@@ -97,6 +98,7 @@ public class StockMovementRepository : IStockMovementRepository
 
         if (type.HasValue) q = q.Where(s => s.Type == type.Value);
         if (materialId.HasValue) q = q.Where(s => s.MaterialId == materialId.Value);
+        if (!string.IsNullOrWhiteSpace(category)) q = q.Where(s => s.Material.Category == category);
         if (!string.IsNullOrWhiteSpace(docRef))
         {
             var ref_ = docRef.ToLower();

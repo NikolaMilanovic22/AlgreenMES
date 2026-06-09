@@ -3,9 +3,9 @@ using AlGreenMES.Modules.Production.Application.DTOs;
 using AlGreenMES.Modules.Production.Domain.Enums;
 using MediatR;
 
-namespace AlGreenMES.Modules.Production.Application.Queries.GetIstorija;
+namespace AlGreenMES.Modules.Production.Application.Queries.GetStockHistory;
 
-public record GetIstorijaQuery(
+public record GetStockHistoryQuery(
     Guid TenantId,
     StockMovementType? Type,
     Guid? MaterialId,
@@ -15,4 +15,5 @@ public record GetIstorijaQuery(
     int Page,
     int PageSize,
     string? SortBy = null,
-    string? SortDirection = null) : IRequest<PagedResult<StockMovementDto>>;
+    string? SortDirection = null,
+    string? Category = null) : IRequest<PagedResult<StockMovementDto>>;

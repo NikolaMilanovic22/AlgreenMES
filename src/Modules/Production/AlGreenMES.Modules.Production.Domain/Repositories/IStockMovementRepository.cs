@@ -31,6 +31,7 @@ public interface IStockMovementRepository
         int pageSize,
         string? sortBy = null,
         string? sortDirection = null,
+        string? category = null,
         CancellationToken cancellationToken = default);
 }
 
