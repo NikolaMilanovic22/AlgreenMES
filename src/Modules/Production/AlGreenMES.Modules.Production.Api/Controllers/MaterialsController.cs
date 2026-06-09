@@ -1,5 +1,6 @@
 using AlGreenMES.Modules.Production.Api.Requests;
 using AlGreenMES.Modules.Production.Application.Commands.CreateMaterial;
+using AlGreenMES.Modules.Production.Application.Commands.ImportMaterials;
 using AlGreenMES.Modules.Production.Application.Commands.SetMaterialActive;
 using AlGreenMES.Modules.Production.Application.Commands.UpdateMaterial;
 using AlGreenMES.Modules.Production.Application.Queries.GetMaterial;
@@ -77,6 +78,23 @@ public class MaterialsController : ControllerBase
             request.DimensionX, request.DimensionY, request.DimensionZ,
             request.Location, request.Notes,
             _currentUser.GetCurrentUserId()), cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpPost("import")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,Magacioner")]
+    public async Task<IActionResult> Import([FromBody] ImportMaterialsRequest request, CancellationToken cancellationToken)
+    {
+        var items = request.Items
+            .Select(i => new ImportMaterialItem(
+                i.Code, i.Name, i.Unit, i.Category,
+                i.MinQuantity, i.MaxQuantity,
+                i.DimensionX, i.DimensionY, i.DimensionZ,
+                i.Location, i.Notes))
+            .ToList();
+        var result = await _mediator.Send(
+            new ImportMaterialsCommand(_tenantService.GetCurrentTenantId(), items, _currentUser.GetCurrentUserId()),
+            cancellationToken);
         return Ok(result);
     }
 
