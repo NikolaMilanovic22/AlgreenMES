@@ -1,4 +1,5 @@
 using AlGreenMES.BuildingBlocks.Common.Exceptions;
+using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using AlGreenMES.Modules.Production.Application.DTOs;
 using AlGreenMES.Modules.Production.Application.Interfaces;
 using AlGreenMES.Modules.Production.Domain.Entities;
@@ -13,15 +14,18 @@ public class CreateStockEntryCommandHandler : IRequestHandler<CreateStockEntryCo
     private readonly IMaterialRepository _materialRepo;
     private readonly IStockMovementRepository _stockRepo;
     private readonly IProductionUnitOfWork _unitOfWork;
+    private readonly INotificationCreator _notificationCreator;
 
     public CreateStockEntryCommandHandler(
         IMaterialRepository materialRepo,
         IStockMovementRepository stockRepo,
-        IProductionUnitOfWork unitOfWork)
+        IProductionUnitOfWork unitOfWork,
+        INotificationCreator notificationCreator)
     {
         _materialRepo = materialRepo;
         _stockRepo = stockRepo;
         _unitOfWork = unitOfWork;
+        _notificationCreator = notificationCreator;
     }
 
     public async Task<IReadOnlyList<StockMovementDto>> Handle(CreateStockEntryCommand request, CancellationToken cancellationToken)
@@ -37,19 +41,26 @@ public class CreateStockEntryCommandHandler : IRequestHandler<CreateStockEntryCo
         if (missing.Count > 0)
             throw new NotFoundException("Material", missing[0]);
 
+        // Capture pre-Outflow on-hand so we can detect "crossing below min"
+        // after the save and emit one low-stock notification per crossing.
+        Dictionary<Guid, decimal>? quantitiesBefore = null;
+        Dictionary<Guid, decimal>? outflowByMaterial = null;
+
         // Izlaz: refuse to take stock below zero. No LOTs / no FIFO yet
         // (Saša 08.06.2026), but "nedostaje na stanju" still applies.
         if (request.Type == StockMovementType.Outflow)
         {
-            var requestedByMaterial = request.Lines
+            outflowByMaterial = request.Lines
                 .GroupBy(l => l.MaterialId)
                 .ToDictionary(g => g.Key, g => g.Sum(l => l.Quantity));
             var available = await _stockRepo.GetQuantitiesAsync(
-                request.TenantId, requestedByMaterial.Keys.ToList(), cancellationToken);
+                request.TenantId, outflowByMaterial.Keys.ToList(), cancellationToken);
+            quantitiesBefore = outflowByMaterial.Keys.ToDictionary(id =>
+                id, id => available.TryGetValue(id, out var v) ? v : 0m);
 
-            foreach (var (matId, qtyRequested) in requestedByMaterial)
+            foreach (var (matId, qtyRequested) in outflowByMaterial)
             {
-                var onHand = available.TryGetValue(matId, out var v) ? v : 0m;
+                var onHand = quantitiesBefore[matId];
                 if (onHand < qtyRequested)
                 {
                     var m = materials[matId];
@@ -96,6 +107,51 @@ public class CreateStockEntryCommandHandler : IRequestHandler<CreateStockEntryCo
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // After-save: if this Izlaz pushed any material from at-or-above min
+        // down to below min, emit one MaterialLowStock notification per
+        // crossing. Materials already below min are silent (no spam on every
+        // follow-up Izlaz).
+        //
+        // We send Title/Message in Serbian as a fallback (matches existing
+        // DomainException convention) AND a structured ParamsJson payload —
+        // FE prefers rendering via i18n template keyed on Type using the
+        // params and only falls back to Title/Message when no template exists.
+        if (request.Type == StockMovementType.Outflow && quantitiesBefore is not null && outflowByMaterial is not null)
+        {
+            // NotificationType.MaterialLowStock = 9 (last enum entry, see
+            // Orders.Domain.Enums.NotificationType). Passed as int because
+            // Production cannot reference Orders types.
+            const int materialLowStockType = 9;
+            foreach (var (matId, qtyTaken) in outflowByMaterial)
+            {
+                var before = quantitiesBefore[matId];
+                var after = before - qtyTaken;
+                var material = materials[matId];
+                if (before >= material.MinQuantity && after < material.MinQuantity)
+                {
+                    var paramsJson = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        materialId = material.Id,
+                        code = material.Code,
+                        name = material.Name,
+                        unit = material.Unit,
+                        onHand = after,
+                        min = material.MinQuantity,
+                    });
+                    await _notificationCreator.NotifyManagementAsync(
+                        request.TenantId,
+                        materialLowStockType,
+                        $"Materijal ispod minimuma: {material.Code} — {material.Name}",
+                        $"Stanje materijala '{material.Code} — {material.Name}' je palo ispod minimuma ({after} {material.Unit}, min {material.MinQuantity} {material.Unit}).",
+                        "Material",
+                        material.Id,
+                        paramsJson,
+                        cancellationToken);
+                }
+            }
+        }
+
         return dtos;
     }
 }

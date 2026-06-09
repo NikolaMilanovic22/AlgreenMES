@@ -29,6 +29,9 @@ public class NotificationConfiguration : IEntityTypeConfiguration<Notification>
         builder.Property(n => n.ReferenceType)
             .HasMaxLength(50);
 
+        builder.Property(n => n.ParamsJson)
+            .HasColumnType("jsonb");
+
         builder.Property(n => n.IsRead)
             .IsRequired();
 

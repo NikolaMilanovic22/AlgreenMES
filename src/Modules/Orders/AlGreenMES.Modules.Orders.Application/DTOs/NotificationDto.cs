@@ -11,4 +11,5 @@ public record NotificationDto(
     string? ReferenceType,
     Guid? ReferenceId,
     bool IsRead,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    string? ParamsJson);

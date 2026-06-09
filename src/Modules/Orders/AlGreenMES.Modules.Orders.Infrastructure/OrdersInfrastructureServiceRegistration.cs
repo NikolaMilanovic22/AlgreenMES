@@ -1,4 +1,5 @@
 using AlGreenMES.BuildingBlocks.Common.Interceptors;
+using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using AlGreenMES.Modules.Orders.Application.Interfaces;
 using AlGreenMES.Modules.Orders.Domain.Repositories;
 using AlGreenMES.Modules.Orders.Infrastructure.Persistence;
@@ -64,6 +65,7 @@ public static class OrdersInfrastructureServiceRegistration
         services.AddScoped<IDashboardQueryService, DashboardQueryService>();
         services.AddScoped<IReportingQueryService, ReportingQueryService>();
         services.AddScoped<IUserProcessLookup, UserProcessLookup>();
+        services.AddScoped<INotificationCreator, NotificationCreator>();
 
         return services;
     }

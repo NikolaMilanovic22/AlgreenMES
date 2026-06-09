@@ -10,5 +10,6 @@ public enum NotificationType
     ProcessCompleted,
     ProcessBlocked,
     OrderActivated,
-    WorkerAutoLoggedOut
+    WorkerAutoLoggedOut,
+    MaterialLowStock
 }
