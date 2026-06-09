@@ -8,6 +8,46 @@ Mirrored to `easy-mes-be` (skyhard) — keep both in sync when editing.
 
 ---
 
+## 2026-06-09 — Magacin module polish
+
+### Fixed
+- **Izlaz refuses to take stock below zero**. `CreateStockEntryCommandHandler`
+  now aggregates requested qty per material on Outflow and looks up
+  current on-hand once via `IStockMovementRepository.GetQuantitiesAsync`
+  (new). Throws `DomainException("STOCK_INSUFFICIENT", "Nedovoljno na
+  stanju za 'KOD — NAZIV': trenutno X JM, traženo Y JM.")` on first
+  shortage. No FIFO / no LOTs yet (Saša 08.06.2026), but the basic
+  invariant stays.
+- **`StockMovementDto.MaterialKod` / `MaterialNaziv` → `MaterialCode` /
+  `MaterialName`**. Serbian property names serialized to `materialKod` /
+  `materialNaziv`, which mismatched the FE's `materialCode` /
+  `materialName`. Istorija columns rendered blank until the rename.
+
+### Added
+- **Server-side sort on `GET /warehouse/history`**. `GetStockHistoryQuery`
+  + `IStockMovementRepository.GetPagedAsync` now accept `sortBy` +
+  `sortDirection`. Repository switches on lower-cased field name →
+  movementDate / type / materialCode / materialName / quantity /
+  unitPrice / totalPrice / documentReference / category. Always ties on
+  `CreatedAt desc` for stable ordering. Falls back to
+  `MovementDate desc` for unknown fields.
+- **Category filter on `GET /warehouse/history`**. `GetStockHistoryQuery`
+  + repo + controller take `category` (free-text string match on
+  `Material.Category`). Excel spec explicitly listed "prema kategoriji"
+  under Filteri.
+
+### Refactored
+- **Serbian identifiers → English** in the Production module surface:
+  `MagacinController` → `WarehouseController`; controller actions
+  `GetStanje` → `GetStockBalances`, `GetIstorija` → `GetStockHistory`;
+  query types `GetStanjeQuery` / `GetIstorijaQuery` + handlers +
+  namespaces → `GetStockBalances*` / `GetStockHistory*`. Route URLs
+  (`/warehouse/stock`, `/warehouse/history`) unchanged. Comments still
+  mention Stanje / Ulaz / Izlaz / Istorija / Magacin / prijemnica —
+  those map UI Serbian → English code and stay.
+
+---
+
 ## 2026-06-07 — "Station" rename + quality-of-life batch
 
 ### Refactored
