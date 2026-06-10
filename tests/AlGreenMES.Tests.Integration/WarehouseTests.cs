@@ -46,6 +46,18 @@ public class WarehouseTests : IntegrationTestBase
     private record MaterialResp(Guid Id, string Code, string Name);
     private record StanjeResp(Guid MaterialId, string Code, decimal Quantity, decimal LatestUnitPrice, decimal TotalValue, string Status);
     private record StockMovementResp(Guid Id, decimal UnitPrice);
+    private record StockHistoryRowResp(
+        Guid Id, Guid MaterialId, string MaterialCode, string MaterialName, string Unit,
+        string Category, decimal? DimensionX, decimal? DimensionY, decimal? DimensionZ,
+        string Type, decimal Quantity, decimal UnitPrice, decimal TotalPrice,
+        DateTime MovementDate, string DocumentReference, string? Notes, DateTime CreatedAt,
+        Guid? ProcessId, string? ProcessName);
+    private record HistoryPageResp(IReadOnlyList<StockHistoryRowResp> Items, int TotalCount);
+    private record NotificationRowResp(Guid Id, string Type, string Title, string Message, string? ReferenceType, Guid? ReferenceId, bool IsRead, DateTime CreatedAt, string? ParamsJson);
+    private record NotificationPageResp(IReadOnlyList<NotificationRowResp> Items, int TotalCount);
+    private record ProcessResp(Guid Id, string Code, string Name);
+    private record ImportErrorResp(int RowIndex, string Code, string Reason);
+    private record ImportResultResp(int Created, IReadOnlyList<ImportErrorResp> Errors);
 
     [Fact]
     public async Task Material_Create_then_Get_returns_the_row()
@@ -170,6 +182,277 @@ public class WarehouseTests : IntegrationTestBase
         stanje.Single(s => s.MaterialId == below).Status.Should().Be("BelowMin");
         stanje.Single(s => s.MaterialId == ok).Status.Should().Be("Ok");
         stanje.Single(s => s.MaterialId == above).Status.Should().Be("AboveMax");
+    }
+
+    // ─── Saša 09.06.2026 batch ────────────────────────────────────────
+
+    [Fact]
+    public async Task Outflow_that_would_take_stock_below_zero_is_rejected()
+    {
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        var materialId = await SeedMaterialAsync(client, "M-NEG", min: 0, max: 100);
+
+        // Put 2 on stock.
+        await client.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Inflow", documentReference = "U/1", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 2m, unitPrice = (decimal?)10m, notes = (string?)null } }
+        });
+
+        // Try to take 100.
+        var resp = await client.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Outflow", documentReference = "ORD-X", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 100m, unitPrice = (decimal?)null, notes = (string?)null } }
+        });
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await resp.Content.ReadAsStringAsync();
+        body.Should().Contain("STOCK_INSUFFICIENT");
+        body.Should().Contain("Nedovoljno na stanju");
+
+        // Stock is unchanged.
+        var stanje = (await (await client.GetAsync("/api/warehouse/stock")).Content.ReadFromJsonAsync<List<StanjeResp>>())!;
+        stanje.Single(s => s.MaterialId == materialId).Quantity.Should().Be(2m);
+    }
+
+    [Fact]
+    public async Task History_returns_MaterialCode_and_MaterialName_in_English_DTO_fields()
+    {
+        // Regression guard: StockMovementDto.MaterialCode / MaterialName used
+        // to be MaterialKod / MaterialNaziv and serialized to camelCase Serbian
+        // keys, which the FE never picked up. Don't let that regress.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        var materialId = await SeedMaterialAsync(client, "M-EN", "Profil");
+        await client.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Inflow", documentReference = "U/EN", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 1m, unitPrice = (decimal?)1m, notes = (string?)null } }
+        });
+
+        var page = (await (await client.GetAsync("/api/warehouse/history")).Content.ReadFromJsonAsync<HistoryPageResp>())!;
+        var row = page.Items.Single(r => r.MaterialId == materialId);
+        row.MaterialCode.Should().Be("M-EN");
+        row.MaterialName.Should().Be("Profil");
+    }
+
+    [Fact]
+    public async Task History_filters_by_category()
+    {
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        var mProfile = await SeedMaterialAsync(client, "M-PROFILE");
+        var mGlass = await SeedMaterialAsync(client, "M-GLASS");
+        // Two materials, both in the same seeded category "Test" → swap one's category.
+        await client.PutAsJsonAsync($"/api/materials/{mGlass}", new
+        {
+            name = "Staklo", unit = "kom", category = "Staklo",
+            minQuantity = 0, maxQuantity = 0,
+            dimensionX = (decimal?)null, dimensionY = (decimal?)null, dimensionZ = (decimal?)null,
+            location = (string?)null, notes = (string?)null,
+        });
+
+        await client.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Inflow", documentReference = "U/CAT", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[]
+            {
+                new { materialId = mProfile, quantity = 1m, unitPrice = (decimal?)1m, notes = (string?)null },
+                new { materialId = mGlass, quantity = 1m, unitPrice = (decimal?)1m, notes = (string?)null },
+            }
+        });
+
+        var page = (await (await client.GetAsync("/api/warehouse/history?category=Staklo")).Content.ReadFromJsonAsync<HistoryPageResp>())!;
+        page.Items.Should().OnlyContain(r => r.MaterialId == mGlass);
+        page.Items.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task History_accepts_sortBy_quantity_ascending()
+    {
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        var materialId = await SeedMaterialAsync(client, "M-SORT", min: 0, max: 1000);
+        await client.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Inflow", documentReference = "U/Q", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[]
+            {
+                new { materialId, quantity = 7m, unitPrice = (decimal?)1m, notes = (string?)null },
+                new { materialId, quantity = 1m, unitPrice = (decimal?)1m, notes = (string?)null },
+                new { materialId, quantity = 3m, unitPrice = (decimal?)1m, notes = (string?)null },
+            }
+        });
+
+        var asc = (await (await client.GetAsync("/api/warehouse/history?materialId=" + materialId + "&sortBy=quantity&sortDirection=asc")).Content.ReadFromJsonAsync<HistoryPageResp>())!;
+        asc.Items.Select(i => i.Quantity).Should().ContainInOrder(1m, 3m, 7m);
+
+        var desc = (await (await client.GetAsync("/api/warehouse/history?materialId=" + materialId + "&sortBy=quantity&sortDirection=desc")).Content.ReadFromJsonAsync<HistoryPageResp>())!;
+        desc.Items.Select(i => i.Quantity).Should().ContainInOrder(7m, 3m, 1m);
+    }
+
+    [Fact]
+    public async Task Outflow_persists_optional_ProcessId_and_history_returns_ProcessName()
+    {
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+        var processId = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId, processName: "Krojenje-A");
+
+        var materialId = await SeedMaterialAsync(client, "M-PROC", min: 0, max: 100);
+        await client.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Inflow", documentReference = "U/P", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 10m, unitPrice = (decimal?)5m, notes = (string?)null } }
+        });
+
+        var izlaz = await client.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Outflow", documentReference = "ORD-P", movementDate = DateTime.UtcNow, notes = (string?)null,
+            processId,
+            lines = new[] { new { materialId, quantity = 4m, unitPrice = (decimal?)null, notes = (string?)null } }
+        });
+        izlaz.IsSuccessStatusCode.Should().BeTrue();
+
+        var page = (await (await client.GetAsync("/api/warehouse/history?type=Outflow")).Content.ReadFromJsonAsync<HistoryPageResp>())!;
+        var row = page.Items.Single(r => r.MaterialId == materialId);
+        row.ProcessId.Should().Be(processId);
+        row.ProcessName.Should().Contain("Krojenje-A"); // formatted as "Code — Name", seeded name is "Krojenje-A"
+    }
+
+    [Fact]
+    public async Task Inflow_silently_drops_ProcessId_even_if_caller_sent_one()
+    {
+        // Domain invariant: Inflow never stores a ProcessId. If a misbehaving
+        // client sends one, the entity throws it away.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+        var processId = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId, processName: "Krojenje-B");
+
+        var materialId = await SeedMaterialAsync(client, "M-DROP", min: 0, max: 100);
+        await client.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Inflow", documentReference = "U/D", movementDate = DateTime.UtcNow, notes = (string?)null,
+            processId,
+            lines = new[] { new { materialId, quantity = 5m, unitPrice = (decimal?)1m, notes = (string?)null } }
+        });
+
+        var page = (await (await client.GetAsync("/api/warehouse/history?type=Inflow")).Content.ReadFromJsonAsync<HistoryPageResp>())!;
+        var row = page.Items.Single(r => r.MaterialId == materialId);
+        row.ProcessId.Should().BeNull();
+        row.ProcessName.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task MaterialLowStock_notification_is_created_when_outflow_crosses_min()
+    {
+        // Seed a tenant + an Admin (issuer) + a Coordinator (recipient).
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var adminClient = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+        var (coordId, coordEmail, coordPw) = await TestDataSeeder.SeedAdditionalUserWithCredsAsync(Factory, t.TenantId, UserRole.Coordinator);
+        var coordClient = Factory.CreateClient();
+        var coordToken = await TestDataSeeder.LoginAndGetTokenAsync(coordClient, coordEmail, coordPw, t.TenantCode);
+        coordClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", coordToken);
+
+        var materialId = await SeedMaterialAsync(adminClient, "M-LOW", min: 5, max: 100);
+        // Put 10 on stock.
+        await adminClient.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Inflow", documentReference = "U/L", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 10m, unitPrice = (decimal?)5m, notes = (string?)null } }
+        });
+
+        // Take 7 → on-hand 3 → crosses below min=5.
+        var izlaz = await adminClient.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Outflow", documentReference = "ORD-L", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 7m, unitPrice = (decimal?)null, notes = (string?)null } }
+        });
+        izlaz.IsSuccessStatusCode.Should().BeTrue();
+
+        // Coordinator should now see a MaterialLowStock notification.
+        var notif = (await (await coordClient.GetAsync("/api/notifications")).Content.ReadFromJsonAsync<NotificationPageResp>())!;
+        var low = notif.Items.FirstOrDefault(n => n.Type == "MaterialLowStock");
+        low.Should().NotBeNull("crossing-below-min should emit a notification");
+        low!.ReferenceType.Should().Be("Material");
+        low.ReferenceId.Should().Be(materialId);
+        low.ParamsJson.Should().NotBeNull();
+        // jsonb storage normalises spacing; parse instead of substring-matching.
+        using var doc = System.Text.Json.JsonDocument.Parse(low.ParamsJson!);
+        doc.RootElement.GetProperty("code").GetString().Should().Be("M-LOW");
+        doc.RootElement.GetProperty("min").GetInt32().Should().Be(5);
+        doc.RootElement.GetProperty("onHand").GetDecimal().Should().Be(3m);
+        doc.RootElement.GetProperty("name").GetString().Should().NotBeNullOrEmpty();
+        doc.RootElement.GetProperty("unit").GetString().Should().Be("kom");
+    }
+
+    [Fact]
+    public async Task MaterialLowStock_is_NOT_created_when_material_was_already_below_min()
+    {
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var adminClient = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+        var (_, coordEmail, coordPw) = await TestDataSeeder.SeedAdditionalUserWithCredsAsync(Factory, t.TenantId, UserRole.Coordinator);
+        var coordClient = Factory.CreateClient();
+        var coordToken = await TestDataSeeder.LoginAndGetTokenAsync(coordClient, coordEmail, coordPw, t.TenantCode);
+        coordClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", coordToken);
+
+        var materialId = await SeedMaterialAsync(adminClient, "M-LOW2", min: 5, max: 100);
+        // Put 10, take 7 — first crossing fires one notification.
+        await adminClient.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Inflow", documentReference = "U/L2", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 10m, unitPrice = (decimal?)5m, notes = (string?)null } }
+        });
+        await adminClient.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Outflow", documentReference = "ORD-L2A", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 7m, unitPrice = (decimal?)null, notes = (string?)null } }
+        });
+        // Take 2 more — already below min, no second notification.
+        await adminClient.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Outflow", documentReference = "ORD-L2B", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 2m, unitPrice = (decimal?)null, notes = (string?)null } }
+        });
+
+        var notif = (await (await coordClient.GetAsync("/api/notifications?pageSize=50")).Content.ReadFromJsonAsync<NotificationPageResp>())!;
+        var lowForThisMaterial = notif.Items
+            .Where(n => n.Type == "MaterialLowStock" && n.ReferenceId == materialId)
+            .ToList();
+        lowForThisMaterial.Should().HaveCount(1, "the second Izlaz did not cross — it took from an already-below-min position");
+    }
+
+    [Fact]
+    public async Task Materials_import_creates_valid_rows_and_reports_errors()
+    {
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        // Seed one existing material so we can verify the DB-duplicate path.
+        await SeedMaterialAsync(client, "M-EXISTS");
+
+        var resp = await client.PostAsJsonAsync("/api/materials/import", new
+        {
+            items = new object[]
+            {
+                new { code = "I-1", name = "Imported 1", unit = "kom", category = "Profil", minQuantity = 0, maxQuantity = 10, dimensionX = (decimal?)null, dimensionY = (decimal?)null, dimensionZ = (decimal?)null, location = (string?)null, notes = (string?)null },
+                new { code = "I-2", name = "Imported 2", unit = "kom", category = "Profil", minQuantity = 0, maxQuantity = 10, dimensionX = (decimal?)null, dimensionY = (decimal?)null, dimensionZ = (decimal?)null, location = (string?)null, notes = (string?)null },
+                new { code = "I-1", name = "DUP IN BATCH", unit = "kom", category = "Profil", minQuantity = 0, maxQuantity = 10, dimensionX = (decimal?)null, dimensionY = (decimal?)null, dimensionZ = (decimal?)null, location = (string?)null, notes = (string?)null },
+                new { code = "M-EXISTS", name = "DUP IN DB", unit = "kom", category = "Profil", minQuantity = 0, maxQuantity = 10, dimensionX = (decimal?)null, dimensionY = (decimal?)null, dimensionZ = (decimal?)null, location = (string?)null, notes = (string?)null },
+                new { code = "  ", name = "EMPTY CODE", unit = "kom", category = "Profil", minQuantity = 0, maxQuantity = 10, dimensionX = (decimal?)null, dimensionY = (decimal?)null, dimensionZ = (decimal?)null, location = (string?)null, notes = (string?)null },
+            }
+        });
+        resp.IsSuccessStatusCode.Should().BeTrue();
+        var result = (await resp.Content.ReadFromJsonAsync<ImportResultResp>())!;
+        result.Created.Should().Be(2, "I-1 and I-2 are valid; the rest fail");
+        result.Errors.Should().HaveCount(3);
+        result.Errors.Should().Contain(e => e.Code == "I-1" && e.Reason.Contains("Duplikat"));
+        result.Errors.Should().Contain(e => e.Code == "M-EXISTS" && e.Reason.Contains("postoji"));
+        result.Errors.Should().Contain(e => e.Reason.Contains("prazan"));
     }
 
     [Fact]
