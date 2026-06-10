@@ -427,6 +427,136 @@ public class WarehouseTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task MaterialLowStock_fires_again_after_reset_above_min_then_crossing_back()
+    {
+        // Crossing #1 → 1 notification. Refill above min. Crossing #2 → must
+        // fire a second notification. Anti-spam should only suppress when the
+        // material is already below min — not after a genuine reset.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var adminClient = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+        var (_, coordEmail, coordPw) = await TestDataSeeder.SeedAdditionalUserWithCredsAsync(Factory, t.TenantId, UserRole.Coordinator);
+        var coordClient = Factory.CreateClient();
+        var coordToken = await TestDataSeeder.LoginAndGetTokenAsync(coordClient, coordEmail, coordPw, t.TenantCode);
+        coordClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", coordToken);
+
+        var materialId = await SeedMaterialAsync(adminClient, "M-RESET", min: 5, max: 100);
+
+        // Cycle 1: in 10, out 7 → 3 (below min) → notification #1
+        await adminClient.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Inflow", documentReference = "U/R1", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 10m, unitPrice = (decimal?)5m, notes = (string?)null } }
+        });
+        await adminClient.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Outflow", documentReference = "ORD-R1", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 7m, unitPrice = (decimal?)null, notes = (string?)null } }
+        });
+        // Cycle 2: in 10 → 13 (above min, no notification), out 9 → 4 (below min) → notification #2
+        await adminClient.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Inflow", documentReference = "U/R2", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 10m, unitPrice = (decimal?)5m, notes = (string?)null } }
+        });
+        await adminClient.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Outflow", documentReference = "ORD-R2", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 9m, unitPrice = (decimal?)null, notes = (string?)null } }
+        });
+
+        var notif = (await (await coordClient.GetAsync("/api/notifications?pageSize=50")).Content.ReadFromJsonAsync<NotificationPageResp>())!;
+        notif.Items
+            .Where(n => n.Type == "MaterialLowStock" && n.ReferenceId == materialId)
+            .Should().HaveCount(2, "each genuine crossing below min must emit a notification");
+    }
+
+    [Fact]
+    public async Task MaterialLowStock_fans_out_to_every_management_user_in_the_tenant()
+    {
+        // Seed Admin (issuer) + a Manager + a SuperAdmin + (Coordinator is the
+        // primary seeded with the tenant). All four are "management" per
+        // NotificationCreator.ManagementRoles and must receive the notification.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Coordinator);
+        var coordClient = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        var (_, adminEmail, adminPw) = await TestDataSeeder.SeedAdditionalUserWithCredsAsync(Factory, t.TenantId, UserRole.Admin);
+        var adminClient = Factory.CreateClient();
+        adminClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer", await TestDataSeeder.LoginAndGetTokenAsync(adminClient, adminEmail, adminPw, t.TenantCode));
+
+        var (_, managerEmail, managerPw) = await TestDataSeeder.SeedAdditionalUserWithCredsAsync(Factory, t.TenantId, UserRole.Manager);
+        var managerClient = Factory.CreateClient();
+        managerClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer", await TestDataSeeder.LoginAndGetTokenAsync(managerClient, managerEmail, managerPw, t.TenantCode));
+
+        var (_, superEmail, superPw) = await TestDataSeeder.SeedAdditionalUserWithCredsAsync(Factory, t.TenantId, UserRole.SuperAdmin);
+        var superClient = Factory.CreateClient();
+        superClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer", await TestDataSeeder.LoginAndGetTokenAsync(superClient, superEmail, superPw, t.TenantCode));
+
+        // Admin issues the Inflow + Outflow (Coordinator can't POST entries).
+        var materialId = await SeedMaterialAsync(adminClient, "M-FANOUT", min: 5, max: 100);
+        await adminClient.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Inflow", documentReference = "U/F", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 10m, unitPrice = (decimal?)5m, notes = (string?)null } }
+        });
+        await adminClient.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Outflow", documentReference = "ORD-F", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 7m, unitPrice = (decimal?)null, notes = (string?)null } }
+        });
+
+        async Task<int> CountForAsync(HttpClient c)
+        {
+            var p = (await (await c.GetAsync("/api/notifications?pageSize=50")).Content.ReadFromJsonAsync<NotificationPageResp>())!;
+            return p.Items.Count(n => n.Type == "MaterialLowStock" && n.ReferenceId == materialId);
+        }
+
+        (await CountForAsync(coordClient)).Should().Be(1, "Coordinator is management");
+        (await CountForAsync(adminClient)).Should().Be(1, "Admin is management (issuer also receives)");
+        (await CountForAsync(managerClient)).Should().Be(1, "Manager is management");
+        (await CountForAsync(superClient)).Should().Be(1, "SuperAdmin is management");
+    }
+
+    [Fact]
+    public async Task MaterialLowStock_does_NOT_reach_SalesManager_or_Department()
+    {
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var adminClient = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        var (_, salesEmail, salesPw) = await TestDataSeeder.SeedAdditionalUserWithCredsAsync(Factory, t.TenantId, UserRole.SalesManager);
+        var salesClient = Factory.CreateClient();
+        salesClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer", await TestDataSeeder.LoginAndGetTokenAsync(salesClient, salesEmail, salesPw, t.TenantCode));
+
+        var (_, deptEmail, deptPw) = await TestDataSeeder.SeedAdditionalUserWithCredsAsync(Factory, t.TenantId, UserRole.Department);
+        var deptClient = Factory.CreateClient();
+        deptClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer", await TestDataSeeder.LoginAndGetTokenAsync(deptClient, deptEmail, deptPw, t.TenantCode));
+
+        var materialId = await SeedMaterialAsync(adminClient, "M-NOFAN", min: 5, max: 100);
+        await adminClient.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Inflow", documentReference = "U/N", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 10m, unitPrice = (decimal?)5m, notes = (string?)null } }
+        });
+        await adminClient.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Outflow", documentReference = "ORD-N", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 7m, unitPrice = (decimal?)null, notes = (string?)null } }
+        });
+
+        var salesNotif = (await (await salesClient.GetAsync("/api/notifications?pageSize=50")).Content.ReadFromJsonAsync<NotificationPageResp>())!;
+        salesNotif.Items.Should().NotContain(n => n.Type == "MaterialLowStock" && n.ReferenceId == materialId,
+            "SalesManager is not in the management role set");
+
+        var deptNotif = (await (await deptClient.GetAsync("/api/notifications?pageSize=50")).Content.ReadFromJsonAsync<NotificationPageResp>())!;
+        deptNotif.Items.Should().NotContain(n => n.Type == "MaterialLowStock" && n.ReferenceId == materialId,
+            "Department worker is not in the management role set");
+    }
+
+    [Fact]
     public async Task Materials_import_creates_valid_rows_and_reports_errors()
     {
         var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
