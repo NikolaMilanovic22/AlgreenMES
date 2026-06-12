@@ -24,8 +24,15 @@ public class AuthController : ControllerBase
     [EnableRateLimiting("auth-login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken cancellationToken)
     {
+        // Capture the originating IP + UA for the login-attempt audit log.
+        // Behind nginx the real client IP lives in X-Forwarded-For; fall
+        // back to the socket address for direct calls (tests, internal).
+        var ip = HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim()
+            ?? HttpContext.Connection.RemoteIpAddress?.ToString();
+        var userAgent = HttpContext.Request.Headers.UserAgent.ToString();
+
         var result = await _mediator.Send(
-            new LoginCommand(request.Email, request.Password, request.TenantCode),
+            new LoginCommand(request.Email, request.Password, request.TenantCode, ip, userAgent),
             cancellationToken);
 
         return Ok(result);

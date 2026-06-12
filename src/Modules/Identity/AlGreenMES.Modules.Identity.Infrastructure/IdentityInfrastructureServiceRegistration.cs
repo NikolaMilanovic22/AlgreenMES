@@ -45,6 +45,7 @@ public static class IdentityInfrastructureServiceRegistration
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddScoped<IShiftRepository, ShiftRepository>();
         services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
+        services.AddScoped<ILoginAttemptRepository, LoginAttemptRepository>();
 
         services.AddScoped<IPasswordHasher, PasswordHasher>();
         services.AddScoped<IJwtTokenService, JwtTokenService>();
