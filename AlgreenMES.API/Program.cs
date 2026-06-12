@@ -219,6 +219,7 @@ public class Program
             // Background services
             builder.Services.AddHostedService<DeadlineWarningService>();
             builder.Services.AddHostedService<AutoLogoutBackgroundService>();
+            builder.Services.AddHostedService<LoginAttemptRetentionService>();
 
             // Module registrations
             builder.Services.AddTenancyModule(builder.Configuration);
