@@ -16,6 +16,7 @@ public class IdentityDbContext : DbContext, IIdentityUnitOfWork
     public DbSet<Shift> Shifts => Set<Shift>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<LoginAttempt> LoginAttempts => Set<LoginAttempt>();
+    public DbSet<UserRoleChangeLog> UserRoleChangeLogs => Set<UserRoleChangeLog>();
 
     public IdentityDbContext(DbContextOptions<IdentityDbContext> options, ICurrentUserService currentUser)
         : base(options)

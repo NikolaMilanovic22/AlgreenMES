@@ -13,17 +13,20 @@ public class UpdateUserCommandHandler : IRequestHandler<UpdateUserCommand, UserD
 {
     private readonly IUserRepository _userRepository;
     private readonly IRefreshTokenRepository _refreshTokenRepository;
+    private readonly IUserRoleChangeLogRepository _roleChangeLogRepository;
     private readonly IIdentityUnitOfWork _unitOfWork;
     private readonly ICurrentUserService _currentUser;
 
     public UpdateUserCommandHandler(
         IUserRepository userRepository,
         IRefreshTokenRepository refreshTokenRepository,
+        IUserRoleChangeLogRepository roleChangeLogRepository,
         IIdentityUnitOfWork unitOfWork,
         ICurrentUserService currentUser)
     {
         _userRepository = userRepository;
         _refreshTokenRepository = refreshTokenRepository;
+        _roleChangeLogRepository = roleChangeLogRepository;
         _unitOfWork = unitOfWork;
         _currentUser = currentUser;
     }
@@ -86,6 +89,19 @@ public class UpdateUserCommandHandler : IRequestHandler<UpdateUserCommand, UserD
         // so the affected user can't keep an old-role session alive via refresh.
         if (isRoleChange || request.AdditionalRoles != null)
             await _refreshTokenRepository.RevokeAllForUserAsync(user.Id, cancellationToken);
+
+        // F-9 — primary role transition history. Captures the (old, new,
+        // who, when) tuple so an investigator can reconstruct the role
+        // trajectory of a user. AdditionalRoles changes intentionally not
+        // logged here — the F-9 spec is keyed on the single primary role,
+        // and a separate audit table for the multi-role set is out of scope.
+        if (isRoleChange)
+        {
+            var changedByUserId = _currentUser.GetCurrentUserId();
+            var logEntry = UserRoleChangeLog.Create(
+                user.TenantId, user.Id, oldRole, request.Role, changedByUserId, DateTime.UtcNow);
+            await _roleChangeLogRepository.AddAsync(logEntry, cancellationToken);
+        }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
