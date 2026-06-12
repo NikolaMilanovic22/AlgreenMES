@@ -31,8 +31,12 @@ public class CreateUserCommandHandler : IRequestHandler<CreateUserCommand, UserD
 
     public async Task<UserDto> Handle(CreateUserCommand request, CancellationToken cancellationToken)
     {
-        if (request.Role == UserRole.SuperAdmin && !_currentUser.IsInRole("SuperAdmin"))
-            throw new DomainException("FORBIDDEN_ROLE_ASSIGNMENT", "Only SuperAdmin can grant the SuperAdmin role.");
+        // SuperAdmin is platform-level and only granted via direct DB
+        // insert (Milos 12.06.2026). Reject all API attempts to create a
+        // SuperAdmin user, including when the caller is themselves a
+        // SuperAdmin — initial seeding goes through SQL, not this path.
+        if (request.Role == UserRole.SuperAdmin)
+            throw new DomainException("FORBIDDEN_ROLE_ASSIGNMENT", "The SuperAdmin role can only be granted directly in the database.");
 
         var emailExists = await _userRepository.ExistsByEmailAsync(request.Email, request.TenantId, cancellationToken);
         if (emailExists)

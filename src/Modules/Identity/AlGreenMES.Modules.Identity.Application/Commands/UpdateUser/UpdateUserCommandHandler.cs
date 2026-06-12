@@ -47,11 +47,16 @@ public class UpdateUserCommandHandler : IRequestHandler<UpdateUserCommand, UserD
         if (isRoleChange && !isCallerSuperAdmin)
             throw new ForbiddenException("FORBIDDEN_ROLE_CHANGE", "Only SuperAdmin can change a user's role.");
 
-        // Belt-and-suspenders: block escalation to / demotion of SuperAdmin
-        // by non-SuperAdmin (already covered above but kept explicit in case
-        // F-7 is ever relaxed).
-        if ((request.Role == UserRole.SuperAdmin || user.Role == UserRole.SuperAdmin) && !isCallerSuperAdmin)
-            throw new ForbiddenException("FORBIDDEN_ROLE_ASSIGNMENT", "Only SuperAdmin can grant or revoke the SuperAdmin role.");
+        // SuperAdmin is platform-level and may only be granted/revoked
+        // directly in the database (Milos 12.06.2026 — "that option nobody
+        // can grant, it is granted only directly in DB"). Block any role
+        // CHANGE that crosses the SuperAdmin boundary on either side, even
+        // when the caller is a SuperAdmin — otherwise a compromised
+        // SuperAdmin session could quietly demote or promote others.
+        // Name/email/active updates on a SuperAdmin user are still allowed
+        // (oldRole == newRole == SuperAdmin → not a role change).
+        if (isRoleChange && (request.Role == UserRole.SuperAdmin || oldRole == UserRole.SuperAdmin))
+            throw new ForbiddenException("FORBIDDEN_ROLE_ASSIGNMENT", "The SuperAdmin role can only be granted or revoked directly in the database.");
 
         // Sprint 3.0 F-1 — refuse to demote the last active Admin in a tenant.
         // Tenant lockout is the exact scenario that bit easy-mes (see
