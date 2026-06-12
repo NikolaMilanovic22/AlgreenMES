@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json.Serialization;
+using System.Threading.RateLimiting;
 using AlgreenMES.API.Middleware;
 using AlgreenMES.API.Services;
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
@@ -161,6 +162,50 @@ public class Program
                     policy.RequireClaim(System.Security.Claims.ClaimTypes.Role, "SuperAdmin"));
             });
 
+            // Rate limiting — first defense against credential-stuffing /
+            // brute-force on the auth surface. Per-IP fixed window keyed off
+            // X-Forwarded-For (nginx puts the real client there) with a
+            // fallback to the socket address.
+            //
+            // The "auth-login" policy is attached to AuthController endpoints
+            // via [EnableRateLimiting] attributes; password change/reset run
+            // under an already-authenticated session and aren't the public
+            // attack surface so they're not gated here.
+            //
+            // In the integration-test environment the limiter is effectively
+            // disabled (very high permit limit) because every test hits the
+            // same localhost partition key and would otherwise share one
+            // 10-attempt bucket across the entire test run.
+            var isTestEnvironment = builder.Environment.EnvironmentName == "Test";
+            builder.Services.AddRateLimiter(options =>
+            {
+                options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+                static string PartitionByForwardedIp(HttpContext ctx)
+                {
+                    var fwd = ctx.Request.Headers["X-Forwarded-For"].FirstOrDefault();
+                    if (!string.IsNullOrWhiteSpace(fwd))
+                    {
+                        // X-Forwarded-For can be a comma-separated list; the
+                        // first entry is the originating client.
+                        var first = fwd.Split(',')[0].Trim();
+                        if (!string.IsNullOrWhiteSpace(first)) return first;
+                    }
+                    return ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                }
+
+                options.AddPolicy("auth-login", ctx =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        partitionKey: PartitionByForwardedIp(ctx),
+                        factory: _ => new FixedWindowRateLimiterOptions
+                        {
+                            PermitLimit = isTestEnvironment ? int.MaxValue : 10,
+                            Window = TimeSpan.FromMinutes(5),
+                            QueueLimit = 0,
+                            AutoReplenishment = true,
+                        }));
+            });
+
             // Current user / tenant resolution from JWT
             builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
             builder.Services.AddScoped<ITenantService, TenantService>();
@@ -272,6 +317,7 @@ public class Program
             }
 
             app.UseHttpsRedirection();
+            app.UseMiddleware<SecurityHeadersMiddleware>();
             app.UseCors(CorsPolicyName);
             // UseSerilogRequestLogging sits OUTSIDE auth so it captures every
             // response — including 401/403 short-circuits from UseAuthorization.
@@ -329,6 +375,7 @@ public class Program
             });
             app.UseAuthentication();
             app.UseAuthorization();
+            app.UseRateLimiter();
             app.UseMiddleware<SerilogEnrichmentMiddleware>();
             app.UseMiddleware<SentryEnrichmentMiddleware>();
             app.MapControllers();

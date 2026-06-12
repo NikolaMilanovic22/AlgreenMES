@@ -3,6 +3,7 @@ using AlGreenMES.Modules.Identity.Application.Commands.Login;
 using AlGreenMES.Modules.Identity.Application.Commands.RefreshToken;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace AlGreenMES.Modules.Identity.Api.Controllers;
 
@@ -17,7 +18,10 @@ public class AuthController : ControllerBase
         _mediator = mediator;
     }
 
+    // 10 attempts per client IP per 5 min. Returns 429 once exceeded so the
+    // FE can show "too many attempts" instead of "wrong password" forever.
     [HttpPost("login")]
+    [EnableRateLimiting("auth-login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -28,6 +32,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("refresh")]
+    [EnableRateLimiting("auth-login")]
     public async Task<IActionResult> Refresh([FromBody] RefreshTokenRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(

@@ -9,6 +9,6 @@ public class ChangePasswordCommandValidator : AbstractValidator<ChangePasswordCo
     {
         RuleFor(x => x.UserId).NotEmpty();
         RuleFor(x => x.CurrentPassword).NotEmpty();
-        RuleFor(x => x.NewPassword).NotEmpty().MinimumLength(6).MaximumLength(100);
+        PasswordRule.Apply(RuleFor(x => x.NewPassword));
     }
 }
