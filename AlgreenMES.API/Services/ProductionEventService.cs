@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using AlGreenMES.Modules.Identity.Domain.Entities;
 using AlGreenMES.Modules.Identity.Domain.Repositories;
@@ -45,6 +46,7 @@ public class ProductionEventService : IProductionEventService
 
         var title = "Nova narudžbina";
         var message = $"Narudžbina #{evt.OrderNumber} je aktivirana";
+        var paramsJson = JsonSerializer.Serialize(new { orderNumber = evt.OrderNumber });
 
         await _webPushService.SendToTenantAsync(evt.TenantId, title, message,
             new { type = "OrderActivated", evt.OrderId, evt.OrderNumber },
@@ -53,7 +55,7 @@ public class ProductionEventService : IProductionEventService
         // Create in-app notifications for ALL active users (dashboard + workers)
         await CreateNotificationsForAllUsersAsync(evt.TenantId,
             NotificationType.OrderActivated, title, message,
-            "Order", evt.OrderId, cancellationToken);
+            "Order", evt.OrderId, cancellationToken, paramsJson);
     }
 
     public async Task NotifyProcessStartedAsync(ProcessStartedEvent evt, CancellationToken cancellationToken = default)
@@ -77,7 +79,8 @@ public class ProductionEventService : IProductionEventService
             NotificationType.ProcessCompleted,
             "Proces završen",
             $"Narudžbina #{evt.OrderNumber} — proces je završen",
-            "Order", evt.OrderId, cancellationToken);
+            "Order", evt.OrderId, cancellationToken,
+            JsonSerializer.Serialize(new { orderNumber = evt.OrderNumber }));
     }
 
     public async Task NotifyProcessBlockedAsync(ProcessBlockedEvent evt, CancellationToken cancellationToken = default)
@@ -98,7 +101,8 @@ public class ProductionEventService : IProductionEventService
             NotificationType.ProcessBlocked,
             "Proces blokiran",
             $"Narudžbina #{evt.OrderNumber} — proces blokiran: {evt.Reason}",
-            "Order", evt.OrderId, cancellationToken);
+            "Order", evt.OrderId, cancellationToken,
+            JsonSerializer.Serialize(new { orderNumber = evt.OrderNumber, reason = evt.Reason }));
     }
 
     public async Task NotifyProcessUnblockedAsync(ProcessUnblockedEvent evt, CancellationToken cancellationToken = default)
@@ -119,7 +123,8 @@ public class ProductionEventService : IProductionEventService
             NotificationType.BlockRequest,
             "Novi zahtev za blokadu",
             "Novi zahtev za blokadu je poslat na pregled",
-            "BlockRequest", evt.BlockRequestId, cancellationToken);
+            "BlockRequest", evt.BlockRequestId, cancellationToken,
+            "{}");
     }
 
     public async Task NotifyBlockRequestApprovedAsync(BlockRequestApprovedEvent evt, CancellationToken cancellationToken = default)
@@ -139,12 +144,13 @@ public class ProductionEventService : IProductionEventService
         await CreateNotificationsForDashboardUsersAsync(evt.TenantId,
             NotificationType.BlockRequestApproved,
             title, message,
-            "BlockRequest", evt.BlockRequestId, cancellationToken);
+            "BlockRequest", evt.BlockRequestId, cancellationToken,
+            "{}");
 
         // Also notify the requesting worker
         var workerNotification = Notification.Create(evt.TenantId, evt.RequestedByUserId,
             NotificationType.BlockRequestApproved, title, message,
-            "BlockRequest", evt.BlockRequestId);
+            "BlockRequest", evt.BlockRequestId, "{}");
         await _notificationRepository.AddAsync(workerNotification, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
         await _notificationBroadcaster.BroadcastNotificationCreatedAsync(evt.TenantId, cancellationToken);
@@ -163,10 +169,18 @@ public class ProductionEventService : IProductionEventService
             new { type = "BlockRequestRejected", evt.BlockRequestId },
             cancellationToken);
 
-        // Create in-app notification for the requesting worker
+        // Create in-app notification for the requesting worker. paramsJson
+        // uses i18next's context mechanism so the FE picks .message vs
+        // .message_withNote based on whether the note is present.
+        var hasNote = !string.IsNullOrWhiteSpace(evt.RejectionNote);
+        var paramsJson = JsonSerializer.Serialize(new
+        {
+            rejectionNote = evt.RejectionNote ?? string.Empty,
+            context = hasNote ? "withNote" : null,
+        });
         var notification = Notification.Create(evt.TenantId, evt.RequestedByUserId,
             NotificationType.BlockRequestRejected, title, message,
-            "BlockRequest", evt.BlockRequestId);
+            "BlockRequest", evt.BlockRequestId, paramsJson);
         await _notificationRepository.AddAsync(notification, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
         await _notificationBroadcaster.BroadcastNotificationCreatedAsync(evt.TenantId, cancellationToken);
@@ -197,6 +211,7 @@ public class ProductionEventService : IProductionEventService
 
         var title = "Auto-odjava";
         var message = $"Radnik {workerName} automatski je odjavljen.";
+        var paramsJson = JsonSerializer.Serialize(new { workerName });
 
         var allUsers = await _userRepository.GetByTenantIdAsync(evt.TenantId, cancellationToken);
         var dashboardUserIds = allUsers
@@ -208,7 +223,7 @@ public class ProductionEventService : IProductionEventService
         {
             var notification = Notification.Create(evt.TenantId, userId,
                 NotificationType.WorkerAutoLoggedOut, title, message,
-                "WorkSession", evt.SessionId);
+                "WorkSession", evt.SessionId, paramsJson);
             await _notificationRepository.AddAsync(notification, cancellationToken);
         }
         await _unitOfWork.SaveChangesAsync(cancellationToken);
@@ -251,10 +266,11 @@ public class ProductionEventService : IProductionEventService
         var notificationType = evt.Level == "Critical"
             ? NotificationType.DeadlineCritical
             : NotificationType.DeadlineWarning;
+        var paramsJson = JsonSerializer.Serialize(new { orderNumber = evt.OrderNumber, daysRemaining = evt.DaysRemaining });
 
         foreach (var userId in targetUserIds)
         {
-            var notification = Notification.Create(evt.TenantId, userId, notificationType, title, message, "Order", evt.OrderId);
+            var notification = Notification.Create(evt.TenantId, userId, notificationType, title, message, "Order", evt.OrderId, paramsJson);
             await _notificationRepository.AddAsync(notification, cancellationToken);
         }
 
@@ -274,7 +290,8 @@ public class ProductionEventService : IProductionEventService
             NotificationType.ChangeRequest,
             "Novi zahtev za izmenu",
             $"Narudžbina #{evt.OrderNumber} — novi zahtev za izmenu",
-            "ChangeRequest", evt.ChangeRequestId, cancellationToken);
+            "ChangeRequest", evt.ChangeRequestId, cancellationToken,
+            JsonSerializer.Serialize(new { orderNumber = evt.OrderNumber }));
     }
 
     public async Task NotifyChangeRequestApprovedAsync(ChangeRequestApprovedEvent evt, CancellationToken cancellationToken = default)
@@ -284,10 +301,11 @@ public class ProductionEventService : IProductionEventService
 
         var title = "Zahtev za izmenu odobren";
         var message = $"Vaš zahtev za izmenu narudžbine #{evt.OrderNumber} je odobren.";
+        var paramsJson = JsonSerializer.Serialize(new { orderNumber = evt.OrderNumber });
 
         var notification = Notification.Create(evt.TenantId, evt.RequestedByUserId,
             NotificationType.ChangeRequestApproved, title, message,
-            "ChangeRequest", evt.ChangeRequestId);
+            "ChangeRequest", evt.ChangeRequestId, paramsJson);
         await _notificationRepository.AddAsync(notification, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
         await _notificationBroadcaster.BroadcastNotificationCreatedAsync(evt.TenantId, cancellationToken);
@@ -302,10 +320,17 @@ public class ProductionEventService : IProductionEventService
         var message = string.IsNullOrWhiteSpace(evt.RejectionNote)
             ? $"Vaš zahtev za izmenu narudžbine #{evt.OrderNumber} je odbijen."
             : $"Vaš zahtev za izmenu narudžbine #{evt.OrderNumber} je odbijen: {evt.RejectionNote}";
+        var hasNote = !string.IsNullOrWhiteSpace(evt.RejectionNote);
+        var paramsJson = JsonSerializer.Serialize(new
+        {
+            orderNumber = evt.OrderNumber,
+            rejectionNote = evt.RejectionNote ?? string.Empty,
+            context = hasNote ? "withNote" : null,
+        });
 
         var notification = Notification.Create(evt.TenantId, evt.RequestedByUserId,
             NotificationType.ChangeRequestRejected, title, message,
-            "ChangeRequest", evt.ChangeRequestId);
+            "ChangeRequest", evt.ChangeRequestId, paramsJson);
         await _notificationRepository.AddAsync(notification, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
         await _notificationBroadcaster.BroadcastNotificationCreatedAsync(evt.TenantId, cancellationToken);
@@ -335,10 +360,15 @@ public class ProductionEventService : IProductionEventService
                 new { type = "ProcessReadyForQueue", evt.OrderItemProcessId, evt.OrderId, evt.OrderNumber },
                 cancellationToken);
 
+            // context=readyForQueue lets the FE distinguish this queue-arrival
+            // notification from a general OrderActivated under the same enum
+            // value (the i18next template picks .title_readyForQueue /
+            // .message_readyForQueue instead of the generic ones).
+            var paramsJson = JsonSerializer.Serialize(new { orderNumber = evt.OrderNumber, context = "readyForQueue" });
             foreach (var workerId in workerIds)
             {
                 var notification = Notification.Create(evt.TenantId, workerId,
-                    NotificationType.OrderActivated, title, message, "Order", evt.OrderId);
+                    NotificationType.OrderActivated, title, message, "Order", evt.OrderId, paramsJson);
                 await _notificationRepository.AddAsync(notification, cancellationToken);
             }
 
@@ -354,13 +384,14 @@ public class ProductionEventService : IProductionEventService
         string message,
         string? referenceType,
         Guid? referenceId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? paramsJson = null)
     {
         var allUsers = await _userRepository.GetByTenantIdAsync(tenantId, cancellationToken);
 
         foreach (var user in allUsers.Where(u => u.IsActive))
         {
-            var notification = Notification.Create(tenantId, user.Id, type, title, message, referenceType, referenceId);
+            var notification = Notification.Create(tenantId, user.Id, type, title, message, referenceType, referenceId, paramsJson);
             await _notificationRepository.AddAsync(notification, cancellationToken);
         }
 
@@ -375,14 +406,15 @@ public class ProductionEventService : IProductionEventService
         string message,
         string? referenceType,
         Guid? referenceId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? paramsJson = null)
     {
         var allUsers = await _userRepository.GetByTenantIdAsync(tenantId, cancellationToken);
         var dashboardUsers = allUsers.Where(u => u.IsActive && DashboardRoles.Contains(u.Role));
 
         foreach (var user in dashboardUsers)
         {
-            var notification = Notification.Create(tenantId, user.Id, type, title, message, referenceType, referenceId);
+            var notification = Notification.Create(tenantId, user.Id, type, title, message, referenceType, referenceId, paramsJson);
             await _notificationRepository.AddAsync(notification, cancellationToken);
         }
 
