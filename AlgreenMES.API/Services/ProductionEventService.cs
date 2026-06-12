@@ -265,6 +265,52 @@ public class ProductionEventService : IProductionEventService
         }
     }
 
+    public async Task NotifyChangeRequestCreatedAsync(ChangeRequestCreatedEvent evt, CancellationToken cancellationToken = default)
+    {
+        await _hubContext.Clients.Group($"tenant-{evt.TenantId}")
+            .SendAsync("ChangeRequestCreated", evt, cancellationToken);
+
+        await CreateNotificationsForDashboardUsersAsync(evt.TenantId,
+            NotificationType.ChangeRequest,
+            "Novi zahtev za izmenu",
+            $"Narudžbina #{evt.OrderNumber} — novi zahtev za izmenu",
+            "ChangeRequest", evt.ChangeRequestId, cancellationToken);
+    }
+
+    public async Task NotifyChangeRequestApprovedAsync(ChangeRequestApprovedEvent evt, CancellationToken cancellationToken = default)
+    {
+        await _hubContext.Clients.Group($"tenant-{evt.TenantId}")
+            .SendAsync("ChangeRequestApproved", evt, cancellationToken);
+
+        var title = "Zahtev za izmenu odobren";
+        var message = $"Vaš zahtev za izmenu narudžbine #{evt.OrderNumber} je odobren.";
+
+        var notification = Notification.Create(evt.TenantId, evt.RequestedByUserId,
+            NotificationType.ChangeRequestApproved, title, message,
+            "ChangeRequest", evt.ChangeRequestId);
+        await _notificationRepository.AddAsync(notification, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        await _notificationBroadcaster.BroadcastNotificationCreatedAsync(evt.TenantId, cancellationToken);
+    }
+
+    public async Task NotifyChangeRequestRejectedAsync(ChangeRequestRejectedEvent evt, CancellationToken cancellationToken = default)
+    {
+        await _hubContext.Clients.Group($"tenant-{evt.TenantId}")
+            .SendAsync("ChangeRequestRejected", evt, cancellationToken);
+
+        var title = "Zahtev za izmenu odbijen";
+        var message = string.IsNullOrWhiteSpace(evt.RejectionNote)
+            ? $"Vaš zahtev za izmenu narudžbine #{evt.OrderNumber} je odbijen."
+            : $"Vaš zahtev za izmenu narudžbine #{evt.OrderNumber} je odbijen: {evt.RejectionNote}";
+
+        var notification = Notification.Create(evt.TenantId, evt.RequestedByUserId,
+            NotificationType.ChangeRequestRejected, title, message,
+            "ChangeRequest", evt.ChangeRequestId);
+        await _notificationRepository.AddAsync(notification, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        await _notificationBroadcaster.BroadcastNotificationCreatedAsync(evt.TenantId, cancellationToken);
+    }
+
     public async Task NotifyOrderUpdatedAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken = default)
     {
         await _hubContext.Clients.Group($"tenant-{tenantId}")

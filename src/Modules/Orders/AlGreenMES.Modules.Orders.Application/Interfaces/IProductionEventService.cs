@@ -12,6 +12,9 @@ public interface IProductionEventService
     Task NotifyBlockRequestCreatedAsync(BlockRequestCreatedEvent evt, CancellationToken cancellationToken = default);
     Task NotifyBlockRequestApprovedAsync(BlockRequestApprovedEvent evt, CancellationToken cancellationToken = default);
     Task NotifyBlockRequestRejectedAsync(BlockRequestRejectedEvent evt, CancellationToken cancellationToken = default);
+    Task NotifyChangeRequestCreatedAsync(ChangeRequestCreatedEvent evt, CancellationToken cancellationToken = default);
+    Task NotifyChangeRequestApprovedAsync(ChangeRequestApprovedEvent evt, CancellationToken cancellationToken = default);
+    Task NotifyChangeRequestRejectedAsync(ChangeRequestRejectedEvent evt, CancellationToken cancellationToken = default);
     Task NotifyWorkerCheckedInAsync(WorkerCheckedInEvent evt, CancellationToken cancellationToken = default);
     Task NotifyWorkerCheckedOutAsync(WorkerCheckedOutEvent evt, CancellationToken cancellationToken = default);
     Task NotifyWorkerAutoLoggedOutAsync(WorkerAutoLoggedOutEvent evt, CancellationToken cancellationToken = default);
