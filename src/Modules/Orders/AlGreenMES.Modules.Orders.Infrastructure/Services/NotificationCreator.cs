@@ -27,15 +27,18 @@ public class NotificationCreator : INotificationCreator
     private readonly INotificationRepository _notificationRepo;
     private readonly IUserRepository _userRepo;
     private readonly IOrdersUnitOfWork _unitOfWork;
+    private readonly INotificationBroadcaster _broadcaster;
 
     public NotificationCreator(
         INotificationRepository notificationRepo,
         IUserRepository userRepo,
-        IOrdersUnitOfWork unitOfWork)
+        IOrdersUnitOfWork unitOfWork,
+        INotificationBroadcaster broadcaster)
     {
         _notificationRepo = notificationRepo;
         _userRepo = userRepo;
         _unitOfWork = unitOfWork;
+        _broadcaster = broadcaster;
     }
 
     public async Task NotifyManagementAsync(
@@ -64,5 +67,10 @@ public class NotificationCreator : INotificationCreator
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Push the FE so the bell badge refreshes within ~1s instead of waiting
+        // for the polling tick. Anyone in the tenant group will hear it; clients
+        // who shouldn't see the notification just invalidate an empty cache.
+        await _broadcaster.BroadcastNotificationCreatedAsync(tenantId, cancellationToken);
     }
 }

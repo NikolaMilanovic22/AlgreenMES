@@ -1,3 +1,4 @@
+using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using AlGreenMES.Modules.Identity.Domain.Entities;
 using AlGreenMES.Modules.Identity.Domain.Repositories;
 using AlGreenMES.Modules.Orders.Api.Hubs;
@@ -17,6 +18,7 @@ public class ProductionEventService : IProductionEventService
     private readonly IUserRepository _userRepository;
     private readonly INotificationRepository _notificationRepository;
     private readonly IOrdersUnitOfWork _unitOfWork;
+    private readonly INotificationBroadcaster _notificationBroadcaster;
 
     private static readonly UserRole[] DashboardRoles = [UserRole.Admin, UserRole.Manager, UserRole.Coordinator, UserRole.SalesManager];
 
@@ -25,13 +27,15 @@ public class ProductionEventService : IProductionEventService
         IWebPushService webPushService,
         IUserRepository userRepository,
         INotificationRepository notificationRepository,
-        IOrdersUnitOfWork unitOfWork)
+        IOrdersUnitOfWork unitOfWork,
+        INotificationBroadcaster notificationBroadcaster)
     {
         _hubContext = hubContext;
         _webPushService = webPushService;
         _userRepository = userRepository;
         _notificationRepository = notificationRepository;
         _unitOfWork = unitOfWork;
+        _notificationBroadcaster = notificationBroadcaster;
     }
 
     public async Task NotifyOrderActivatedAsync(OrderActivatedEvent evt, CancellationToken cancellationToken = default)
@@ -143,6 +147,7 @@ public class ProductionEventService : IProductionEventService
             "BlockRequest", evt.BlockRequestId);
         await _notificationRepository.AddAsync(workerNotification, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+        await _notificationBroadcaster.BroadcastNotificationCreatedAsync(evt.TenantId, cancellationToken);
     }
 
     public async Task NotifyBlockRequestRejectedAsync(BlockRequestRejectedEvent evt, CancellationToken cancellationToken = default)
@@ -164,6 +169,7 @@ public class ProductionEventService : IProductionEventService
             "BlockRequest", evt.BlockRequestId);
         await _notificationRepository.AddAsync(notification, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+        await _notificationBroadcaster.BroadcastNotificationCreatedAsync(evt.TenantId, cancellationToken);
     }
 
     public async Task NotifyWorkerCheckedInAsync(WorkerCheckedInEvent evt, CancellationToken cancellationToken = default)
@@ -206,6 +212,7 @@ public class ProductionEventService : IProductionEventService
             await _notificationRepository.AddAsync(notification, cancellationToken);
         }
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+        await _notificationBroadcaster.BroadcastNotificationCreatedAsync(evt.TenantId, cancellationToken);
     }
 
     public async Task NotifyDeadlineWarningAsync(DeadlineWarningEvent evt, CancellationToken cancellationToken = default)
@@ -252,6 +259,10 @@ public class ProductionEventService : IProductionEventService
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+        if (targetUserIds.Count > 0)
+        {
+            await _notificationBroadcaster.BroadcastNotificationCreatedAsync(evt.TenantId, cancellationToken);
+        }
     }
 
     public async Task NotifyOrderUpdatedAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken = default)
@@ -286,6 +297,7 @@ public class ProductionEventService : IProductionEventService
             }
 
             await _unitOfWork.SaveChangesAsync(cancellationToken);
+            await _notificationBroadcaster.BroadcastNotificationCreatedAsync(evt.TenantId, cancellationToken);
         }
     }
 
@@ -307,6 +319,7 @@ public class ProductionEventService : IProductionEventService
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+        await _notificationBroadcaster.BroadcastNotificationCreatedAsync(tenantId, cancellationToken);
     }
 
     private async Task CreateNotificationsForDashboardUsersAsync(
@@ -328,5 +341,6 @@ public class ProductionEventService : IProductionEventService
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+        await _notificationBroadcaster.BroadcastNotificationCreatedAsync(tenantId, cancellationToken);
     }
 }

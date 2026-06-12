@@ -168,6 +168,7 @@ public class Program
             // SignalR event service
             builder.Services.AddScoped<IProductionEventService, ProductionEventService>();
             builder.Services.AddScoped<IProcessChangeNotifier, ProcessChangeNotifier>();
+            builder.Services.AddScoped<INotificationBroadcaster, NotificationBroadcaster>();
             builder.Services.AddScoped<AlGreenMES.Modules.Production.Application.Interfaces.IReferenceCheckService, ReferenceCheckService>();
 
             // Background services
