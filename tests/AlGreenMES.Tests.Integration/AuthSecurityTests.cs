@@ -439,7 +439,78 @@ public class AuthSecurityTests : IntegrationTestBase
         count.Should().Be(0, "non-role updates must not pollute the role-change history");
     }
 
+    // ──────────────────────────────────────────────────────────────────────
+    // Admin endpoints reading audit tables (GET /users/{id}/login-history
+    // and /role-history)
+    // ──────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetLoginHistory_ReturnsRecentAttemptsForUser()
+    {
+        var admin = await TestDataSeeder.SeedTenantWithUserAsync(Factory, role: AlGreenMES.Modules.Identity.Domain.Entities.UserRole.Admin);
+
+        // Generate a couple of attempts — 1 success, 2 failures
+        await Client.PostAsJsonAsync("/api/auth/login", new { Email = admin.Email, Password = admin.Password, TenantCode = admin.TenantCode });
+        await Client.PostAsJsonAsync("/api/auth/login", new { Email = admin.Email, Password = "WrongPass1!", TenantCode = admin.TenantCode });
+        await Client.PostAsJsonAsync("/api/auth/login", new { Email = admin.Email, Password = "WrongPass2!", TenantCode = admin.TenantCode });
+
+        var token = await TestDataSeeder.LoginAndGetTokenAsync(Client, admin.Email, admin.Password, admin.TenantCode);
+        Client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+        var resp = await Client.GetAsync($"/api/users/{admin.UserId}/login-history?limit=10");
+        Client.DefaultRequestHeaders.Authorization = null;
+        resp.EnsureSuccessStatusCode();
+
+        var entries = await resp.Content.ReadFromJsonAsync<List<LoginHistoryEntry>>();
+        entries.Should().NotBeNullOrEmpty();
+        entries!.All(e => e.Email == admin.Email.ToLowerInvariant()).Should().BeTrue();
+        entries.Should().BeInDescendingOrder(e => e.AttemptedAt);
+    }
+
+    [Fact]
+    public async Task GetLoginHistory_RespectsLimitCap()
+    {
+        var admin = await TestDataSeeder.SeedTenantWithUserAsync(Factory, role: AlGreenMES.Modules.Identity.Domain.Entities.UserRole.Admin);
+
+        // Make 4 failed attempts so we'd return >3 rows without the cap.
+        // Keep it under the 5-attempt lockout threshold so the subsequent
+        // LoginAndGetTokenAsync still works.
+        for (var i = 0; i < 4; i++)
+        {
+            await Client.PostAsJsonAsync("/api/auth/login", new { Email = admin.Email, Password = "Wrong" + i + "!", TenantCode = admin.TenantCode });
+        }
+
+        var token = await TestDataSeeder.LoginAndGetTokenAsync(Client, admin.Email, admin.Password, admin.TenantCode);
+        Client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+        var resp = await Client.GetAsync($"/api/users/{admin.UserId}/login-history?limit=3");
+        Client.DefaultRequestHeaders.Authorization = null;
+
+        var entries = await resp.Content.ReadFromJsonAsync<List<LoginHistoryEntry>>();
+        entries!.Count.Should().BeLessThanOrEqualTo(3);
+    }
+
+    [Fact]
+    public async Task GetRoleHistory_ReturnsEmptyForFreshUser()
+    {
+        var superAdmin = await TestDataSeeder.SeedTenantWithUserAsync(
+            Factory, role: AlGreenMES.Modules.Identity.Domain.Entities.UserRole.SuperAdmin);
+
+        var token = await TestDataSeeder.LoginAndGetTokenAsync(Client, superAdmin.Email, superAdmin.Password, superAdmin.TenantCode);
+        Client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+        var resp = await Client.GetAsync($"/api/users/{superAdmin.UserId}/role-history");
+        Client.DefaultRequestHeaders.Authorization = null;
+        resp.EnsureSuccessStatusCode();
+
+        var entries = await resp.Content.ReadFromJsonAsync<List<RoleHistoryEntry>>();
+        entries.Should().NotBeNull();
+        entries!.Should().BeEmpty("a newly-seeded user never had their role mutated");
+    }
+
     private sealed record LoginBody(string Token, string RefreshToken);
     private sealed record ErrorBody(ErrorPayload Error);
     private sealed record ErrorPayload(string Code, string Message);
+    private sealed record LoginHistoryEntry(Guid Id, string Email, string? IpAddress, string? UserAgent, bool Succeeded, string? FailureReason, DateTime AttemptedAt);
+    private sealed record RoleHistoryEntry(Guid Id, string OldRole, string NewRole, Guid ChangedByUserId, string? ChangedByUserName, DateTime ChangedAt, string? Reason);
 }

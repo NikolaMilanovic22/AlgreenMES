@@ -5,6 +5,7 @@ using AlGreenMES.Modules.Identity.Application.Commands.DeleteUser;
 using AlGreenMES.Modules.Identity.Application.Commands.ResetPassword;
 using AlGreenMES.Modules.Identity.Application.Commands.UpdateUser;
 using AlGreenMES.Modules.Identity.Application.Queries.GetUserById;
+using AlGreenMES.Modules.Identity.Application.Queries.GetUserLoginHistory;
 using AlGreenMES.Modules.Identity.Application.Queries.GetUserRoleHistory;
 using AlGreenMES.Modules.Identity.Application.Queries.GetUsers;
 using AlGreenMES.Modules.Identity.Domain.Entities;
@@ -107,6 +108,19 @@ public class UsersController : ControllerBase
     public async Task<IActionResult> GetRoleHistory(Guid id, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new GetUserRoleHistoryQuery(id), cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Recent login attempts for one user, newest first. Capped at 100 rows
+    /// (handler clamps `limit`) so a misbehaving client can't pull the
+    /// whole audit log in one call. Same authz gate as the role history.
+    /// </summary>
+    [HttpGet("{id:guid}/login-history")]
+    [Authorize(Roles = "SuperAdmin,Admin")]
+    public async Task<IActionResult> GetLoginHistory(Guid id, [FromQuery] int limit = 20, CancellationToken cancellationToken = default)
+    {
+        var result = await _mediator.Send(new GetUserLoginHistoryQuery(id, limit), cancellationToken);
         return Ok(result);
     }
 
