@@ -5,6 +5,7 @@ using AlGreenMES.Modules.Identity.Application.Commands.DeleteUser;
 using AlGreenMES.Modules.Identity.Application.Commands.ResetPassword;
 using AlGreenMES.Modules.Identity.Application.Commands.UpdateUser;
 using AlGreenMES.Modules.Identity.Application.Queries.GetUserById;
+using AlGreenMES.Modules.Identity.Application.Queries.GetUserRoleHistory;
 using AlGreenMES.Modules.Identity.Application.Queries.GetUsers;
 using AlGreenMES.Modules.Identity.Domain.Entities;
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
@@ -93,6 +94,19 @@ public class UsersController : ControllerBase
             new UpdateUserCommand(id, _tenantService.GetCurrentTenantId(), request.FirstName, request.LastName, request.Role, request.IsActive, request.CanIncludeWithdrawnInAnalysis, request.ProcessIds, request.AdditionalRoles),
             cancellationToken);
 
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Role-change history for one user, newest first. SuperAdmin/Admin only
+    /// — viewing audit data is privileged. The list can be empty (user
+    /// never had their role changed) and that's a valid response.
+    /// </summary>
+    [HttpGet("{id:guid}/role-history")]
+    [Authorize(Roles = "SuperAdmin,Admin")]
+    public async Task<IActionResult> GetRoleHistory(Guid id, CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(new GetUserRoleHistoryQuery(id), cancellationToken);
         return Ok(result);
     }
 
