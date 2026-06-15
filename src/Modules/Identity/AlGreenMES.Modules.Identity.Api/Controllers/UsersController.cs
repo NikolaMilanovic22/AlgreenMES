@@ -1,3 +1,4 @@
+using AlGreenMES.BuildingBlocks.Common.Exceptions;
 using AlGreenMES.Modules.Identity.Api.Requests;
 using AlGreenMES.Modules.Identity.Application.Commands.ChangePassword;
 using AlGreenMES.Modules.Identity.Application.Commands.CreateUser;
@@ -7,6 +8,7 @@ using AlGreenMES.Modules.Identity.Application.Commands.UpdateUser;
 using AlGreenMES.Modules.Identity.Application.Queries.GetUserById;
 using AlGreenMES.Modules.Identity.Application.Queries.GetUserLoginHistory;
 using AlGreenMES.Modules.Identity.Application.Queries.GetUserRoleHistory;
+using AlGreenMES.Modules.Identity.Application.Queries.GetSuperAdmins;
 using AlGreenMES.Modules.Identity.Application.Queries.GetUsers;
 using AlGreenMES.Modules.Identity.Domain.Entities;
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
@@ -69,13 +71,43 @@ public class UsersController : ControllerBase
         return Ok(result);
     }
 
+    // SuperAdmin-only listing of every SuperAdmin across every tenant. Feeds
+    // the "Sistem administratori" tab on the FE. Returned rows are read-only
+    // on the FE — peer-protection guards in Update/Delete/ResetPassword keep
+    // it that way even if the FE skips the role check.
+    [HttpGet("super-admins")]
+    [Authorize(Roles = "SuperAdmin")]
+    public async Task<IActionResult> GetSuperAdmins(CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(new GetSuperAdminsQuery(), cancellationToken);
+        return Ok(result);
+    }
+
     [HttpPost]
     [Authorize(Roles = "SuperAdmin,Admin")]
     public async Task<IActionResult> CreateUser([FromBody] CreateUserRequest request, CancellationToken cancellationToken)
     {
+        // Tenant override (request.TenantId) is allowed only for SuperAdmin
+        // — used by the tenant-creation flow to seed the initial Admin in
+        // a brand-new tenant. Everyone else creates users in their own
+        // home tenant (resolved from the JWT).
+        Guid tenantId;
+        if (request.TenantId.HasValue && request.TenantId.Value != Guid.Empty)
+        {
+            if (!User.IsInRole("SuperAdmin"))
+                throw new ForbiddenException(
+                    "FORBIDDEN_TENANT_OVERRIDE",
+                    "Only SuperAdmin can create users in another tenant.");
+            tenantId = request.TenantId.Value;
+        }
+        else
+        {
+            tenantId = _tenantService.GetCurrentTenantId();
+        }
+
         var result = await _mediator.Send(
             new CreateUserCommand(
-                _tenantService.GetCurrentTenantId(),
+                tenantId,
                 request.Email,
                 request.Password,
                 request.FirstName,

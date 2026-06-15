@@ -63,6 +63,35 @@ public class UserRepository : IUserRepository
             .FirstOrDefaultAsync(u => u.Email == normalizedEmail && u.TenantId == tenantId, cancellationToken);
     }
 
+    public async Task<User?> GetByEmailAcrossTenantsAsync(string email, CancellationToken cancellationToken = default)
+    {
+        // SuperAdmin cross-tenant login path. Skips the tenant filter so we
+        // can find a SuperAdmin user whose HOME tenant differs from the one
+        // they're logging into. Caller is responsible for verifying
+        // user.Role == SuperAdmin before trusting the cross-tenant intent —
+        // without that check this method would leak the existence of any
+        // user across tenants.
+        var normalizedEmail = email.Trim().ToLowerInvariant();
+        return await _dbContext.Users
+            .IgnoreQueryFilters()
+            .Include(u => u.UserProcesses)
+            .Include(u => u.AdditionalRoles)
+            .FirstOrDefaultAsync(u => u.Email == normalizedEmail, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<User>> GetAllSuperAdminsAsync(CancellationToken cancellationToken = default)
+    {
+        // Cross-tenant listing for the "Sistem administratori" tab. Bypasses
+        // the tenant filter so a SuperAdmin can see all their peers
+        // regardless of which tenant each one is associated with.
+        return await _dbContext.Users
+            .IgnoreQueryFilters()
+            .Include(u => u.AdditionalRoles)
+            .Where(u => u.Role == UserRole.SuperAdmin)
+            .OrderBy(u => u.Email)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyList<User>> GetByTenantIdAsync(Guid tenantId, CancellationToken cancellationToken = default)
     {
         return await _dbContext.Users

@@ -1,29 +1,42 @@
+using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using AlGreenMES.Modules.Tenancy.Api.Requests;
 using AlGreenMES.Modules.Tenancy.Application.Commands.CreateTenant;
+using AlGreenMES.Modules.Tenancy.Application.Commands.SetTenantLogo;
 using AlGreenMES.Modules.Tenancy.Application.Commands.UpdateTenant;
 using AlGreenMES.Modules.Tenancy.Application.Commands.UpdateTenantSettings;
 using AlGreenMES.Modules.Tenancy.Application.Queries.GetTenantById;
 using AlGreenMES.Modules.Tenancy.Application.Queries.GetTenants;
 using AlGreenMES.Modules.Tenancy.Application.Queries.GetTenantSettings;
+using AlGreenMES.Modules.Tenancy.Application.Services;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AlGreenMES.Modules.Tenancy.Api.Controllers;
 
+// Authorisation is set PER METHOD on this controller because the `me/*`
+// endpoints below are open to every tenant member (read settings) and
+// the tenant's own Admin (write settings) — those would conflict with
+// a class-level `RequireSuperAdmin` policy.
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Policy = "RequireSuperAdmin")]
+[Authorize]
 public class TenantsController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly ITenantService _tenantService;
+    private readonly ITenantLogoStorage _logoStorage;
 
-    public TenantsController(IMediator mediator)
+    public TenantsController(IMediator mediator, ITenantService tenantService, ITenantLogoStorage logoStorage)
     {
         _mediator = mediator;
+        _tenantService = tenantService;
+        _logoStorage = logoStorage;
     }
 
     [HttpGet]
+    [Authorize(Policy = "RequireSuperAdmin")]
     public async Task<IActionResult> GetTenants(
         [FromQuery] bool? isActive,
         [FromQuery] int page = 1,
@@ -50,6 +63,7 @@ public class TenantsController : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
+    [Authorize(Policy = "RequireSuperAdmin")]
     public async Task<IActionResult> GetTenantById(Guid id, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new GetTenantByIdQuery(id), cancellationToken);
@@ -57,6 +71,7 @@ public class TenantsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = "RequireSuperAdmin")]
     public async Task<IActionResult> CreateTenant([FromBody] CreateTenantRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new CreateTenantCommand(
@@ -67,6 +82,7 @@ public class TenantsController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [Authorize(Policy = "RequireSuperAdmin")]
     public async Task<IActionResult> UpdateTenant(Guid id, [FromBody] UpdateTenantRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new UpdateTenantCommand(
@@ -77,6 +93,7 @@ public class TenantsController : ControllerBase
     }
 
     [HttpGet("{id:guid}/settings")]
+    [Authorize(Policy = "RequireSuperAdmin")]
     public async Task<IActionResult> GetTenantSettings(Guid id, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new GetTenantSettingsQuery(id), cancellationToken);
@@ -84,6 +101,7 @@ public class TenantsController : ControllerBase
     }
 
     [HttpPut("{id:guid}/settings")]
+    [Authorize(Policy = "RequireSuperAdmin")]
     public async Task<IActionResult> UpdateTenantSettings(Guid id, [FromBody] UpdateTenantSettingsRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new UpdateTenantSettingsCommand(
@@ -93,6 +111,116 @@ public class TenantsController : ControllerBase
             request.WarningColor,
             request.CriticalColor), cancellationToken);
 
+        return Ok(result);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // "me" endpoints — let the tenant's own Admin read/write their tenant
+    // settings without going through the SuperAdmin-gated {id} routes.
+    // The current tenant is resolved from the JWT, so the caller can only
+    // act on their own tenant.
+    //
+    // Milos 15.06.2026 — Skysoft (SuperAdmin) creates the tenant + initial
+    // Admin; everything else (warning/critical days, theme colors, later
+    // logo) is the tenant's own responsibility.
+    // ─────────────────────────────────────────────────────────────────────
+
+    [HttpGet("me/settings")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator,SalesManager,Department,Magacioner")]
+    public async Task<IActionResult> GetMyTenantSettings(CancellationToken cancellationToken)
+    {
+        var tenantId = _tenantService.GetCurrentTenantId();
+        var result = await _mediator.Send(new GetTenantSettingsQuery(tenantId), cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpPut("me/settings")]
+    [Authorize(Roles = "SuperAdmin,Admin")]
+    public async Task<IActionResult> UpdateMyTenantSettings([FromBody] UpdateTenantSettingsRequest request, CancellationToken cancellationToken)
+    {
+        var tenantId = _tenantService.GetCurrentTenantId();
+        var result = await _mediator.Send(new UpdateTenantSettingsCommand(
+            tenantId,
+            request.DefaultWarningDays,
+            request.DefaultCriticalDays,
+            request.WarningColor,
+            request.CriticalColor), cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpGet("me")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator,SalesManager,Department,Magacioner")]
+    public async Task<IActionResult> GetMyTenant(CancellationToken cancellationToken)
+    {
+        var tenantId = _tenantService.GetCurrentTenantId();
+        var result = await _mediator.Send(new GetTenantByIdQuery(tenantId), cancellationToken);
+        return Ok(result);
+    }
+
+    // ─── Tenant logo upload ───────────────────────────────────────────────
+    // The Upload component on Profil firme posts here. We stream the file
+    // to disk via ITenantLogoStorage, persist Tenant.LogoUrl via mediator,
+    // and return the updated TenantDto so the FE can swap the sidebar logo
+    // immediately. GET is open to any tenant member so the sidebar can
+    // render the logo regardless of role.
+
+    [HttpPost("me/logo")]
+    [Authorize(Roles = "SuperAdmin,Admin")]
+    [RequestSizeLimit(5 * 1024 * 1024)]
+    public async Task<IActionResult> UploadMyLogo(IFormFile file, CancellationToken cancellationToken)
+    {
+        if (file is null || file.Length == 0)
+            return BadRequest(new { error = new { code = "LOGO_FILE_REQUIRED", message = "Logo file is required." } });
+
+        if (file.Length > _logoStorage.MaxFileSizeBytes)
+            return BadRequest(new { error = new { code = "LOGO_TOO_LARGE", message = $"Max {_logoStorage.MaxFileSizeBytes / 1024 / 1024} MB." } });
+
+        // Validate Content-Type alongside extension — Orders does the same.
+        // An attacker can trivially rename script.js to script.png; the MIME
+        // check makes them also have to forge the Content-Type header.
+        var contentType = file.ContentType ?? string.Empty;
+        if (!_logoStorage.AllowedContentTypes.Contains(contentType))
+            return BadRequest(new { error = new { code = "LOGO_BAD_CONTENT_TYPE", message = "Allowed: " + string.Join(", ", _logoStorage.AllowedContentTypes) } });
+
+        var ext = Path.GetExtension(file.FileName);
+        if (string.IsNullOrWhiteSpace(ext) || !_logoStorage.AllowedExtensions.Contains(ext))
+            return BadRequest(new { error = new { code = "LOGO_BAD_EXTENSION", message = "Allowed: " + string.Join(", ", _logoStorage.AllowedExtensions) } });
+
+        var tenantId = _tenantService.GetCurrentTenantId();
+
+        await using var stream = file.OpenReadStream();
+        var relativePath = await _logoStorage.SaveAsync(tenantId, stream, ext, cancellationToken);
+
+        var result = await _mediator.Send(new SetTenantLogoCommand(tenantId, relativePath), cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpGet("me/logo")]
+    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator,SalesManager,Department,Magacioner")]
+    public async Task<IActionResult> GetMyLogo(CancellationToken cancellationToken)
+    {
+        var tenantId = _tenantService.GetCurrentTenantId();
+        var tenant = await _mediator.Send(new GetTenantByIdQuery(tenantId), cancellationToken);
+        if (string.IsNullOrWhiteSpace(tenant.LogoUrl))
+            return NotFound();
+
+        var file = await _logoStorage.GetAsync(tenant.LogoUrl, cancellationToken);
+        if (file is null)
+            return NotFound();
+
+        return File(file.Value.Stream, file.Value.ContentType);
+    }
+
+    [HttpDelete("me/logo")]
+    [Authorize(Roles = "SuperAdmin,Admin")]
+    public async Task<IActionResult> DeleteMyLogo(CancellationToken cancellationToken)
+    {
+        var tenantId = _tenantService.GetCurrentTenantId();
+        var tenant = await _mediator.Send(new GetTenantByIdQuery(tenantId), cancellationToken);
+        if (!string.IsNullOrWhiteSpace(tenant.LogoUrl))
+            await _logoStorage.DeleteAsync(tenant.LogoUrl, cancellationToken);
+
+        var result = await _mediator.Send(new SetTenantLogoCommand(tenantId, null), cancellationToken);
         return Ok(result);
     }
 }

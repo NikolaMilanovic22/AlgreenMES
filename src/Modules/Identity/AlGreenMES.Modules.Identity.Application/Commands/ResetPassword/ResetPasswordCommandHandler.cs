@@ -1,6 +1,7 @@
 using AlGreenMES.BuildingBlocks.Common.Exceptions;
 using AlGreenMES.Modules.Identity.Application.Interfaces;
 using AlGreenMES.Modules.Identity.Application.Services;
+using AlGreenMES.Modules.Identity.Domain.Entities;
 using AlGreenMES.Modules.Identity.Domain.Repositories;
 using MediatR;
 
@@ -29,6 +30,14 @@ public class ResetPasswordCommandHandler : IRequestHandler<ResetPasswordCommand,
     {
         var user = await _userRepository.GetByIdAsync(request.UserId, cancellationToken)
             ?? throw new NotFoundException("User", request.UserId);
+
+        // Peer SuperAdmin protection (Milos 15.06.2026). SuperAdmin passwords
+        // can only be changed by the owner through ChangePassword (which
+        // verifies the current password) — never by another admin via this
+        // reset path. Prevents "Bojan resets Milos's password and locks him
+        // out". Owner changes their password via /me/change-password.
+        if (user.Role == UserRole.SuperAdmin)
+            throw new ForbiddenException("FORBIDDEN_PEER_SUPERADMIN", "A SuperAdmin password cannot be reset by another admin.");
 
         var newPasswordHash = _passwordHasher.HashPassword(request.NewPassword);
         user.ChangePassword(newPasswordHash);

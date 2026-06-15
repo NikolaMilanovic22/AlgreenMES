@@ -39,6 +39,14 @@ public class UpdateUserCommandHandler : IRequestHandler<UpdateUserCommand, UserD
         var oldRole = user.Role;
         var isRoleChange = request.Role != oldRole;
         var isCallerSuperAdmin = _currentUser.IsInRole("SuperAdmin");
+        var callerUserId = _currentUser.GetCurrentUserId();
+
+        // Peer SuperAdmin protection (Milos 15.06.2026). No SuperAdmin can
+        // edit another SuperAdmin's record — only their own. This shuts down
+        // "Bojan as SA deactivates Milos" without trusting any per-form FE
+        // disable. Pairs with the same guard in Delete + ResetPassword.
+        if (user.Role == UserRole.SuperAdmin && user.Id != callerUserId)
+            throw new ForbiddenException("FORBIDDEN_PEER_SUPERADMIN", "A SuperAdmin cannot modify another SuperAdmin's account.");
 
         // Sprint 3.0 F-7 — only SuperAdmin can change ANY user's role. Tenant
         // Admins can still edit name/email/active/etc., but the role field is

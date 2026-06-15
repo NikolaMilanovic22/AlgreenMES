@@ -1,8 +1,10 @@
 using AlGreenMES.BuildingBlocks.Common.Interceptors;
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
+using AlGreenMES.Modules.Tenancy.Application.Services;
 using AlGreenMES.Modules.Tenancy.Domain.Repositories;
 using AlGreenMES.Modules.Tenancy.Infrastructure.Persistence;
 using AlGreenMES.Modules.Tenancy.Infrastructure.Repositories;
+using AlGreenMES.Modules.Tenancy.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -40,6 +42,7 @@ public static class TenancyInfrastructureServiceRegistration
 
         services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<TenancyDbContext>());
         services.AddScoped<ITenantRepository, TenantRepository>();
+        services.AddSingleton<ITenantLogoStorage, LocalTenantLogoStorage>();
 
         return services;
     }

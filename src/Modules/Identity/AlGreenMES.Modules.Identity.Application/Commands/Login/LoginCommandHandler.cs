@@ -72,8 +72,26 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, LoginResponseDt
         // Stage 2: resolve the user. If the email doesn't match, we still
         // log with TenantId set so an admin can later see "this tenant got
         // hit with these unknown emails".
+        //
+        // SuperAdmin cross-tenant login: if a normal lookup misses, we try
+        // a cross-tenant lookup. If THAT finds a SuperAdmin, the login is
+        // allowed — the resulting JWT carries tenant_id = target tenant
+        // and cross_tenant_session=true so the read-only middleware can
+        // block all writes. Non-SuperAdmin cross-tenant matches collapse
+        // back to INVALID_CREDENTIALS so we don't leak "this email exists
+        // in some other tenant".
         // ──────────────────────────────────────────────────────────────
         var user = await _userRepository.GetByEmailAsync(emailNormalized, tenant.Id, cancellationToken);
+        bool isCrossTenantSession = false;
+        if (user == null)
+        {
+            var crossTenant = await _userRepository.GetByEmailAcrossTenantsAsync(emailNormalized, cancellationToken);
+            if (crossTenant != null && crossTenant.Role == UserRole.SuperAdmin)
+            {
+                user = crossTenant;
+                isCrossTenantSession = true;
+            }
+        }
         if (user == null)
         {
             await LogAndSaveAsync(LoginAttempt.RecordFailure(tenant.Id, emailNormalized, "INVALID_CREDENTIALS", request.IpAddress, request.UserAgent, now), cancellationToken);
@@ -111,7 +129,9 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, LoginResponseDt
 
         user.RegisterSuccessfulLogin();
 
-        var token = _jwtTokenService.GenerateToken(user);
+        var token = isCrossTenantSession
+            ? _jwtTokenService.GenerateCrossTenantToken(user, tenant.Id)
+            : _jwtTokenService.GenerateToken(user);
         var refreshTokenValue = _jwtTokenService.GenerateRefreshToken();
 
         var refreshToken = RefreshTokenEntity.Create(

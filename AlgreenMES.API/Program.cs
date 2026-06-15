@@ -377,6 +377,11 @@ public class Program
             app.UseAuthentication();
             app.UseAuthorization();
             app.UseRateLimiter();
+            // Read-only gate for SuperAdmin cross-tenant sessions. Must run
+            // AFTER UseAuthentication so HttpContext.User claims are populated;
+            // ordering before the enrichment middlewares keeps the 403 visible
+            // in logs as a single line rather than a nested authn flow.
+            app.UseMiddleware<CrossTenantReadOnlyMiddleware>();
             app.UseMiddleware<SerilogEnrichmentMiddleware>();
             app.UseMiddleware<SentryEnrichmentMiddleware>();
             app.MapControllers();

@@ -29,7 +29,6 @@ public class DeleteUserCommandHandler : IRequestHandler<DeleteUserCommand, Unit>
             ?? throw new NotFoundException("User", request.UserId);
 
         var callerUserId = _currentUser.GetCurrentUserId();
-        var isCallerSuperAdmin = _currentUser.IsInRole("SuperAdmin");
 
         // Sprint 3.0 F-2a — cannot delete yourself. Even a SuperAdmin should
         // not delete their own row in a single click; demote first or have
@@ -37,9 +36,13 @@ public class DeleteUserCommandHandler : IRequestHandler<DeleteUserCommand, Unit>
         if (user.Id == callerUserId)
             throw new ForbiddenException("SELF_DELETE_FORBIDDEN", "You cannot delete your own user.");
 
-        // Sprint 3.0 F-2b — only SuperAdmin can delete a SuperAdmin user.
-        if (user.Role == UserRole.SuperAdmin && !isCallerSuperAdmin)
-            throw new ForbiddenException("FORBIDDEN_SUPERADMIN_DELETE", "Only SuperAdmin can delete a SuperAdmin user.");
+        // Peer SuperAdmin protection (Milos 15.06.2026). Combined with the
+        // self-delete block above this means SuperAdmin users are never
+        // deletable via the API — reactivation/removal is intentionally
+        // a DB-only operation. The older FORBIDDEN_SUPERADMIN_DELETE check
+        // is subsumed by this stronger rule.
+        if (user.Role == UserRole.SuperAdmin)
+            throw new ForbiddenException("FORBIDDEN_PEER_SUPERADMIN", "A SuperAdmin account cannot be deleted via the API.");
 
         // Sprint 3.0 F-2c — refuse to delete the last active Admin in a tenant
         // (tenant lockout, same scenario as F-1).
