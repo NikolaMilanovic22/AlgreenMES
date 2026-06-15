@@ -9,6 +9,7 @@ using AlGreenMES.Modules.Production.Infrastructure.Persistence;
 using AlGreenMES.Modules.Tenancy.Domain.Entities;
 using AlGreenMES.Modules.Tenancy.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 
 namespace AlgreenMES.API.Services;
 
@@ -18,6 +19,22 @@ public static class DataSeeder
     {
         using var scope = serviceProvider.CreateScope();
         var services = scope.ServiceProvider;
+
+        // The seeder creates the DEMO tenant, 11 demo users, the bootstrap
+        // SuperAdmin (superadmin@demo.com), and a stock process list A–K.
+        // Useful for dev / staging / fresh installs; junk data next to real
+        // tenant data on a real-customer droplet.
+        //
+        // Gate is a Seeding:Enabled config flag. Default = true to preserve
+        // the existing behaviour on alblue staging (where the flag isn't
+        // set) and on dev environments. Real-customer droplets (algreen
+        // pilot, future client deploys) set "Seeding": { "Enabled": false }
+        // in their appsettings.Production.json before the first upgrade
+        // that ships this gate — keeping demo data out of their DB.
+        var config = services.GetRequiredService<IConfiguration>();
+        var seedingEnabled = config.GetValue("Seeding:Enabled", defaultValue: true);
+        if (!seedingEnabled)
+            return;
 
         var tenancyDb = services.GetRequiredService<TenancyDbContext>();
         var identityDb = services.GetRequiredService<IdentityDbContext>();
