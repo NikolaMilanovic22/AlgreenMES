@@ -146,7 +146,14 @@ public class UserRepository : IUserRepository
 
     public async Task<PagedResult<User>> GetPagedAsync(Guid tenantId, UserRole? role, bool? isActive, string? search, DateTime? createdFrom, DateTime? createdTo, string? sortBy, bool isDescending, int page, int pageSize, CancellationToken cancellationToken = default)
     {
-        var query = _dbContext.Users.Include(u => u.UserProcesses).Where(u => u.TenantId == tenantId);
+        // Super administrators are intentionally invisible from the regular
+        // "Korisnici firme" listing — they appear ONLY in the dedicated
+        // "Super administratori" tab (gated by [Authorize(SuperAdmin)] at
+        // the controller). Tenant Admins shouldn't even be able to tell
+        // that platform-level accounts exist in their tenant.
+        var query = _dbContext.Users
+            .Include(u => u.UserProcesses)
+            .Where(u => u.TenantId == tenantId && u.Role != UserRole.SuperAdmin);
 
         if (role.HasValue)
             query = query.Where(u => u.Role == role.Value);
