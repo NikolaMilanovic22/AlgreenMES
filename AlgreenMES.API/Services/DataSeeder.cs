@@ -56,6 +56,26 @@ public static class DataSeeder
             await identityDb.SaveChangesAsync();
         }
 
+        // 2b. Get or create Super Administrator. Needed for the cross-tenant
+        // login flow + the Super administratori tab (otherwise nobody can
+        // bootstrap additional Super administrators through the UI).
+        // Idempotent: created only if missing, password reset if hash drifts.
+        // Home tenant is the demo tenant — convention matches admin@demo.com.
+        var superAdminUser = await identityDb.Users.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(u => u.Email == "superadmin@demo.com" && u.TenantId == tenantId);
+        if (superAdminUser == null)
+        {
+            var passwordHash = passwordHasher.HashPassword("SuperAdmin123!");
+            superAdminUser = User.Create(tenantId, "superadmin@demo.com", passwordHash, "Super", "Admin", UserRole.SuperAdmin);
+            identityDb.Users.Add(superAdminUser);
+            await identityDb.SaveChangesAsync();
+        }
+        else if (!passwordHasher.VerifyPassword("SuperAdmin123!", superAdminUser.PasswordHash))
+        {
+            superAdminUser.ChangePassword(passwordHasher.HashPassword("SuperAdmin123!"));
+            await identityDb.SaveChangesAsync();
+        }
+
         // 3. Get or create Processes A-K
         var existingProcesses = await productionDb.Processes
             .IgnoreQueryFilters()
