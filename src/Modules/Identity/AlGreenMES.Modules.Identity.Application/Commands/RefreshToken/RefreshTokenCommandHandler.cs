@@ -2,6 +2,7 @@ using AlGreenMES.BuildingBlocks.Common.Exceptions;
 using AlGreenMES.Modules.Identity.Application.DTOs;
 using AlGreenMES.Modules.Identity.Application.Interfaces;
 using AlGreenMES.Modules.Identity.Application.Services;
+using AlGreenMES.Modules.Identity.Domain.Entities;
 using AlGreenMES.Modules.Identity.Domain.Repositories;
 using Mapster;
 using MediatR;
@@ -42,15 +43,22 @@ public class RefreshTokenCommandHandler : IRequestHandler<RefreshTokenCommand, L
         if (!user.IsActive)
             throw new DomainException("USER_INACTIVE", "The user account is not active.");
 
-        if (user.TenantId != existingToken.TenantId)
+        // Defense in depth: refresh tokens are tenant-scoped. The only
+        // legitimate mismatch between user.TenantId and refreshToken.TenantId
+        // is the SuperAdmin cross-tenant flow (SuperAdmin's home tenant
+        // differs from the tenant they're logged into). Anything else means
+        // tampering or data corruption.
+        var isCrossTenantSession = user.TenantId != existingToken.TenantId;
+        if (isCrossTenantSession && user.Role != UserRole.SuperAdmin)
         {
-            // Defense in depth — refresh tokens are tenant-scoped; a mismatch means tampering or data corruption.
             throw new DomainException("INVALID_REFRESH_TOKEN", "The refresh token is invalid.");
         }
 
         existingToken.Revoke();
 
-        var newToken = _jwtTokenService.GenerateToken(user);
+        var newToken = isCrossTenantSession
+            ? _jwtTokenService.GenerateCrossTenantToken(user, existingToken.TenantId)
+            : _jwtTokenService.GenerateToken(user);
         var newRefreshTokenValue = _jwtTokenService.GenerateRefreshToken();
 
         var newRefreshToken = Domain.Entities.RefreshToken.Create(

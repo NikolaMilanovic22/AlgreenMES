@@ -11,6 +11,18 @@ public interface IUserRepository
     Task<User?> GetByIdIgnoreFiltersAsync(Guid id, CancellationToken cancellationToken = default);
     Task<User?> GetByEmailAsync(string email, Guid tenantId, CancellationToken cancellationToken = default);
     Task<User?> GetByEmailWithProcessesAsync(string email, Guid tenantId, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Lookup a user by email IGNORING tenant scope. Used only by the
+    /// SuperAdmin cross-tenant login path — callers must verify the
+    /// returned user actually IS a SuperAdmin before honoring the
+    /// cross-tenant intent. Returns null when no match exists.
+    /// </summary>
+    Task<User?> GetByEmailAcrossTenantsAsync(string email, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Every SuperAdmin user across every tenant. Used by the
+    /// "Sistem administratori" tab — SuperAdmin-only at the controller.
+    /// </summary>
+    Task<IReadOnlyList<User>> GetAllSuperAdminsAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<User>> GetByTenantIdAsync(Guid tenantId, CancellationToken cancellationToken = default);
     Task AddAsync(User user, CancellationToken cancellationToken = default);
     Task<bool> ExistsByEmailAsync(string email, Guid tenantId, CancellationToken cancellationToken = default);

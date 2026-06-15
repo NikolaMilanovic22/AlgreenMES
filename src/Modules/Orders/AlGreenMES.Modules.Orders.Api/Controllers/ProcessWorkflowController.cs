@@ -1,12 +1,13 @@
 using AlGreenMES.Modules.Orders.Api.Requests;
 using AlGreenMES.Modules.Orders.Application.Commands.BlockProcess;
 using AlGreenMES.Modules.Orders.Application.Commands.CompleteProcess;
-using AlGreenMES.Modules.Orders.Application.Commands.PauseStation;
+using AlGreenMES.Modules.Orders.Application.Commands.PauseOnLogout;
 using AlGreenMES.Modules.Orders.Application.Commands.ResumeProcessWork;
-using AlGreenMES.Modules.Orders.Application.Commands.ResumeStation;
+using AlGreenMES.Modules.Orders.Application.Commands.ResumeOnLogin;
 using AlGreenMES.Modules.Orders.Application.Commands.StartProcessWork;
 using AlGreenMES.Modules.Orders.Application.Commands.StopProcessWork;
 using AlGreenMES.Modules.Orders.Application.Commands.RestartProcess;
+using AlGreenMES.Modules.Orders.Application.Commands.SetProcessExcludedFromReports;
 using AlGreenMES.Modules.Orders.Application.Commands.UnblockProcess;
 using AlGreenMES.Modules.Orders.Application.Commands.WithdrawProcess;
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
@@ -89,17 +90,33 @@ public class ProcessWorkflowController : ControllerBase
         return NoContent();
     }
 
-    [HttpPost("pause-station")]
-    public async Task<IActionResult> PauseStation([FromBody] StationRequest request, CancellationToken cancellationToken)
+    [HttpPost("pause-on-logout")]
+    public async Task<IActionResult> PauseOnLogout([FromBody] WorkerProcessRequest request, CancellationToken cancellationToken)
     {
-        await _mediator.Send(new PauseStationCommand(request.ProcessId, _tenantService.GetCurrentTenantId(), request.UserId), cancellationToken);
+        await _mediator.Send(new PauseOnLogoutCommand(request.ProcessId, _tenantService.GetCurrentTenantId(), request.UserId), cancellationToken);
         return NoContent();
     }
 
-    [HttpPost("resume-station")]
-    public async Task<IActionResult> ResumeStation([FromBody] StationRequest request, CancellationToken cancellationToken)
+    [HttpPost("resume-on-login")]
+    public async Task<IActionResult> ResumeOnLogin([FromBody] WorkerProcessRequest request, CancellationToken cancellationToken)
     {
-        await _mediator.Send(new ResumeStationCommand(request.ProcessId, _tenantService.GetCurrentTenantId(), request.UserId), cancellationToken);
+        await _mediator.Send(new ResumeOnLoginCommand(request.ProcessId, _tenantService.GetCurrentTenantId(), request.UserId), cancellationToken);
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Toggle whether this OrderItemProcess is excluded from the /reports
+    /// statistics + export (Sale/Bojan's manual Uključi/Isključi switch).
+    /// </summary>
+    [HttpPatch("{id:guid}/excluded-from-reports")]
+    public async Task<IActionResult> SetExcludedFromReports(
+        Guid id,
+        [FromBody] SetProcessExcludedFromReportsRequest request,
+        CancellationToken cancellationToken)
+    {
+        await _mediator.Send(
+            new SetProcessExcludedFromReportsCommand(id, request.Excluded),
+            cancellationToken);
         return NoContent();
     }
 }

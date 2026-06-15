@@ -1,3 +1,4 @@
+using AlGreenMES.BuildingBlocks.Common.Exceptions;
 using AlGreenMES.Modules.Identity.Api.Requests;
 using AlGreenMES.Modules.Identity.Application.Commands.ChangePassword;
 using AlGreenMES.Modules.Identity.Application.Commands.CreateUser;
@@ -5,6 +6,9 @@ using AlGreenMES.Modules.Identity.Application.Commands.DeleteUser;
 using AlGreenMES.Modules.Identity.Application.Commands.ResetPassword;
 using AlGreenMES.Modules.Identity.Application.Commands.UpdateUser;
 using AlGreenMES.Modules.Identity.Application.Queries.GetUserById;
+using AlGreenMES.Modules.Identity.Application.Queries.GetUserLoginHistory;
+using AlGreenMES.Modules.Identity.Application.Queries.GetUserRoleHistory;
+using AlGreenMES.Modules.Identity.Application.Queries.GetSuperAdmins;
 using AlGreenMES.Modules.Identity.Application.Queries.GetUsers;
 using AlGreenMES.Modules.Identity.Domain.Entities;
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
@@ -67,13 +71,43 @@ public class UsersController : ControllerBase
         return Ok(result);
     }
 
+    // SuperAdmin-only listing of every SuperAdmin across every tenant. Feeds
+    // the "Sistem administratori" tab on the FE. Returned rows are read-only
+    // on the FE — peer-protection guards in Update/Delete/ResetPassword keep
+    // it that way even if the FE skips the role check.
+    [HttpGet("super-admins")]
+    [Authorize(Roles = "SuperAdmin")]
+    public async Task<IActionResult> GetSuperAdmins(CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(new GetSuperAdminsQuery(), cancellationToken);
+        return Ok(result);
+    }
+
     [HttpPost]
     [Authorize(Roles = "SuperAdmin,Admin")]
     public async Task<IActionResult> CreateUser([FromBody] CreateUserRequest request, CancellationToken cancellationToken)
     {
+        // Tenant override (request.TenantId) is allowed only for SuperAdmin
+        // — used by the tenant-creation flow to seed the initial Admin in
+        // a brand-new tenant. Everyone else creates users in their own
+        // home tenant (resolved from the JWT).
+        Guid tenantId;
+        if (request.TenantId.HasValue && request.TenantId.Value != Guid.Empty)
+        {
+            if (!User.IsInRole("SuperAdmin"))
+                throw new ForbiddenException(
+                    "FORBIDDEN_TENANT_OVERRIDE",
+                    "Only SuperAdmin can create users in another tenant.");
+            tenantId = request.TenantId.Value;
+        }
+        else
+        {
+            tenantId = _tenantService.GetCurrentTenantId();
+        }
+
         var result = await _mediator.Send(
             new CreateUserCommand(
-                _tenantService.GetCurrentTenantId(),
+                tenantId,
                 request.Email,
                 request.Password,
                 request.FirstName,
@@ -90,9 +124,35 @@ public class UsersController : ControllerBase
     public async Task<IActionResult> UpdateUser(Guid id, [FromBody] UpdateUserRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
-            new UpdateUserCommand(id, _tenantService.GetCurrentTenantId(), request.FirstName, request.LastName, request.Role, request.IsActive, request.CanIncludeWithdrawnInAnalysis, request.ProcessIds),
+            new UpdateUserCommand(id, _tenantService.GetCurrentTenantId(), request.FirstName, request.LastName, request.Role, request.IsActive, request.CanIncludeWithdrawnInAnalysis, request.ProcessIds, request.AdditionalRoles),
             cancellationToken);
 
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Role-change history for one user, newest first. SuperAdmin/Admin only
+    /// — viewing audit data is privileged. The list can be empty (user
+    /// never had their role changed) and that's a valid response.
+    /// </summary>
+    [HttpGet("{id:guid}/role-history")]
+    [Authorize(Roles = "SuperAdmin,Admin")]
+    public async Task<IActionResult> GetRoleHistory(Guid id, CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(new GetUserRoleHistoryQuery(id), cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Recent login attempts for one user, newest first. Capped at 100 rows
+    /// (handler clamps `limit`) so a misbehaving client can't pull the
+    /// whole audit log in one call. Same authz gate as the role history.
+    /// </summary>
+    [HttpGet("{id:guid}/login-history")]
+    [Authorize(Roles = "SuperAdmin,Admin")]
+    public async Task<IActionResult> GetLoginHistory(Guid id, [FromQuery] int limit = 20, CancellationToken cancellationToken = default)
+    {
+        var result = await _mediator.Send(new GetUserLoginHistoryQuery(id, limit), cancellationToken);
         return Ok(result);
     }
 

@@ -23,6 +23,57 @@ namespace AlGreenMES.Modules.Identity.Infrastructure.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("AlGreenMES.Modules.Identity.Domain.Entities.LoginAttempt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("AttemptedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("attempted_at");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("email");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("failure_reason");
+
+                    b.Property<string>("IpAddress")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("ip_address");
+
+                    b.Property<bool>("Succeeded")
+                        .HasColumnType("boolean")
+                        .HasColumnName("succeeded");
+
+                    b.Property<Guid?>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("UserAgent")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("user_agent");
+
+                    b.HasKey("Id")
+                        .HasName("pk_login_attempts");
+
+                    b.HasIndex("Email", "AttemptedAt")
+                        .HasDatabaseName("ix_login_attempts_email_attempted_at");
+
+                    b.HasIndex("TenantId", "AttemptedAt")
+                        .HasDatabaseName("ix_login_attempts_tenant_attempted_at");
+
+                    b.ToTable("login_attempts", "identity");
+                });
+
             modelBuilder.Entity("AlGreenMES.Modules.Identity.Domain.Entities.RefreshToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -78,6 +129,30 @@ namespace AlGreenMES.Modules.Identity.Infrastructure.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<int>("AlarmBeforeLogoutMinutes")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(5)
+                        .HasColumnName("alarm_before_logout_minutes");
+
+                    b.Property<int>("AutoLogoutAfterHours")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(2)
+                        .HasColumnName("auto_logout_after_hours");
+
+                    b.Property<int>("AutoLogoutRegularMinutes")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("auto_logout_regular_minutes");
+
+                    b.Property<int>("BreakMinutes")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("break_minutes");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -95,6 +170,12 @@ namespace AlGreenMES.Modules.Identity.Infrastructure.Migrations
                         .HasColumnType("boolean")
                         .HasDefaultValue(true)
                         .HasColumnName("is_active");
+
+                    b.Property<int>("MaxOvertimeHours")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(6)
+                        .HasColumnName("max_overtime_hours");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -130,6 +211,10 @@ namespace AlGreenMES.Modules.Identity.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("id");
+
+                    b.Property<int>("AccessFailedCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("access_failed_count");
 
                     b.Property<bool>("CanIncludeWithdrawnInAnalysis")
                         .ValueGeneratedOnAdd()
@@ -168,6 +253,10 @@ namespace AlGreenMES.Modules.Identity.Infrastructure.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
                         .HasColumnName("last_name");
+
+                    b.Property<DateTime?>("LockoutEnd")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("lockout_end");
 
                     b.Property<string>("PasswordHash")
                         .IsRequired()
@@ -237,6 +326,87 @@ namespace AlGreenMES.Modules.Identity.Infrastructure.Migrations
                     b.ToTable("user_processes", "identity");
                 });
 
+            modelBuilder.Entity("AlGreenMES.Modules.Identity.Domain.Entities.UserRoleAssignment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("role");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_user_role_assignments");
+
+                    b.HasIndex("UserId", "Role")
+                        .IsUnique()
+                        .HasDatabaseName("ix_user_role_assignments_user_id_role");
+
+                    b.ToTable("user_role_assignments", "identity");
+                });
+
+            modelBuilder.Entity("AlGreenMES.Modules.Identity.Domain.Entities.UserRoleChangeLog", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("ChangedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("changed_at");
+
+                    b.Property<Guid>("ChangedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("changed_by_user_id");
+
+                    b.Property<string>("NewRole")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("new_role");
+
+                    b.Property<string>("OldRole")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("old_role");
+
+                    b.Property<string>("Reason")
+                        .HasColumnType("text")
+                        .HasColumnName("reason");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_user_role_change_logs");
+
+                    b.HasIndex("UserId", "ChangedAt")
+                        .HasDatabaseName("ix_user_role_change_logs_user_changed_at");
+
+                    b.ToTable("user_role_change_logs", "identity");
+                });
+
             modelBuilder.Entity("AlGreenMES.Modules.Identity.Domain.Entities.RefreshToken", b =>
                 {
                     b.HasOne("AlGreenMES.Modules.Identity.Domain.Entities.User", null)
@@ -259,8 +429,22 @@ namespace AlGreenMES.Modules.Identity.Infrastructure.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("AlGreenMES.Modules.Identity.Domain.Entities.UserRoleAssignment", b =>
+                {
+                    b.HasOne("AlGreenMES.Modules.Identity.Domain.Entities.User", "User")
+                        .WithMany("AdditionalRoles")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_user_role_assignments_users_user_id");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("AlGreenMES.Modules.Identity.Domain.Entities.User", b =>
                 {
+                    b.Navigation("AdditionalRoles");
+
                     b.Navigation("UserProcesses");
                 });
 #pragma warning restore 612, 618

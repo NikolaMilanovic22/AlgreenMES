@@ -44,6 +44,7 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
             .IsRequired();
 
         builder.Ignore(u => u.FullName);
+        builder.Ignore(u => u.EffectiveRoles);
 
         builder.HasIndex(u => new { u.TenantId, u.Email })
             .IsUnique();
@@ -53,7 +54,14 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
             .HasForeignKey(up => up.UserId)
             .OnDelete(DeleteBehavior.Cascade);
 
+        builder.HasMany(u => u.AdditionalRoles)
+            .WithOne(r => r.User)
+            .HasForeignKey(r => r.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
         builder.Metadata.FindNavigation(nameof(User.UserProcesses))!
+            .SetPropertyAccessMode(PropertyAccessMode.Field);
+        builder.Metadata.FindNavigation(nameof(User.AdditionalRoles))!
             .SetPropertyAccessMode(PropertyAccessMode.Field);
     }
 }

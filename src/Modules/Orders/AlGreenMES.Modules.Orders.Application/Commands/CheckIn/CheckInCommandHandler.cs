@@ -14,15 +14,18 @@ public class CheckInCommandHandler : IRequestHandler<CheckInCommand, WorkSession
     private readonly IWorkSessionRepository _workSessionRepository;
     private readonly IOrdersUnitOfWork _unitOfWork;
     private readonly IProductionEventService _eventService;
+    private readonly IReportingQueryService _reportingQueryService;
 
     public CheckInCommandHandler(
         IWorkSessionRepository workSessionRepository,
         IOrdersUnitOfWork unitOfWork,
-        IProductionEventService eventService)
+        IProductionEventService eventService,
+        IReportingQueryService reportingQueryService)
     {
         _workSessionRepository = workSessionRepository;
         _unitOfWork = unitOfWork;
         _eventService = eventService;
+        _reportingQueryService = reportingQueryService;
     }
 
     public async Task<WorkSessionDto> Handle(CheckInCommand request, CancellationToken cancellationToken)
@@ -40,6 +43,20 @@ public class CheckInCommandHandler : IRequestHandler<CheckInCommand, WorkSession
             {
                 throw new DomainException("ALREADY_CHECKED_IN", "User already has an active session.");
             }
+        }
+
+        // Block re-login after MaxOvertimeHours is fully consumed for today.
+        // Saša 08.06.2026 (Bug 1): the worker could still log in past the cap,
+        // ResumeOnLogin would briefly resume their work, then the lazy auto-
+        // logout immediately closed the session — leaving the tablet UI
+        // showing "logged in" while the dashboard saw no active operator.
+        var quotaExhausted = await _reportingQueryService.IsOvertimeQuotaExhaustedAsync(
+            request.TenantId, request.UserId, cancellationToken);
+        if (quotaExhausted)
+        {
+            throw new DomainException(
+                "OVERTIME_EXHAUSTED",
+                "Maksimalno dozvoljeno prekovremeno radno vreme za danas je iskorišćeno.");
         }
 
         var session = WorkSession.CheckIn(request.TenantId, request.UserId);

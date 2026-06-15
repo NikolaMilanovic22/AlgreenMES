@@ -15,6 +15,7 @@ public record TimeTrackingItemDto(
     DateTime? StartedAt,
     DateTime? CompletedAt,
     int DurationSeconds,
+    bool IsExcludedFromReports,
     List<SubProcessTimeDto> SubProcesses);
 
 public record SubProcessTimeDto(

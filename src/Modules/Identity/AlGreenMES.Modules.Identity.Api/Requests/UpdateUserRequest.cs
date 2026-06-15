@@ -8,4 +8,7 @@ public record UpdateUserRequest(
     UserRole Role,
     bool IsActive,
     bool CanIncludeWithdrawnInAnalysis,
-    List<Guid>? ProcessIds);
+    List<Guid>? ProcessIds,
+    /// <summary>Null = leave existing additional roles alone; non-null
+    /// = replace them. Saša 08.06.2026 multi-role.</summary>
+    List<UserRole>? AdditionalRoles);

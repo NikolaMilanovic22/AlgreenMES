@@ -11,6 +11,14 @@ public class Tenant
     public DateTime CreatedAt { get; private set; }
     public DateTime? UpdatedAt { get; private set; }
 
+    /// <summary>
+    /// Relative path to the tenant's uploaded brand logo (e.g.
+    /// "tenant-logos/{tenantId}.png"). Resolved to a full URL by the
+    /// API endpoint that streams the file. Null when the tenant hasn't
+    /// uploaded a logo yet; FE falls back to the MPMS mark.
+    /// </summary>
+    public string? LogoUrl { get; private set; }
+
     public TenantSettings? Settings { get; private set; }
 
     private Tenant()
@@ -49,6 +57,12 @@ public class Tenant
 
         Name = name.Trim();
         IsActive = isActive;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
+    public void SetLogoUrl(string? logoUrl)
+    {
+        LogoUrl = logoUrl;
         UpdatedAt = DateTime.UtcNow;
     }
 }

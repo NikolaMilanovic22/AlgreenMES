@@ -9,5 +9,10 @@ public enum NotificationType
     BlockRequestRejected,
     ProcessCompleted,
     ProcessBlocked,
-    OrderActivated
+    OrderActivated,
+    WorkerAutoLoggedOut,
+    MaterialLowStock,
+    ChangeRequest,
+    ChangeRequestApproved,
+    ChangeRequestRejected,
 }

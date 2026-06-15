@@ -16,6 +16,8 @@ public class ProductionDbContext : DbContext, IProductionUnitOfWork
     public DbSet<ProductCategoryProcess> ProductCategoryProcesses => Set<ProductCategoryProcess>();
     public DbSet<ProductCategoryDependency> ProductCategoryDependencies => Set<ProductCategoryDependency>();
     public DbSet<SpecialRequestType> SpecialRequestTypes => Set<SpecialRequestType>();
+    public DbSet<Material> Materials => Set<Material>();
+    public DbSet<StockMovement> StockMovements => Set<StockMovement>();
 
     public ProductionDbContext(DbContextOptions<ProductionDbContext> options, ICurrentUserService currentUser)
         : base(options)

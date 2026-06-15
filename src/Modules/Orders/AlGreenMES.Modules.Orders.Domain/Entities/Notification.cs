@@ -11,6 +11,13 @@ public class Notification : TenantEntity
     public string Message { get; private set; } = null!;
     public string? ReferenceType { get; private set; }
     public Guid? ReferenceId { get; private set; }
+    /// <summary>
+    /// Optional JSON payload with structured params (e.g. {"materialCode":"100",
+    /// "materialName":"Profil AL"}). FE prefers rendering via i18n templates
+    /// keyed on <see cref="Type"/> using these params; falls back to Title /
+    /// Message when missing.
+    /// </summary>
+    public string? ParamsJson { get; private set; }
     public bool IsRead { get; private set; }
     public DateTime CreatedAt { get; private set; } = DateTime.UtcNow;
 
@@ -19,7 +26,8 @@ public class Notification : TenantEntity
     }
 
     public static Notification Create(Guid tenantId, Guid userId, NotificationType type,
-        string title, string message, string? referenceType = null, Guid? referenceId = null)
+        string title, string message, string? referenceType = null, Guid? referenceId = null,
+        string? paramsJson = null)
     {
         return new Notification
         {
@@ -30,6 +38,7 @@ public class Notification : TenantEntity
             Message = message,
             ReferenceType = referenceType,
             ReferenceId = referenceId,
+            ParamsJson = paramsJson,
             IsRead = false
         };
     }

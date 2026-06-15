@@ -18,6 +18,7 @@ public class OrdersDbContext : DbContext, IOrdersUnitOfWork
     public DbSet<OrderItemSubProcess> OrderItemSubProcesses => Set<OrderItemSubProcess>();
     public DbSet<OrderItemSpecialRequest> OrderItemSpecialRequests => Set<OrderItemSpecialRequest>();
     public DbSet<OrderItemSubProcessLog> OrderItemSubProcessLogs => Set<OrderItemSubProcessLog>();
+    public DbSet<OrderItemProcessLog> OrderItemProcessLogs => Set<OrderItemProcessLog>();
     public DbSet<WorkSession> WorkSessions => Set<WorkSession>();
     public DbSet<ChangeRequest> ChangeRequests => Set<ChangeRequest>();
     public DbSet<BlockRequest> BlockRequests => Set<BlockRequest>();

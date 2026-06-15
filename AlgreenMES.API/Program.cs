@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json.Serialization;
+using System.Threading.RateLimiting;
 using AlgreenMES.API.Middleware;
 using AlgreenMES.API.Services;
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
@@ -82,15 +83,28 @@ public class Program
                 var sentryDsn = context.Configuration["Sentry:Dsn"];
                 if (!string.IsNullOrWhiteSpace(sentryDsn))
                 {
-                    configuration.WriteTo.Sentry(o =>
-                    {
-                        o.Dsn = sentryDsn;
-                        o.Environment = context.Configuration["Sentry:Environment"] ?? "development";
-                        o.Release = context.Configuration["Sentry:Release"];
-                        o.InitializeSdk = false;
-                        o.MinimumBreadcrumbLevel = LogEventLevel.Information;
-                        o.MinimumEventLevel = LogEventLevel.Error;
-                    });
+                    // Sub-logger so we can drop client-cancellation noise from
+                    // the Sentry sink only — keep it in console/file for local
+                    // debugging. The cancellation chain looks like:
+                    //   client tab closes → request aborted → CancellationToken
+                    //   propagates to EF Core query → OperationCanceledException
+                    //   (or TaskCanceledException) → EF Core ConnectionError log
+                    //   (with the OCE attached as the exception).
+                    // GlobalExceptionHandlerMiddleware swallows the OCE
+                    // downstream, but UseSerilogRequestLogging sits INSIDE that
+                    // handler and has already logged at Error by the time we
+                    // swallow — so Sentry still gets paged. Filter here.
+                    configuration.WriteTo.Logger(l => l
+                        .Filter.ByExcluding(e => e.Exception is OperationCanceledException)
+                        .WriteTo.Sentry(o =>
+                        {
+                            o.Dsn = sentryDsn;
+                            o.Environment = context.Configuration["Sentry:Environment"] ?? "development";
+                            o.Release = context.Configuration["Sentry:Release"];
+                            o.InitializeSdk = false;
+                            o.MinimumBreadcrumbLevel = LogEventLevel.Information;
+                            o.MinimumEventLevel = LogEventLevel.Error;
+                        }));
                 }
             });
 
@@ -148,6 +162,50 @@ public class Program
                     policy.RequireClaim(System.Security.Claims.ClaimTypes.Role, "SuperAdmin"));
             });
 
+            // Rate limiting — first defense against credential-stuffing /
+            // brute-force on the auth surface. Per-IP fixed window keyed off
+            // X-Forwarded-For (nginx puts the real client there) with a
+            // fallback to the socket address.
+            //
+            // The "auth-login" policy is attached to AuthController endpoints
+            // via [EnableRateLimiting] attributes; password change/reset run
+            // under an already-authenticated session and aren't the public
+            // attack surface so they're not gated here.
+            //
+            // In the integration-test environment the limiter is effectively
+            // disabled (very high permit limit) because every test hits the
+            // same localhost partition key and would otherwise share one
+            // 10-attempt bucket across the entire test run.
+            var isTestEnvironment = builder.Environment.EnvironmentName == "Test";
+            builder.Services.AddRateLimiter(options =>
+            {
+                options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+                static string PartitionByForwardedIp(HttpContext ctx)
+                {
+                    var fwd = ctx.Request.Headers["X-Forwarded-For"].FirstOrDefault();
+                    if (!string.IsNullOrWhiteSpace(fwd))
+                    {
+                        // X-Forwarded-For can be a comma-separated list; the
+                        // first entry is the originating client.
+                        var first = fwd.Split(',')[0].Trim();
+                        if (!string.IsNullOrWhiteSpace(first)) return first;
+                    }
+                    return ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                }
+
+                options.AddPolicy("auth-login", ctx =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        partitionKey: PartitionByForwardedIp(ctx),
+                        factory: _ => new FixedWindowRateLimiterOptions
+                        {
+                            PermitLimit = isTestEnvironment ? int.MaxValue : 10,
+                            Window = TimeSpan.FromMinutes(5),
+                            QueueLimit = 0,
+                            AutoReplenishment = true,
+                        }));
+            });
+
             // Current user / tenant resolution from JWT
             builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
             builder.Services.AddScoped<ITenantService, TenantService>();
@@ -155,10 +213,13 @@ public class Program
             // SignalR event service
             builder.Services.AddScoped<IProductionEventService, ProductionEventService>();
             builder.Services.AddScoped<IProcessChangeNotifier, ProcessChangeNotifier>();
+            builder.Services.AddScoped<INotificationBroadcaster, NotificationBroadcaster>();
             builder.Services.AddScoped<AlGreenMES.Modules.Production.Application.Interfaces.IReferenceCheckService, ReferenceCheckService>();
 
             // Background services
             builder.Services.AddHostedService<DeadlineWarningService>();
+            builder.Services.AddHostedService<AutoLogoutBackgroundService>();
+            builder.Services.AddHostedService<LoginAttemptRetentionService>();
 
             // Module registrations
             builder.Services.AddTenancyModule(builder.Configuration);
@@ -257,6 +318,7 @@ public class Program
             }
 
             app.UseHttpsRedirection();
+            app.UseMiddleware<SecurityHeadersMiddleware>();
             app.UseCors(CorsPolicyName);
             // UseSerilogRequestLogging sits OUTSIDE auth so it captures every
             // response — including 401/403 short-circuits from UseAuthorization.
@@ -267,6 +329,18 @@ public class Program
             // them.
             app.UseSerilogRequestLogging(options =>
             {
+                // Downgrade cancelled-request completion logs to Information so
+                // the Sentry sink (Error+) skips them. Bare safety net — the
+                // sub-logger filter on Exception is OperationCanceledException
+                // already drops these from Sentry, but this also keeps the
+                // request-logging line out of error metrics / dashboards.
+                options.GetLevel = (httpContext, elapsed, ex) =>
+                {
+                    if (ex is OperationCanceledException && httpContext.RequestAborted.IsCancellationRequested)
+                        return LogEventLevel.Information;
+                    if (ex != null) return LogEventLevel.Error;
+                    return httpContext.Response.StatusCode >= 500 ? LogEventLevel.Error : LogEventLevel.Information;
+                };
                 options.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
                 {
                     var correlationId = httpContext.Request.Headers["X-Correlation-Id"].FirstOrDefault()
@@ -302,6 +376,12 @@ public class Program
             });
             app.UseAuthentication();
             app.UseAuthorization();
+            app.UseRateLimiter();
+            // Read-only gate for SuperAdmin cross-tenant sessions. Must run
+            // AFTER UseAuthentication so HttpContext.User claims are populated;
+            // ordering before the enrichment middlewares keeps the 403 visible
+            // in logs as a single line rather than a nested authn flow.
+            app.UseMiddleware<CrossTenantReadOnlyMiddleware>();
             app.UseMiddleware<SerilogEnrichmentMiddleware>();
             app.UseMiddleware<SentryEnrichmentMiddleware>();
             app.MapControllers();
@@ -361,6 +441,21 @@ public class Program
             // those filters but DI must still resolve the dependency graph.
             // HttpContextAccessor returns a null context off the request path,
             // which both services tolerate.
+            // The migrate path only ever resolves the four DbContexts. It
+            // pulls in the full module wiring so DbContext configuration is
+            // identical to runtime, but that wiring also registers MediatR
+            // handlers whose own dependencies (e.g. IProductionEventService,
+            // IReferenceCheckService) live in the API project and are NOT
+            // exercised here. Disable container validation so the build
+            // succeeds without dragging every cross-module service into the
+            // migrate registration. (On Production deploys validation is
+            // skipped by default — this matches that behavior locally.)
+            builder.Host.UseDefaultServiceProvider(o =>
+            {
+                o.ValidateScopes = false;
+                o.ValidateOnBuild = false;
+            });
+
             builder.Services.AddHttpContextAccessor();
             builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
             builder.Services.AddScoped<ITenantService, TenantService>();

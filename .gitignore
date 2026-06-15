@@ -127,3 +127,6 @@ Desktop.ini
 
 # Publish output
 publish/
+
+# Local-dev seed scripts (data-mutation, not for production)
+scripts/local-*.sql

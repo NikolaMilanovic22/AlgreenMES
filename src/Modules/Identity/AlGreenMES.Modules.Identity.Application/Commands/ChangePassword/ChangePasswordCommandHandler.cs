@@ -10,17 +10,20 @@ namespace AlGreenMES.Modules.Identity.Application.Commands.ChangePassword;
 public class ChangePasswordCommandHandler : IRequestHandler<ChangePasswordCommand, Unit>
 {
     private readonly IUserRepository _userRepository;
+    private readonly IRefreshTokenRepository _refreshTokenRepository;
     private readonly IIdentityUnitOfWork _unitOfWork;
     private readonly IPasswordHasher _passwordHasher;
     private readonly ICurrentUserService _currentUser;
 
     public ChangePasswordCommandHandler(
         IUserRepository userRepository,
+        IRefreshTokenRepository refreshTokenRepository,
         IIdentityUnitOfWork unitOfWork,
         IPasswordHasher passwordHasher,
         ICurrentUserService currentUser)
     {
         _userRepository = userRepository;
+        _refreshTokenRepository = refreshTokenRepository;
         _unitOfWork = unitOfWork;
         _passwordHasher = passwordHasher;
         _currentUser = currentUser;
@@ -45,6 +48,14 @@ public class ChangePasswordCommandHandler : IRequestHandler<ChangePasswordComman
 
         var newPasswordHash = _passwordHasher.HashPassword(request.NewPassword);
         user.ChangePassword(newPasswordHash);
+
+        // F-12 — match the role-change flow (F-3): a password change must
+        // invalidate any refresh token issued under the old credentials. JWT
+        // access tokens still work until their 60-min TTL, but the user (or
+        // attacker holding a stolen session) can't roll over into a fresh
+        // token once the old refresh is revoked.
+        await _refreshTokenRepository.RevokeAllForUserAsync(user.Id, cancellationToken);
+
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return Unit.Value;

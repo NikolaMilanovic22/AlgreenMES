@@ -31,8 +31,15 @@ public class CreateUserCommandHandler : IRequestHandler<CreateUserCommand, UserD
 
     public async Task<UserDto> Handle(CreateUserCommand request, CancellationToken cancellationToken)
     {
+        // SuperAdmin creation rules (revised 15.06.2026):
+        //   - Initial SA seeded via DB (no caller exists pre-seed).
+        //   - Subsequent SAs are created by other SAs via the API → allowed.
+        //   - Non-SA callers cannot create an SA.
+        // Combined with peer-protection on Update/Delete/ResetPassword,
+        // this gives the "SAs can additively grow but cannot edit/delete
+        // each other" property Milos asked for.
         if (request.Role == UserRole.SuperAdmin && !_currentUser.IsInRole("SuperAdmin"))
-            throw new DomainException("FORBIDDEN_ROLE_ASSIGNMENT", "Only SuperAdmin can grant the SuperAdmin role.");
+            throw new ForbiddenException("FORBIDDEN_ROLE_ASSIGNMENT", "Only SuperAdmin can create a SuperAdmin user.");
 
         var emailExists = await _userRepository.ExistsByEmailAsync(request.Email, request.TenantId, cancellationToken);
         if (emailExists)

@@ -27,6 +27,9 @@ public class TenantConfiguration : IEntityTypeConfiguration<Tenant>
         builder.Property(t => t.CreatedAt)
             .IsRequired();
 
+        builder.Property(t => t.LogoUrl)
+            .HasMaxLength(500);
+
         builder.HasIndex(t => t.Code)
             .IsUnique();
 

@@ -9,6 +9,7 @@ using AlGreenMES.Modules.Production.Infrastructure.Persistence;
 using AlGreenMES.Modules.Tenancy.Domain.Entities;
 using AlGreenMES.Modules.Tenancy.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 
 namespace AlgreenMES.API.Services;
 
@@ -18,6 +19,22 @@ public static class DataSeeder
     {
         using var scope = serviceProvider.CreateScope();
         var services = scope.ServiceProvider;
+
+        // The seeder creates the DEMO tenant, 11 demo users, the bootstrap
+        // SuperAdmin (superadmin@demo.com), and a stock process list A–K.
+        // Useful for dev / staging / fresh installs; junk data next to real
+        // tenant data on a real-customer droplet.
+        //
+        // Gate is a Seeding:Enabled config flag. Default = true to preserve
+        // the existing behaviour on alblue staging (where the flag isn't
+        // set) and on dev environments. Real-customer droplets (algreen
+        // pilot, future client deploys) set "Seeding": { "Enabled": false }
+        // in their appsettings.Production.json before the first upgrade
+        // that ships this gate — keeping demo data out of their DB.
+        var config = services.GetRequiredService<IConfiguration>();
+        var seedingEnabled = config.GetValue("Seeding:Enabled", defaultValue: true);
+        if (!seedingEnabled)
+            return;
 
         var tenancyDb = services.GetRequiredService<TenancyDbContext>();
         var identityDb = services.GetRequiredService<IdentityDbContext>();
@@ -53,6 +70,26 @@ public static class DataSeeder
         {
             // Reset password if hash is invalid
             adminUser.ChangePassword(passwordHasher.HashPassword("Admin123!"));
+            await identityDb.SaveChangesAsync();
+        }
+
+        // 2b. Get or create Super Administrator. Needed for the cross-tenant
+        // login flow + the Super administratori tab (otherwise nobody can
+        // bootstrap additional Super administrators through the UI).
+        // Idempotent: created only if missing, password reset if hash drifts.
+        // Home tenant is the demo tenant — convention matches admin@demo.com.
+        var superAdminUser = await identityDb.Users.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(u => u.Email == "superadmin@demo.com" && u.TenantId == tenantId);
+        if (superAdminUser == null)
+        {
+            var passwordHash = passwordHasher.HashPassword("SuperAdmin123!");
+            superAdminUser = User.Create(tenantId, "superadmin@demo.com", passwordHash, "Super", "Admin", UserRole.SuperAdmin);
+            identityDb.Users.Add(superAdminUser);
+            await identityDb.SaveChangesAsync();
+        }
+        else if (!passwordHasher.VerifyPassword("SuperAdmin123!", superAdminUser.PasswordHash))
+        {
+            superAdminUser.ChangePassword(passwordHasher.HashPassword("SuperAdmin123!"));
             await identityDb.SaveChangesAsync();
         }
 
@@ -200,9 +237,9 @@ public static class DataSeeder
         // 7. Shifts
         var shiftDefs = new (string Name, TimeOnly Start, TimeOnly End)[]
         {
-            ("Jutarnja smjena", new TimeOnly(6, 0), new TimeOnly(14, 0)),
-            ("Popodnevna smjena", new TimeOnly(14, 0), new TimeOnly(22, 0)),
-            ("Noćna smjena", new TimeOnly(22, 0), new TimeOnly(6, 0)),
+            ("Jutarnja smena", new TimeOnly(6, 0), new TimeOnly(14, 0)),
+            ("Popodnevna smena", new TimeOnly(14, 0), new TimeOnly(22, 0)),
+            ("Noćna smena", new TimeOnly(22, 0), new TimeOnly(6, 0)),
         };
 
         foreach (var (name, start, end) in shiftDefs)
@@ -210,7 +247,10 @@ public static class DataSeeder
             if (!await identityDb.Shifts.IgnoreQueryFilters()
                 .AnyAsync(s => s.Name == name && s.TenantId == tenantId))
             {
-                var shift = Shift.Create(tenantId, name, start, end);
+                // Seed defaults: 0 min break, 6h max overtime, auto-logout for
+                // overtime re-login = 2h, 5 min alarm. AutoLogoutRegularMinutes=0
+                // = legacy behaviour (admin sets it later per Bojan 29.05.2026).
+                var shift = Shift.Create(tenantId, name, start, end, 0, 6, 2, 5, 0);
                 identityDb.Shifts.Add(shift);
             }
         }

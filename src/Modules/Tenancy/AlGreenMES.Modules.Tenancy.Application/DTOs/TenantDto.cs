@@ -6,4 +6,5 @@ public record TenantDto(
     string Code,
     bool IsActive,
     DateTime CreatedAt,
-    DateTime? UpdatedAt);
+    DateTime? UpdatedAt,
+    string? LogoUrl = null);

@@ -32,6 +32,10 @@ public class OrderItemProcessConfiguration : IEntityTypeConfiguration<OrderItemP
         builder.Property(p => p.IsWithdrawn)
             .IsRequired();
 
+        builder.Property(p => p.IsExcludedFromReports)
+            .IsRequired()
+            .HasDefaultValue(false);
+
         builder.Property(p => p.BlockReason)
             .HasMaxLength(2000);
 
@@ -55,6 +59,9 @@ public class OrderItemProcessConfiguration : IEntityTypeConfiguration<OrderItemP
             .OnDelete(DeleteBehavior.Cascade);
 
         builder.Metadata.FindNavigation(nameof(OrderItemProcess.SubProcesses))!
+            .SetPropertyAccessMode(PropertyAccessMode.Field);
+
+        builder.Metadata.FindNavigation(nameof(OrderItemProcess.ProcessLogs))!
             .SetPropertyAccessMode(PropertyAccessMode.Field);
     }
 }

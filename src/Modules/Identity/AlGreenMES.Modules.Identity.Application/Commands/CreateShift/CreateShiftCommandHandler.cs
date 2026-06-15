@@ -24,7 +24,12 @@ public class CreateShiftCommandHandler : IRequestHandler<CreateShiftCommand, Shi
             request.TenantId,
             request.Name,
             request.StartTime,
-            request.EndTime);
+            request.EndTime,
+            request.BreakMinutes,
+            request.MaxOvertimeHours,
+            request.AutoLogoutAfterHours,
+            request.AlarmBeforeLogoutMinutes,
+            request.AutoLogoutRegularMinutes);
 
         await _shiftRepository.AddAsync(shift, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);

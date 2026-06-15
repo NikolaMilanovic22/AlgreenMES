@@ -35,7 +35,7 @@ public class ResumeProcessWorkCommandHandler : IRequestHandler<ResumeProcessWork
 
         if (!hasSubProcesses)
         {
-            process.ResumeTimer();
+            process.ResumeTimer(request.UserId);
             await _unitOfWork.SaveChangesAsync(cancellationToken);
             return Unit.Value;
         }

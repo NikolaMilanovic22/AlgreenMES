@@ -19,6 +19,7 @@ public class UserRepository : IUserRepository
     {
         return await _dbContext.Users
             .Include(u => u.UserProcesses)
+            .Include(u => u.AdditionalRoles)
             .FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
     }
 
@@ -26,14 +27,17 @@ public class UserRepository : IUserRepository
     {
         return await _dbContext.Users
             .Include(u => u.UserProcesses)
+            .Include(u => u.AdditionalRoles)
             .FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
     }
 
     public async Task<User?> GetByIdIgnoreFiltersAsync(Guid id, CancellationToken cancellationToken = default)
     {
         // Refresh flow runs unauthenticated — bypass HasQueryFilter, caller validates tenant explicitly.
+        // Include AdditionalRoles so the regenerated JWT carries the full role set.
         return await _dbContext.Users
             .IgnoreQueryFilters()
+            .Include(u => u.AdditionalRoles)
             .FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
     }
 
@@ -44,6 +48,7 @@ public class UserRepository : IUserRepository
         return await _dbContext.Users
             .IgnoreQueryFilters()
             .Include(u => u.UserProcesses)
+            .Include(u => u.AdditionalRoles)
             .FirstOrDefaultAsync(u => u.Email == normalizedEmail && u.TenantId == tenantId, cancellationToken);
     }
 
@@ -54,7 +59,37 @@ public class UserRepository : IUserRepository
         return await _dbContext.Users
             .IgnoreQueryFilters()
             .Include(u => u.UserProcesses)
+            .Include(u => u.AdditionalRoles)
             .FirstOrDefaultAsync(u => u.Email == normalizedEmail && u.TenantId == tenantId, cancellationToken);
+    }
+
+    public async Task<User?> GetByEmailAcrossTenantsAsync(string email, CancellationToken cancellationToken = default)
+    {
+        // SuperAdmin cross-tenant login path. Skips the tenant filter so we
+        // can find a SuperAdmin user whose HOME tenant differs from the one
+        // they're logging into. Caller is responsible for verifying
+        // user.Role == SuperAdmin before trusting the cross-tenant intent —
+        // without that check this method would leak the existence of any
+        // user across tenants.
+        var normalizedEmail = email.Trim().ToLowerInvariant();
+        return await _dbContext.Users
+            .IgnoreQueryFilters()
+            .Include(u => u.UserProcesses)
+            .Include(u => u.AdditionalRoles)
+            .FirstOrDefaultAsync(u => u.Email == normalizedEmail, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<User>> GetAllSuperAdminsAsync(CancellationToken cancellationToken = default)
+    {
+        // Cross-tenant listing for the "Sistem administratori" tab. Bypasses
+        // the tenant filter so a SuperAdmin can see all their peers
+        // regardless of which tenant each one is associated with.
+        return await _dbContext.Users
+            .IgnoreQueryFilters()
+            .Include(u => u.AdditionalRoles)
+            .Where(u => u.Role == UserRole.SuperAdmin)
+            .OrderBy(u => u.Email)
+            .ToListAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<User>> GetByTenantIdAsync(Guid tenantId, CancellationToken cancellationToken = default)
@@ -82,6 +117,7 @@ public class UserRepository : IUserRepository
     {
         return await _dbContext.Users
             .Include(u => u.UserProcesses)
+            .Include(u => u.AdditionalRoles)
             .Where(u => u.TenantId == tenantId && u.IsActive && u.UserProcesses.Any(up => up.ProcessId == processId))
             .ToListAsync(cancellationToken);
     }
@@ -90,6 +126,7 @@ public class UserRepository : IUserRepository
     {
         return await _dbContext.Users
             .Include(u => u.UserProcesses)
+            .Include(u => u.AdditionalRoles)
             .Where(u => u.TenantId == tenantId && u.Role == UserRole.Department && u.IsActive)
             .OrderBy(u => u.LastName).ThenBy(u => u.FirstName)
             .ToListAsync(cancellationToken);
@@ -109,7 +146,14 @@ public class UserRepository : IUserRepository
 
     public async Task<PagedResult<User>> GetPagedAsync(Guid tenantId, UserRole? role, bool? isActive, string? search, DateTime? createdFrom, DateTime? createdTo, string? sortBy, bool isDescending, int page, int pageSize, CancellationToken cancellationToken = default)
     {
-        var query = _dbContext.Users.Include(u => u.UserProcesses).Where(u => u.TenantId == tenantId);
+        // Super administrators are intentionally invisible from the regular
+        // "Korisnici firme" listing — they appear ONLY in the dedicated
+        // "Super administratori" tab (gated by [Authorize(SuperAdmin)] at
+        // the controller). Tenant Admins shouldn't even be able to tell
+        // that platform-level accounts exist in their tenant.
+        var query = _dbContext.Users
+            .Include(u => u.UserProcesses)
+            .Where(u => u.TenantId == tenantId && u.Role != UserRole.SuperAdmin);
 
         if (role.HasValue)
             query = query.Where(u => u.Role == role.Value);

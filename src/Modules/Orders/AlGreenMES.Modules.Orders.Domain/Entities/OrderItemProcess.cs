@@ -16,6 +16,18 @@ public class OrderItemProcess : TenantEntity
     public DateTime? CompletedAt { get; private set; }
     public int TotalDurationMinutes { get; private set; }
 
+    /// <summary>
+    /// The worker who STARTED this process (Bojan 04.06.2026 — needed so
+    /// process-level work, i.e. processes without sub-processes like Krojenje,
+    /// can be attributed per-user in the Sati radnika report). For processes
+    /// with sub-processes the per-user time still lives on subprocess logs;
+    /// this field only matters for processes-without-subprocesses. Set at
+    /// StartProcessWork; resumed-from-pause keeps the original starter
+    /// (the typical case is the same worker resuming). Null on historical
+    /// rows that pre-date the column.
+    /// </summary>
+    public Guid? StartedByUserId { get; private set; }
+
     public bool IsWithdrawn { get; private set; }
     public DateTime? WithdrawnAt { get; private set; }
     public Guid? WithdrawnByUserId { get; private set; }
@@ -34,12 +46,23 @@ public class OrderItemProcess : TenantEntity
     public DateTime? PausedAt { get; private set; }
     public DateTime? ResumedAt { get; private set; }
     /// <summary>
-    /// When set, this process was paused by a tablet-station logout and
-    /// should auto-resume on the next ResumeStation call. Null means
-    /// either "not paused" or "paused manually by a worker" (which must
-    /// not auto-resume).
+    /// When set, this process was paused by a tablet logout and should
+    /// auto-resume on the next worker login (ResumeOnLoginCommand).
+    /// Null means either "not paused" or "paused manually by a worker"
+    /// (which must not auto-resume).
     /// </summary>
-    public DateTime? PausedByStationAt { get; private set; }
+    public DateTime? PausedOnLogoutAt { get; private set; }
+
+    /// <summary>
+    /// Sale/Bojan can manually mark a row to be excluded from the /reports
+    /// statistics + export. Excluded rows are filtered out of Vremena
+    /// (process times) aggregation and from the Praćenje (time-tracking)
+    /// XLSX/CSV export. They still appear in the Praćenje table itself so
+    /// the user can re-include via the Uključi toggle. Persisted in DB so
+    /// the choice survives sessions and is visible to all users in the
+    /// tenant.
+    /// </summary>
+    public bool IsExcludedFromReports { get; private set; }
 
     public DateTime CreatedAt { get; private set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; private set; }
@@ -48,6 +71,29 @@ public class OrderItemProcess : TenantEntity
 
     private readonly List<OrderItemSubProcess> _subProcesses = new();
     public IReadOnlyCollection<OrderItemSubProcess> SubProcesses => _subProcesses.AsReadOnly();
+
+    /// <summary>
+    /// Per-work-period logs for process-level work (only populated for
+    /// processes WITHOUT sub-processes — those with sub-processes use
+    /// OrderItemSubProcessLog instead). Bojan 06.06.2026: tracks each
+    /// Start→Pause/Resume cycle so Aktivno / Nepokriveno correctly excludes
+    /// offline gaps and mid-session pauses.
+    /// </summary>
+    private readonly List<OrderItemProcessLog> _processLogs = new();
+    public IReadOnlyCollection<OrderItemProcessLog> ProcessLogs => _processLogs.AsReadOnly();
+
+    private void EndOpenProcessLog()
+    {
+        var open = _processLogs.FirstOrDefault(l => l.EndTime == null);
+        open?.End();
+    }
+
+    private void StartProcessLog(Guid userId)
+    {
+        // Defensive: end any stray open log first (shouldn't normally happen).
+        EndOpenProcessLog();
+        _processLogs.Add(OrderItemProcessLog.Start(TenantId, Id, userId));
+    }
 
     private OrderItemProcess()
     {
@@ -67,13 +113,22 @@ public class OrderItemProcess : TenantEntity
         };
     }
 
-    public void Start()
+    public void Start(Guid? startedByUserId = null)
     {
         if (Status != ProcessStatus.Pending)
             throw new DomainException("INVALID_STATUS", "Can only start pending processes.");
         Status = ProcessStatus.InProgress;
         StartedAt = DateTime.UtcNow;
+        StartedByUserId = startedByUserId;
         UpdatedAt = DateTime.UtcNow;
+
+        // Process-level work log only kicks in for processes WITHOUT
+        // sub-processes — those route their time through subprocess logs
+        // (which Start() will trigger separately via StartProcessWork
+        // selecting the first sub-process and calling StartLog).
+        var hasSubProcesses = _subProcesses.Any(sp => !sp.IsWithdrawn);
+        if (!hasSubProcesses && startedByUserId.HasValue)
+            StartProcessLog(startedByUserId.Value);
     }
 
     public void Complete()
@@ -92,6 +147,7 @@ public class OrderItemProcess : TenantEntity
         Status = ProcessStatus.Completed;
         CompletedAt = DateTime.UtcNow;
         UpdatedAt = DateTime.UtcNow;
+        EndOpenProcessLog();
     }
 
     public void Block(Guid userId, string reason)
@@ -114,6 +170,7 @@ public class OrderItemProcess : TenantEntity
         PausedAt = null;
         ResumedAt = null;
         UpdatedAt = DateTime.UtcNow;
+        EndOpenProcessLog();
     }
 
     public void Unblock(Guid userId, bool resetTime = false)
@@ -163,6 +220,7 @@ public class OrderItemProcess : TenantEntity
         StoppedByUserId = userId;
         StoppedReason = reason;
         UpdatedAt = DateTime.UtcNow;
+        EndOpenProcessLog();
     }
 
     public void Withdraw(Guid userId, string reason)
@@ -175,6 +233,7 @@ public class OrderItemProcess : TenantEntity
         WithdrawnReason = reason;
         Status = ProcessStatus.Withdrawn;
         UpdatedAt = DateTime.UtcNow;
+        EndOpenProcessLog();
     }
 
     public void Pause()
@@ -188,18 +247,19 @@ public class OrderItemProcess : TenantEntity
         TotalDurationMinutes += sessionSeconds;
 
         PausedAt = DateTime.UtcNow;
-        PausedByStationAt = null; // manual pause — not auto-resumable on next login
+        PausedOnLogoutAt = null; // manual pause — not auto-resumable on next login
         ResumedAt = null;
         UpdatedAt = DateTime.UtcNow;
+        EndOpenProcessLog();
     }
 
     /// <summary>
-    /// Pause because the worker is logging out of the tablet station.
-    /// Sets PausedByStationAt so the next tablet login auto-resumes this
+    /// Pause because the worker is logging out of the tablet. Sets
+    /// PausedOnLogoutAt so the next tablet login auto-resumes this
     /// process. Skips if already paused (manually) — manual pauses must
     /// NOT auto-resume.
     /// </summary>
-    public void PauseByStation()
+    public void PauseOnLogout()
     {
         if (PausedAt.HasValue) return;
 
@@ -208,8 +268,38 @@ public class OrderItemProcess : TenantEntity
         TotalDurationMinutes += sessionSeconds;
 
         PausedAt = DateTime.UtcNow;
-        PausedByStationAt = DateTime.UtcNow;
+        PausedOnLogoutAt = DateTime.UtcNow;
         ResumedAt = null;
+        UpdatedAt = DateTime.UtcNow;
+        EndOpenProcessLog();
+    }
+
+    /// <summary>
+    /// Mark the parent OIP as auto-logged-out without setting PausedAt.
+    /// Used by PauseOnLogoutCommand for sub-process style processes — the
+    /// parent OIP's timer doesn't run (sub-process logs carry the time),
+    /// so we only need a flag for ResumeOnLogin to distinguish auto-logout
+    /// from a manual pause. Saša 08.06.2026 (Bug 2): sub-processes weren't
+    /// resuming on OT relogin in some cases because the sub-level
+    /// PausedOnLogoutAt didn't make it through the PauseWork → PauseOnLogout
+    /// chain — anchoring the marker on the parent is more robust.
+    /// </summary>
+    public void MarkAutoPausedOnLogout()
+    {
+        if (PausedOnLogoutAt.HasValue) return;
+        PausedOnLogoutAt = DateTime.UtcNow;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Clears the auto-logout marker on the parent OIP without touching
+    /// PausedAt / ResumedAt / logs. Used by ResumeOnLogin for sub-process
+    /// style processes after auto-resuming the active sub-process.
+    /// </summary>
+    public void ClearAutoLogoutMarker()
+    {
+        if (!PausedOnLogoutAt.HasValue) return;
+        PausedOnLogoutAt = null;
         UpdatedAt = DateTime.UtcNow;
     }
 
@@ -221,6 +311,7 @@ public class OrderItemProcess : TenantEntity
         ResumedAt = null;
         if (StartedAt == null) StartedAt = DateTime.UtcNow;
         UpdatedAt = DateTime.UtcNow;
+        EndOpenProcessLog();
 
         foreach (var sub in _subProcesses)
         {
@@ -239,6 +330,7 @@ public class OrderItemProcess : TenantEntity
         ResumedAt = null;
         PausedAt = null;
         UpdatedAt = DateTime.UtcNow;
+        EndOpenProcessLog();
 
         // Close open sub-process logs and reset sub-process timers
         foreach (var sub in _subProcesses)
@@ -252,15 +344,22 @@ public class OrderItemProcess : TenantEntity
         }
     }
 
-    public void ResumeTimer()
+    public void ResumeTimer(Guid? resumedByUserId = null)
     {
         if (!PausedAt.HasValue)
             throw new DomainException("NOT_PAUSED", "Process is not paused.");
 
         PausedAt = null;
-        PausedByStationAt = null; // resumed — no longer eligible for auto-resume
+        PausedOnLogoutAt = null; // resumed — no longer eligible for auto-resume
         ResumedAt = DateTime.UtcNow;
         UpdatedAt = DateTime.UtcNow;
+
+        // New work period starts now. Only emit a log for processes without
+        // sub-processes — those with sub-processes route their resume through
+        // OrderItemSubProcess.StartLog.
+        var hasSubProcesses = _subProcesses.Any(sp => !sp.IsWithdrawn);
+        if (!hasSubProcesses && resumedByUserId.HasValue)
+            StartProcessLog(resumedByUserId.Value);
     }
 
     public void Restart(bool resetTime)
@@ -318,5 +417,12 @@ public class OrderItemProcess : TenantEntity
         var subProcess = OrderItemSubProcess.Create(TenantId, Id, subProcessId);
         _subProcesses.Add(subProcess);
         return subProcess;
+    }
+
+    public void SetExcludedFromReports(bool excluded)
+    {
+        if (IsExcludedFromReports == excluded) return;
+        IsExcludedFromReports = excluded;
+        UpdatedAt = DateTime.UtcNow;
     }
 }

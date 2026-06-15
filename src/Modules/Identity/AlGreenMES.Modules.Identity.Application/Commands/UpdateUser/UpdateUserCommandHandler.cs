@@ -13,17 +13,20 @@ public class UpdateUserCommandHandler : IRequestHandler<UpdateUserCommand, UserD
 {
     private readonly IUserRepository _userRepository;
     private readonly IRefreshTokenRepository _refreshTokenRepository;
+    private readonly IUserRoleChangeLogRepository _roleChangeLogRepository;
     private readonly IIdentityUnitOfWork _unitOfWork;
     private readonly ICurrentUserService _currentUser;
 
     public UpdateUserCommandHandler(
         IUserRepository userRepository,
         IRefreshTokenRepository refreshTokenRepository,
+        IUserRoleChangeLogRepository roleChangeLogRepository,
         IIdentityUnitOfWork unitOfWork,
         ICurrentUserService currentUser)
     {
         _userRepository = userRepository;
         _refreshTokenRepository = refreshTokenRepository;
+        _roleChangeLogRepository = roleChangeLogRepository;
         _unitOfWork = unitOfWork;
         _currentUser = currentUser;
     }
@@ -36,6 +39,14 @@ public class UpdateUserCommandHandler : IRequestHandler<UpdateUserCommand, UserD
         var oldRole = user.Role;
         var isRoleChange = request.Role != oldRole;
         var isCallerSuperAdmin = _currentUser.IsInRole("SuperAdmin");
+        var callerUserId = _currentUser.GetCurrentUserId();
+
+        // Peer SuperAdmin protection (Milos 15.06.2026). No SuperAdmin can
+        // edit another SuperAdmin's record — only their own. This shuts down
+        // "Bojan as SA deactivates Milos" without trusting any per-form FE
+        // disable. Pairs with the same guard in Delete + ResetPassword.
+        if (user.Role == UserRole.SuperAdmin && user.Id != callerUserId)
+            throw new ForbiddenException("FORBIDDEN_PEER_SUPERADMIN", "A SuperAdmin cannot modify another SuperAdmin's account.");
 
         // Sprint 3.0 F-7 — only SuperAdmin can change ANY user's role. Tenant
         // Admins can still edit name/email/active/etc., but the role field is
@@ -44,11 +55,16 @@ public class UpdateUserCommandHandler : IRequestHandler<UpdateUserCommand, UserD
         if (isRoleChange && !isCallerSuperAdmin)
             throw new ForbiddenException("FORBIDDEN_ROLE_CHANGE", "Only SuperAdmin can change a user's role.");
 
-        // Belt-and-suspenders: block escalation to / demotion of SuperAdmin
-        // by non-SuperAdmin (already covered above but kept explicit in case
-        // F-7 is ever relaxed).
-        if ((request.Role == UserRole.SuperAdmin || user.Role == UserRole.SuperAdmin) && !isCallerSuperAdmin)
-            throw new ForbiddenException("FORBIDDEN_ROLE_ASSIGNMENT", "Only SuperAdmin can grant or revoke the SuperAdmin role.");
+        // SuperAdmin is platform-level and may only be granted/revoked
+        // directly in the database (Milos 12.06.2026 — "that option nobody
+        // can grant, it is granted only directly in DB"). Block any role
+        // CHANGE that crosses the SuperAdmin boundary on either side, even
+        // when the caller is a SuperAdmin — otherwise a compromised
+        // SuperAdmin session could quietly demote or promote others.
+        // Name/email/active updates on a SuperAdmin user are still allowed
+        // (oldRole == newRole == SuperAdmin → not a role change).
+        if (isRoleChange && (request.Role == UserRole.SuperAdmin || oldRole == UserRole.SuperAdmin))
+            throw new ForbiddenException("FORBIDDEN_ROLE_ASSIGNMENT", "The SuperAdmin role can only be granted or revoked directly in the database.");
 
         // Sprint 3.0 F-1 — refuse to demote the last active Admin in a tenant.
         // Tenant lockout is the exact scenario that bit easy-mes (see
@@ -72,12 +88,33 @@ public class UpdateUserCommandHandler : IRequestHandler<UpdateUserCommand, UserD
         else if (request.Role != UserRole.Department)
             user.AssignProcesses(request.TenantId, []);
 
+        // Multi-role assignment (Saša 08.06.2026). Null = leave existing
+        // additional roles alone; non-null = replace them with the given
+        // list. Same caller-authorisation gate as primary role.
+        if (request.AdditionalRoles != null)
+        {
+            if (!isCallerSuperAdmin)
+                throw new ForbiddenException("FORBIDDEN_ROLE_CHANGE", "Only SuperAdmin can change a user's additional roles.");
+            user.AssignAdditionalRoles(request.TenantId, request.AdditionalRoles);
+        }
+
         // Sprint 3.0 F-3 — revoke outstanding refresh tokens when role changes
         // so the affected user can't keep an old-role session alive via refresh.
-        // The currently-issued access JWT remains valid until expiry (60 min);
-        // tightening further would need a per-user security_stamp claim.
-        if (isRoleChange)
+        if (isRoleChange || request.AdditionalRoles != null)
             await _refreshTokenRepository.RevokeAllForUserAsync(user.Id, cancellationToken);
+
+        // F-9 — primary role transition history. Captures the (old, new,
+        // who, when) tuple so an investigator can reconstruct the role
+        // trajectory of a user. AdditionalRoles changes intentionally not
+        // logged here — the F-9 spec is keyed on the single primary role,
+        // and a separate audit table for the multi-role set is out of scope.
+        if (isRoleChange)
+        {
+            var changedByUserId = _currentUser.GetCurrentUserId();
+            var logEntry = UserRoleChangeLog.Create(
+                user.TenantId, user.Id, oldRole, request.Role, changedByUserId, DateTime.UtcNow);
+            await _roleChangeLogRepository.AddAsync(logEntry, cancellationToken);
+        }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
