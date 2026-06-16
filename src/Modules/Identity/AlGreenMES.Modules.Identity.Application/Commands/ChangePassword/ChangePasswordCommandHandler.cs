@@ -42,7 +42,12 @@ public class ChangePasswordCommandHandler : IRequestHandler<ChangePasswordComman
         if (request.UserId != callerUserId)
             throw new ForbiddenException("CHANGE_PASSWORD_NOT_SELF", "You can only change your own password.");
 
-        var user = await _userRepository.GetByIdAsync(request.UserId, cancellationToken)
+        // IgnoreFilters because SuperAdmin users have a null TenantId and
+        // wouldn't match the tenant query filter scoped to whichever
+        // tenant they're currently browsing — but we've already verified
+        // request.UserId == callerUserId (the JWT subject), so the lookup
+        // is safe to widen.
+        var user = await _userRepository.GetByIdIgnoreFiltersAsync(request.UserId, cancellationToken)
             ?? throw new NotFoundException("User", request.UserId);
 
         if (!_passwordHasher.VerifyPassword(request.CurrentPassword, user.PasswordHash))
