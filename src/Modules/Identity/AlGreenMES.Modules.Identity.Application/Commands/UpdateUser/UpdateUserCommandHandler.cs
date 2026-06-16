@@ -73,7 +73,7 @@ public class UpdateUserCommandHandler : IRequestHandler<UpdateUserCommand, UserD
         // governance role.
         if (oldRole == UserRole.Admin && request.Role != UserRole.Admin)
         {
-            var remainingAdmins = await _userRepository.CountActiveByRoleAsync(user.TenantId, UserRole.Admin, cancellationToken);
+            var remainingAdmins = await _userRepository.CountActiveByRoleAsync(user.TenantIdRequired, UserRole.Admin, cancellationToken);
             // The target is included in remainingAdmins if currently active.
             // After demotion the count drops by 1 — block if that would hit 0.
             var effectiveRemaining = user.IsActive ? remainingAdmins - 1 : remainingAdmins;
@@ -112,7 +112,7 @@ public class UpdateUserCommandHandler : IRequestHandler<UpdateUserCommand, UserD
         {
             var changedByUserId = _currentUser.GetCurrentUserId();
             var logEntry = UserRoleChangeLog.Create(
-                user.TenantId, user.Id, oldRole, request.Role, changedByUserId, DateTime.UtcNow);
+                user.TenantIdRequired, user.Id, oldRole, request.Role, changedByUserId, DateTime.UtcNow);
             await _roleChangeLogRepository.AddAsync(logEntry, cancellationToken);
         }
 

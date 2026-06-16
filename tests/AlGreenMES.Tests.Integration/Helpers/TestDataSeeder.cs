@@ -39,8 +39,12 @@ public static class TestDataSeeder
         tenancyDb.Tenants.Add(tenant);
         await tenancyDb.SaveChangesAsync();
 
-        var user = User.Create(tenant.Id, email, passwordHasher.HashPassword(DefaultPassword),
-            "Test", "User", role);
+        // SuperAdmins are tenantless (Milos 16.06.2026); we still log the
+        // tenant code on the SeededTenant return value because callers use
+        // it as the login tenantCode for the SA's first session.
+        var user = role == UserRole.SuperAdmin
+            ? User.CreateSuperAdmin(email, passwordHasher.HashPassword(DefaultPassword), "Test", "User")
+            : User.Create(tenant.Id, email, passwordHasher.HashPassword(DefaultPassword), "Test", "User", role);
         identityDb.Users.Add(user);
         await identityDb.SaveChangesAsync();
 
@@ -102,8 +106,9 @@ public static class TestDataSeeder
         var passwordHasher = sp.GetRequiredService<IPasswordHasher>();
 
         var email = $"u-{Guid.NewGuid():N}".Substring(0, 10) + "@test.local";
-        var user = User.Create(tenantId, email, passwordHasher.HashPassword(DefaultPassword),
-            "Test", "User", role);
+        var user = role == UserRole.SuperAdmin
+            ? User.CreateSuperAdmin(email, passwordHasher.HashPassword(DefaultPassword), "Test", "User")
+            : User.Create(tenantId, email, passwordHasher.HashPassword(DefaultPassword), "Test", "User", role);
         identityDb.Users.Add(user);
         await identityDb.SaveChangesAsync();
         return (user.Id, email, DefaultPassword);

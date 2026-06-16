@@ -105,7 +105,7 @@ public class OrderItemSubProcess : TenantEntity
         if (openLog != null)
             throw new DomainException("LOG_ALREADY_OPEN", "There is already an open log entry for this sub-process.");
 
-        var log = OrderItemSubProcessLog.Start(TenantId, Id, userId);
+        var log = OrderItemSubProcessLog.Start(TenantIdRequired, Id, userId);
         _logs.Add(log);
         PausedOnLogoutAt = null; // started — no longer eligible for auto-resume
         UpdatedAt = DateTime.UtcNow;

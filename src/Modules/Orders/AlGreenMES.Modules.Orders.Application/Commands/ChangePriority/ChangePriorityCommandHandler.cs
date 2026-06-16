@@ -29,7 +29,7 @@ public class ChangePriorityCommandHandler : IRequestHandler<ChangePriorityComman
 
         order.ChangePriority(request.Priority);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
-        await _eventService.NotifyOrderUpdatedAsync(order.TenantId, order.Id, cancellationToken);
+        await _eventService.NotifyOrderUpdatedAsync(order.TenantIdRequired, order.Id, cancellationToken);
 
         return order.Adapt<OrderDto>();
     }

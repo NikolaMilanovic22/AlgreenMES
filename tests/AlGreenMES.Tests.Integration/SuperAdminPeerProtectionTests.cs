@@ -52,12 +52,19 @@ public class SuperAdminPeerProtectionTests : IntegrationTestBase
 
         resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         var err = await resp.Content.ReadFromJsonAsync<ErrorBody>();
-        err!.Error.Code.Should().Be("FORBIDDEN_PEER_SUPERADMIN");
+        err!.Error.Code.Should().Be("SUPERADMIN_READ_ONLY");
     }
 
     [Fact]
-    public async Task UpdateUser_Self_AsSuperAdmin_Succeeds()
+    public async Task UpdateUser_Self_AsSuperAdmin_IsAlsoBlocked()
     {
+        // Tenantless SA model (Milos 16.06.2026): /api/users PUT is NOT on
+        // the [AllowSuperAdminWrite] list — SuperAdmins can't update any
+        // user row through it, including their own. Self-mutations (e.g.
+        // change password) are routed through endpoints that ARE on the
+        // allow-list (/change-password). Renaming oneself / toggling
+        // active is intentionally a DB / future /me endpoint operation,
+        // not a UPDATE on the admin user CRUD path.
         var caller = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.SuperAdmin);
 
         var token = await TestDataSeeder.LoginAndGetTokenAsync(Client, caller.Email, caller.Password, caller.TenantCode);
@@ -74,7 +81,9 @@ public class SuperAdminPeerProtectionTests : IntegrationTestBase
         });
         Client.DefaultRequestHeaders.Authorization = null;
 
-        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        var err = await resp.Content.ReadFromJsonAsync<ErrorBody>();
+        err!.Error.Code.Should().Be("SUPERADMIN_READ_ONLY");
     }
 
     [Fact]
@@ -90,7 +99,7 @@ public class SuperAdminPeerProtectionTests : IntegrationTestBase
 
         resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         var err = await resp.Content.ReadFromJsonAsync<ErrorBody>();
-        err!.Error.Code.Should().Be("FORBIDDEN_PEER_SUPERADMIN");
+        err!.Error.Code.Should().Be("SUPERADMIN_READ_ONLY");
     }
 
     [Fact]
@@ -109,7 +118,7 @@ public class SuperAdminPeerProtectionTests : IntegrationTestBase
 
         resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         var err = await resp.Content.ReadFromJsonAsync<ErrorBody>();
-        err!.Error.Code.Should().Be("FORBIDDEN_PEER_SUPERADMIN");
+        err!.Error.Code.Should().Be("SUPERADMIN_READ_ONLY");
     }
 
     // ──────────────────────────────────────────────────────────────────────

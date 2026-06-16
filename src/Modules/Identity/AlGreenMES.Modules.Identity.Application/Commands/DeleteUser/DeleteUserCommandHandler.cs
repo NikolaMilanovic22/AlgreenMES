@@ -48,7 +48,7 @@ public class DeleteUserCommandHandler : IRequestHandler<DeleteUserCommand, Unit>
         // (tenant lockout, same scenario as F-1).
         if (user.Role == UserRole.Admin)
         {
-            var remainingAdmins = await _userRepository.CountActiveByRoleAsync(user.TenantId, UserRole.Admin, cancellationToken);
+            var remainingAdmins = await _userRepository.CountActiveByRoleAsync(user.TenantIdRequired, UserRole.Admin, cancellationToken);
             var effectiveRemaining = user.IsActive ? remainingAdmins - 1 : remainingAdmins;
             if (effectiveRemaining <= 0)
                 throw new DomainException("LAST_ADMIN_REMOVAL", "Cannot remove the last active Admin from the tenant.");

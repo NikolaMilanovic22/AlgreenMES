@@ -73,23 +73,23 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, LoginResponseDt
         // log with TenantId set so an admin can later see "this tenant got
         // hit with these unknown emails".
         //
-        // SuperAdmin cross-tenant login: if a normal lookup misses, we try
-        // a cross-tenant lookup. If THAT finds a SuperAdmin, the login is
-        // allowed — the resulting JWT carries tenant_id = target tenant
-        // and cross_tenant_session=true so the read-only middleware can
-        // block all writes. Non-SuperAdmin cross-tenant matches collapse
-        // back to INVALID_CREDENTIALS so we don't leak "this email exists
-        // in some other tenant".
+        // SuperAdmin login (Milos 16.06.2026 refactor): SAs are tenantless
+        // (user.TenantId is null in DB), so the tenant-scoped lookup misses
+        // for them. We fall back to a cross-tenant lookup and accept only
+        // if the matched user IS a SuperAdmin. The JWT carries tenant_id =
+        // the tenant code the SA typed (so reads are scoped to that
+        // tenant); the SuperAdminReadOnly middleware blocks writes
+        // everywhere except a small allow-list. Non-SuperAdmin matches
+        // collapse to INVALID_CREDENTIALS so we don't leak "this email
+        // exists somewhere".
         // ──────────────────────────────────────────────────────────────
         var user = await _userRepository.GetByEmailAsync(emailNormalized, tenant.Id, cancellationToken);
-        bool isCrossTenantSession = false;
         if (user == null)
         {
             var crossTenant = await _userRepository.GetByEmailAcrossTenantsAsync(emailNormalized, cancellationToken);
             if (crossTenant != null && crossTenant.Role == UserRole.SuperAdmin)
             {
                 user = crossTenant;
-                isCrossTenantSession = true;
             }
         }
         if (user == null)
@@ -129,9 +129,10 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, LoginResponseDt
 
         user.RegisterSuccessfulLogin();
 
-        var token = isCrossTenantSession
-            ? _jwtTokenService.GenerateCrossTenantToken(user, tenant.Id)
-            : _jwtTokenService.GenerateToken(user);
+        // Effective tenant id on the JWT is always the login's target
+        // tenant: for a normal user it equals user.TenantId; for a
+        // SuperAdmin it's whichever tenant they typed at login.
+        var token = _jwtTokenService.GenerateToken(user, tenant.Id);
         var refreshTokenValue = _jwtTokenService.GenerateRefreshToken();
 
         var refreshToken = RefreshTokenEntity.Create(

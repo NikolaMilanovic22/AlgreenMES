@@ -8,6 +8,7 @@ using AlGreenMES.Modules.Tenancy.Application.Queries.GetTenantById;
 using AlGreenMES.Modules.Tenancy.Application.Queries.GetTenants;
 using AlGreenMES.Modules.Tenancy.Application.Queries.GetTenantSettings;
 using AlGreenMES.Modules.Tenancy.Application.Services;
+using AlGreenMES.BuildingBlocks.Common.Authorization;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -19,6 +20,13 @@ namespace AlGreenMES.Modules.Tenancy.Api.Controllers;
 // endpoints below are open to every tenant member (read settings) and
 // the tenant's own Admin (write settings) — those would conflict with
 // a class-level `RequireSuperAdmin` policy.
+//
+// [AllowSuperAdminWrite] is applied PER ACTION too — only on the
+// platform-level writes a SuperAdmin owns (tenant CRUD, tenant settings
+// addressed by id). The `me/*` writes are tenant-Admin territory and
+// must NOT be opted out, so a SuperAdmin browsing a foreign tenant gets
+// blocked by SuperAdminReadOnlyMiddleware (the whole point of the
+// tenantless model).
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
@@ -72,6 +80,7 @@ public class TenantsController : ControllerBase
 
     [HttpPost]
     [Authorize(Policy = "RequireSuperAdmin")]
+    [AllowSuperAdminWrite]
     public async Task<IActionResult> CreateTenant([FromBody] CreateTenantRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new CreateTenantCommand(
@@ -83,6 +92,7 @@ public class TenantsController : ControllerBase
 
     [HttpPut("{id:guid}")]
     [Authorize(Policy = "RequireSuperAdmin")]
+    [AllowSuperAdminWrite]
     public async Task<IActionResult> UpdateTenant(Guid id, [FromBody] UpdateTenantRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new UpdateTenantCommand(
@@ -102,6 +112,7 @@ public class TenantsController : ControllerBase
 
     [HttpPut("{id:guid}/settings")]
     [Authorize(Policy = "RequireSuperAdmin")]
+    [AllowSuperAdminWrite]
     public async Task<IActionResult> UpdateTenantSettings(Guid id, [FromBody] UpdateTenantSettingsRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new UpdateTenantSettingsCommand(

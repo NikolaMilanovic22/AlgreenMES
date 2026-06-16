@@ -73,17 +73,17 @@ public static class DataSeeder
             await identityDb.SaveChangesAsync();
         }
 
-        // 2b. Get or create Super Administrator. Needed for the cross-tenant
-        // login flow + the Super administratori tab (otherwise nobody can
-        // bootstrap additional Super administrators through the UI).
-        // Idempotent: created only if missing, password reset if hash drifts.
-        // Home tenant is the demo tenant — convention matches admin@demo.com.
+        // 2b. Get or create Super Administrator. Tenantless (Milos
+        // 16.06.2026): the bootstrap SA can log into any tenant code, but
+        // their own user row has tenant_id = NULL so they don't show up in
+        // /api/users listings of any tenant. Idempotent: created only if
+        // missing, password reset if hash drifts.
         var superAdminUser = await identityDb.Users.IgnoreQueryFilters()
-            .FirstOrDefaultAsync(u => u.Email == "superadmin@demo.com" && u.TenantId == tenantId);
+            .FirstOrDefaultAsync(u => u.Email == "superadmin@demo.com");
         if (superAdminUser == null)
         {
             var passwordHash = passwordHasher.HashPassword("SuperAdmin123!");
-            superAdminUser = User.Create(tenantId, "superadmin@demo.com", passwordHash, "Super", "Admin", UserRole.SuperAdmin);
+            superAdminUser = User.CreateSuperAdmin("superadmin@demo.com", passwordHash, "Super", "Admin");
             identityDb.Users.Add(superAdminUser);
             await identityDb.SaveChangesAsync();
         }

@@ -34,7 +34,7 @@ public class GetUserLoginHistoryQueryHandler : IRequestHandler<GetUserLoginHisto
         var capped = Math.Clamp(request.Limit, 1, 100);
 
         var rows = await _loginAttemptRepository.GetRecentForEmailAsync(
-            user.TenantId, user.Email, capped, cancellationToken);
+            user.TenantIdRequired, user.Email, capped, cancellationToken);
 
         return rows
             .Select(la => new LoginAttemptDto(

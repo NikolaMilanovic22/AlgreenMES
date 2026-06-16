@@ -46,7 +46,7 @@ public class CheckOutCommandHandler : IRequestHandler<CheckOutCommand, WorkSessi
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         await _eventService.NotifyWorkerCheckedOutAsync(
-            new WorkerCheckedOutEvent(session.UserId, session.Id, session.DurationMinutes, session.TenantId), cancellationToken);
+            new WorkerCheckedOutEvent(session.UserId, session.Id, session.DurationMinutes, session.TenantIdRequired), cancellationToken);
 
         return session.Adapt<WorkSessionDto>();
     }

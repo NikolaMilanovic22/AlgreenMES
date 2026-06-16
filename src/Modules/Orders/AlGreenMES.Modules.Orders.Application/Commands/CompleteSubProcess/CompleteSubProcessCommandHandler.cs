@@ -79,7 +79,7 @@ public class CompleteSubProcessCommandHandler : IRequestHandler<CompleteSubProce
                     process.ProcessId,
                     process.OrderItem.Order.Id,
                     process.OrderItem.Order.OrderNumber,
-                    process.TenantId), cancellationToken);
+                    process.TenantIdRequired), cancellationToken);
         }
 
         return subProcess.Adapt<OrderItemSubProcessDto>();

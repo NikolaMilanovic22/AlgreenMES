@@ -1,4 +1,5 @@
 using AlGreenMES.BuildingBlocks.Common.Exceptions;
+using AlGreenMES.BuildingBlocks.Common.Authorization;
 using AlGreenMES.Modules.Identity.Api.Requests;
 using AlGreenMES.Modules.Identity.Application.Commands.ChangePassword;
 using AlGreenMES.Modules.Identity.Application.Commands.CreateUser;
@@ -85,6 +86,7 @@ public class UsersController : ControllerBase
 
     [HttpPost]
     [Authorize(Roles = "SuperAdmin,Admin")]
+    [AllowSuperAdminWrite]
     public async Task<IActionResult> CreateUser([FromBody] CreateUserRequest request, CancellationToken cancellationToken)
     {
         // Tenant override (request.TenantId) is allowed only for SuperAdmin
@@ -157,6 +159,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/change-password")]
+    [AllowSuperAdminWrite]
     public async Task<IActionResult> ChangePassword(Guid id, [FromBody] ChangePasswordRequest request, CancellationToken cancellationToken)
     {
         await _mediator.Send(

@@ -70,7 +70,7 @@ public class Order : AuditableEntity
         if (quantity <= 0)
             throw new DomainException("INVALID_QUANTITY", "Quantity must be positive.");
 
-        var item = OrderItem.Create(TenantId, Id, productCategoryId, productName, quantity, notes);
+        var item = OrderItem.Create(TenantIdRequired, Id, productCategoryId, productName, quantity, notes);
         _items.Add(item);
         return item;
     }
@@ -92,7 +92,7 @@ public class Order : AuditableEntity
         if (_manualProcesses.Any(p => p.ProcessId == processId))
             throw new DomainException("DUPLICATE_PROCESS", "This process is already added.");
 
-        _manualProcesses.Add(OrderManualProcess.Create(TenantId, Id, processId, sequenceOrder, defaultComplexity));
+        _manualProcesses.Add(OrderManualProcess.Create(TenantIdRequired, Id, processId, sequenceOrder, defaultComplexity));
     }
 
     public void AddManualDependency(Guid processId, Guid dependsOnProcessId)
@@ -108,7 +108,7 @@ public class Order : AuditableEntity
         if (WouldCreateCycle(processId, dependsOnProcessId))
             throw new DomainException("CIRCULAR_DEPENDENCY", "This would create a circular dependency.");
 
-        _manualProcessDependencies.Add(OrderManualProcessDependency.Create(TenantId, Id, processId, dependsOnProcessId));
+        _manualProcessDependencies.Add(OrderManualProcessDependency.Create(TenantIdRequired, Id, processId, dependsOnProcessId));
     }
 
     /// <summary>BFS forward through existing edges from <paramref name="dependsOnProcessId"/> —

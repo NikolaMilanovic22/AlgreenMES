@@ -92,7 +92,7 @@ public class OrderItemProcess : TenantEntity
     {
         // Defensive: end any stray open log first (shouldn't normally happen).
         EndOpenProcessLog();
-        _processLogs.Add(OrderItemProcessLog.Start(TenantId, Id, userId));
+        _processLogs.Add(OrderItemProcessLog.Start(TenantIdRequired, Id, userId));
     }
 
     private OrderItemProcess()
@@ -414,7 +414,7 @@ public class OrderItemProcess : TenantEntity
         if (_subProcesses.Any(sp => sp.SubProcessId == subProcessId))
             throw new DomainException("DUPLICATE_SUBPROCESS", "Sub-process already added.");
 
-        var subProcess = OrderItemSubProcess.Create(TenantId, Id, subProcessId);
+        var subProcess = OrderItemSubProcess.Create(TenantIdRequired, Id, subProcessId);
         _subProcesses.Add(subProcess);
         return subProcess;
     }

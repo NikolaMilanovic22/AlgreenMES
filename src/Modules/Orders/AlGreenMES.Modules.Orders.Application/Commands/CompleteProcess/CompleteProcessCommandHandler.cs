@@ -51,7 +51,7 @@ public class CompleteProcessCommandHandler : IRequestHandler<CompleteProcessComm
 
         var orderId = process.OrderItem.Order.Id;
         var orderNumber = process.OrderItem.Order.OrderNumber;
-        var tenantId = process.TenantId;
+        var tenantId = process.TenantIdRequired;
 
         await _eventService.NotifyProcessCompletedAsync(
             new ProcessCompletedEvent(process.Id, process.ProcessId, orderId, orderNumber, tenantId),
