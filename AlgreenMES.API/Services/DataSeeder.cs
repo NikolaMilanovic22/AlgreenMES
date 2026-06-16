@@ -9,7 +9,6 @@ using AlGreenMES.Modules.Production.Infrastructure.Persistence;
 using AlGreenMES.Modules.Tenancy.Domain.Entities;
 using AlGreenMES.Modules.Tenancy.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 
 namespace AlgreenMES.API.Services;
 
@@ -22,19 +21,11 @@ public static class DataSeeder
 
         // The seeder creates the DEMO tenant, 11 demo users, the bootstrap
         // SuperAdmin (superadmin@demo.com), and a stock process list A–K.
-        // Useful for dev / staging / fresh installs; junk data next to real
-        // tenant data on a real-customer droplet.
-        //
-        // Gate is a Seeding:Enabled config flag. Default = true to preserve
-        // the existing behaviour on alblue staging (where the flag isn't
-        // set) and on dev environments. Real-customer droplets (algreen
-        // pilot, future client deploys) set "Seeding": { "Enabled": false }
-        // in their appsettings.Production.json before the first upgrade
-        // that ships this gate — keeping demo data out of their DB.
-        var config = services.GetRequiredService<IConfiguration>();
-        var seedingEnabled = config.GetValue("Seeding:Enabled", defaultValue: true);
-        if (!seedingEnabled)
-            return;
+        // Invoked exclusively via the --seed CLI flag (Milos 16.06.2026);
+        // there is no longer any auto-run path. That removed the footgun
+        // where every BE restart would silently rewrite a locally-changed
+        // demo password, AND removed the need for the Seeding:Enabled
+        // appsettings gate on real-customer droplets.
 
         var tenancyDb = services.GetRequiredService<TenancyDbContext>();
         var identityDb = services.GetRequiredService<IdentityDbContext>();
@@ -56,7 +47,12 @@ public static class DataSeeder
         // DataSeeder runs at startup with no HTTP context — every query against a tenant-scoped
         // entity must IgnoreQueryFilters and pass tenantId explicitly.
 
-        // 2. Get or create Admin User
+        // 2. Get or create Admin User. Create-only (Milos 16.06.2026): do
+        // NOT reset the password on hash drift. The old reset-if-different
+        // branch made password-change testing impossible because every BE
+        // restart would silently undo the local change. If the demo hash
+        // is ever genuinely broken (algorithm change), drop the row and
+        // let the seeder re-create.
         var adminUser = await identityDb.Users.IgnoreQueryFilters()
             .FirstOrDefaultAsync(u => u.Email == "admin@demo.com" && u.TenantId == tenantId);
         if (adminUser == null)
@@ -66,18 +62,12 @@ public static class DataSeeder
             identityDb.Users.Add(adminUser);
             await identityDb.SaveChangesAsync();
         }
-        else if (!passwordHasher.VerifyPassword("Admin123!", adminUser.PasswordHash))
-        {
-            // Reset password if hash is invalid
-            adminUser.ChangePassword(passwordHasher.HashPassword("Admin123!"));
-            await identityDb.SaveChangesAsync();
-        }
 
         // 2b. Get or create Super Administrator. Tenantless (Milos
         // 16.06.2026): the bootstrap SA can log into any tenant code, but
         // their own user row has tenant_id = NULL so they don't show up in
-        // /api/users listings of any tenant. Idempotent: created only if
-        // missing, password reset if hash drifts.
+        // /api/users listings of any tenant. Create-only — same reasoning
+        // as admin@demo.com above.
         var superAdminUser = await identityDb.Users.IgnoreQueryFilters()
             .FirstOrDefaultAsync(u => u.Email == "superadmin@demo.com");
         if (superAdminUser == null)
@@ -85,11 +75,6 @@ public static class DataSeeder
             var passwordHash = passwordHasher.HashPassword("SuperAdmin123!");
             superAdminUser = User.CreateSuperAdmin("superadmin@demo.com", passwordHash, "Super", "Admin");
             identityDb.Users.Add(superAdminUser);
-            await identityDb.SaveChangesAsync();
-        }
-        else if (!passwordHasher.VerifyPassword("SuperAdmin123!", superAdminUser.PasswordHash))
-        {
-            superAdminUser.ChangePassword(passwordHasher.HashPassword("SuperAdmin123!"));
             await identityDb.SaveChangesAsync();
         }
 
