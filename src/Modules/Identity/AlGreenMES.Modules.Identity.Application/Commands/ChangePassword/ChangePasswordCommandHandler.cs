@@ -31,13 +31,15 @@ public class ChangePasswordCommandHandler : IRequestHandler<ChangePasswordComman
 
     public async Task<Unit> Handle(ChangePasswordCommand request, CancellationToken cancellationToken)
     {
-        // Sprint 3.0 F-11 — change-password is the self-service flow. SuperAdmin
-        // is allowed to act on behalf of any user. Everyone else (Admin,
-        // Manager, Coordinator, Department) can only change their OWN
-        // password. The admin-flavored equivalent is /reset-password, which is
-        // role-gated and skips the current-password check.
+        // Change-password is the self-service flow — strictly self-only for
+        // EVERY role, including SuperAdmin (Milos 16.06.2026 tightening).
+        // SuperAdmins previously got a back door here that let them change
+        // any user's password; that conflicted with peer-SA protection and
+        // gave them an avenue to mutate tenant credentials. The admin
+        // equivalent for non-SA users is /reset-password (handler rejects
+        // the SA target separately via FORBIDDEN_PEER_SUPERADMIN).
         var callerUserId = _currentUser.GetCurrentUserId();
-        if (request.UserId != callerUserId && !_currentUser.IsInRole("SuperAdmin"))
+        if (request.UserId != callerUserId)
             throw new ForbiddenException("CHANGE_PASSWORD_NOT_SELF", "You can only change your own password.");
 
         var user = await _userRepository.GetByIdAsync(request.UserId, cancellationToken)
