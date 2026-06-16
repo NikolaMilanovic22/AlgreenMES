@@ -165,7 +165,7 @@ public class CreateOrderCommandHandler : IRequestHandler<CreateOrderCommand, Ord
             orderId,
             file.FileName,
             storedFileName,
-            file.ContentType,
+            contentType,
             file.FileSizeBytes,
             relativePath,
             userId,

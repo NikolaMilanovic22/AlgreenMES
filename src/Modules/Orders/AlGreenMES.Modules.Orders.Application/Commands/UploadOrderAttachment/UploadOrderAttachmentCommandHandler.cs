@@ -93,7 +93,7 @@ public class UploadOrderAttachmentCommandHandler : IRequestHandler<UploadOrderAt
             request.OrderId,
             request.FileName,
             storedFileName,
-            request.ContentType,
+            contentType,
             request.FileSizeBytes,
             relativePath,
             request.UserId,
