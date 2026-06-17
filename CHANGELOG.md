@@ -8,6 +8,65 @@ Mirrored to `easy-mes-be` (skyhard) — keep both in sync when editing.
 
 ---
 
+## 2026-06-16 — Naplata (SA-only billing) + seed CLI flag + tenantless SA refactor
+
+### Added
+- **SuperAdmin "Naplata" (billing) feature**. New `tenant_payments` table
+  (id, tenant_id, period_start, period_end, amount, currency, paid_at,
+  invoice_number?, notes?) tracked via the `TenantPayment` aggregate
+  with a date-range period so monthly / quarterly / annual subscriptions
+  all fit. `Tenant` gained `BlockedAt` + `BlockedReason`; `Block(reason)`
+  / `Unblock()` flip `IsActive`. New SA-only endpoints:
+  - `GET    /api/tenants/{id}/payments`
+  - `POST   /api/tenants/{id}/payments`
+  - `PUT    /api/tenants/{id}/payments/{paymentId}`
+  - `DELETE /api/tenants/{id}/payments/{paymentId}`
+  - `POST   /api/tenants/{id}/block` (body `{ reason }`)
+  - `POST   /api/tenants/{id}/unblock`
+  All four write endpoints carry `[AllowSuperAdminWrite]` so the
+  `SuperAdminReadOnlyMiddleware` lets them through. No auto-block on
+  unpaid invoices — manual SA action only (Milos 16.06.2026).
+- **`TenantDto.LastPaidAt`** injected into `GetTenants` (one batched
+  query via `ITenantPaymentRepository.GetLastPaidAtByTenantAsync`) and
+  `GetTenantById`, so the SA TenantsPage renders the "Poslednja uplata"
+  column without N+1 round-trips.
+- **`--seed` CLI flag**. The DataSeeder no longer runs on startup
+  (overwrote locally-changed passwords on every BE restart). Use
+  `dotnet run --project AlgreenMES.API -- --seed` (or
+  `dotnet AlgreenMES.API.dll --seed`). Idempotent: re-running against
+  an already-seeded DB is safe and doesn't reset existing passwords.
+
+### Changed
+- **Login distinguishes `TENANT_BLOCKED` from `TENANT_INACTIVE`**.
+  `ITenantLookupService.TenantLookupResult` now carries `IsBlocked`;
+  `LoginCommandHandler` picks the error code based on whether
+  `Tenant.BlockedAt` is set. FE i18n has the matching pair
+  (`Pretplata je na čekanju...` vs `Firma nije aktivna...`).
+- **Tenantless SuperAdmin model** (carried over from the 06-16 morning
+  refactor). SAs have `user.tenant_id = NULL`; the cross-tenant banner /
+  claim machinery is gone. `SuperAdminReadOnlyMiddleware` blocks all
+  non-GET writes by SA callers unless the action is opted in via
+  `[AllowSuperAdminWrite]`. Allow-list today: tenant CRUD +
+  `UpdateTenantSettings({id})` + `CreateUser` + `ChangePassword` + the
+  five Naplata endpoints above.
+
+### Tests
+- New `TenantBillingTests` (6 cases): block → `TENANT_BLOCKED` on
+  login, unblock restores login, payment add → list round-trips,
+  regular Admin hits 403 on every billing route, payment update
+  overwrites fields and persists across list, and a path-tampered
+  cross-tenant update returns 404 (handler verifies
+  `payment.TenantId == request.TenantId` before applying).
+  All pass against the testcontainers Postgres fixture.
+
+### Migrations
+- `20260616145051_AddTenantBillingAndBlock` (TenancyDbContext) — adds
+  `tenants.blocked_at`, `tenants.blocked_reason`, and the
+  `tenant_payments` table with a FK cascade on `tenant_id` plus an
+  index on `(tenant_id, paid_at)` for "most recent first" queries.
+
+---
+
 ## 2026-06-09 — Magacin module polish
 
 ### Fixed

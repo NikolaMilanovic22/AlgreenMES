@@ -12,6 +12,14 @@ public class Tenant
     public DateTime? UpdatedAt { get; private set; }
 
     /// <summary>
+    /// Set when a SuperAdmin manually blocks the tenant (typically for
+    /// unpaid subscription). Block flips IsActive to false; Unblock flips
+    /// it back. The reason is shown only to SAs in the Naplata tab.
+    /// </summary>
+    public DateTime? BlockedAt { get; private set; }
+    public string? BlockedReason { get; private set; }
+
+    /// <summary>
     /// Relative path to the tenant's uploaded brand logo (e.g.
     /// "tenant-logos/{tenantId}.png"). Resolved to a full URL by the
     /// API endpoint that streams the file. Null when the tenant hasn't
@@ -50,19 +58,34 @@ public class Tenant
         return tenant;
     }
 
-    public void Update(string name, bool isActive)
+    public void Update(string name)
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new DomainException("TENANT_NAME_REQUIRED", "Tenant name is required.");
 
         Name = name.Trim();
-        IsActive = isActive;
         UpdatedAt = DateTime.UtcNow;
     }
 
     public void SetLogoUrl(string? logoUrl)
     {
         LogoUrl = logoUrl;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
+    public void Block(string? reason)
+    {
+        IsActive = false;
+        BlockedAt = DateTime.UtcNow;
+        BlockedReason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
+        UpdatedAt = DateTime.UtcNow;
+    }
+
+    public void Unblock()
+    {
+        IsActive = true;
+        BlockedAt = null;
+        BlockedReason = null;
         UpdatedAt = DateTime.UtcNow;
     }
 }

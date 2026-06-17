@@ -203,8 +203,8 @@ public class SuperAdminPeerProtectionTests : IntegrationTestBase
         var users = await resp.Content.ReadFromJsonAsync<List<UserListEntry>>();
         users.Should().NotBeNull();
         users!.Select(u => u.Id).Should().Contain(saA.UserId);
-        users.Select(u => u.Id).Should().Contain(saB_id);
-        users.All(u => u.Role == "SuperAdmin").Should().BeTrue();
+        users!.Select(u => u.Id).Should().Contain(saB_id);
+        users!.All(u => u.Role == "SuperAdmin").Should().BeTrue();
     }
 
     // ──────────────────────────────────────────────────────────────────────

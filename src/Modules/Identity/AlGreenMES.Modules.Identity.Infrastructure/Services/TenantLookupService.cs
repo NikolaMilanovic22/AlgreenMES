@@ -22,6 +22,6 @@ public class TenantLookupService : ITenantLookupService
         if (tenant is null)
             return null;
 
-        return new TenantLookupResult(tenant.Id, tenant.Code, tenant.IsActive);
+        return new TenantLookupResult(tenant.Id, tenant.Code, tenant.IsActive, tenant.BlockedAt.HasValue);
     }
 }

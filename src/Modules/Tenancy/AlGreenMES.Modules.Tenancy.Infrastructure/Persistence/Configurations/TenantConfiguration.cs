@@ -30,6 +30,9 @@ public class TenantConfiguration : IEntityTypeConfiguration<Tenant>
         builder.Property(t => t.LogoUrl)
             .HasMaxLength(500);
 
+        builder.Property(t => t.BlockedReason)
+            .HasMaxLength(1000);
+
         builder.HasIndex(t => t.Code)
             .IsUnique();
 

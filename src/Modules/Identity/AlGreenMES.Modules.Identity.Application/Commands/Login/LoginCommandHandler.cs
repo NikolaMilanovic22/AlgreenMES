@@ -64,8 +64,14 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, LoginResponseDt
         }
         if (!tenant.IsActive)
         {
-            await LogAndSaveAsync(LoginAttempt.RecordFailure(tenant.Id, emailNormalized, "TENANT_INACTIVE", request.IpAddress, request.UserAgent, now), cancellationToken);
-            throw new DomainException("TENANT_INACTIVE", "The tenant is not active.");
+            // Block() and Update(isActive: false) both flip IsActive — they
+            // are distinguished by BlockedAt so the FE can show "Pretplata
+            // istekla, kontaktirajte podršku" vs the generic deactivated
+            // tenant message. The reason itself is SA-only and stays in
+            // the Naplata tab; users only see the bucketed error code.
+            var code = tenant.IsBlocked ? "TENANT_BLOCKED" : "TENANT_INACTIVE";
+            await LogAndSaveAsync(LoginAttempt.RecordFailure(tenant.Id, emailNormalized, code, request.IpAddress, request.UserAgent, now), cancellationToken);
+            throw new DomainException(code, tenant.IsBlocked ? "Tenant subscription is on hold." : "The tenant is not active.");
         }
 
         // ──────────────────────────────────────────────────────────────

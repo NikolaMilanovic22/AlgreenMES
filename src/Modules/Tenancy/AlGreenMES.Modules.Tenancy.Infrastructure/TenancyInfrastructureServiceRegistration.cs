@@ -42,6 +42,7 @@ public static class TenancyInfrastructureServiceRegistration
 
         services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<TenancyDbContext>());
         services.AddScoped<ITenantRepository, TenantRepository>();
+        services.AddScoped<ITenantPaymentRepository, TenantPaymentRepository>();
         services.AddSingleton<ITenantLogoStorage, LocalTenantLogoStorage>();
 
         return services;
