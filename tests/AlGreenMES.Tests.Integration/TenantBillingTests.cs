@@ -199,5 +199,25 @@ public class TenantBillingTests : IntegrationTestBase
         updateResp.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    [Fact]
+    public async Task SA_HittingNonExistentRoute_Gets404_NotSuperAdminReadOnly()
+    {
+        // Regression for a misleading 403: the middleware used to fire
+        // SUPERADMIN_READ_ONLY for any non-GET SA request that didn't
+        // resolve to an MVC action. A typo'd or removed URL would look
+        // like an authorisation error instead of a 404 — which made it
+        // hard to tell a stale BE binary apart from a missing
+        // [AllowSuperAdminWrite] attribute. Now: no matched action →
+        // pipeline continues → MVC returns the proper 404.
+        var sa = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.SuperAdmin);
+        var saClient = await TestDataSeeder.AuthenticatedClientAsync(Factory, sa);
+
+        var resp = await saClient.PostAsJsonAsync("/api/this-route-does-not-exist-anywhere", new { });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var body = await resp.Content.ReadAsStringAsync();
+        body.Should().NotContain("SUPERADMIN_READ_ONLY");
+    }
+
     private sealed record TenantPaymentRow(Guid Id);
 }

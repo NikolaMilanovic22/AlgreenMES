@@ -38,7 +38,16 @@ public class SuperAdminReadOnlyMiddleware
 
     public async Task InvokeAsync(HttpContext context)
     {
-        if (context.User?.Identity?.IsAuthenticated == true
+        // Skip the SA-write check when no MVC action matched the request —
+        // hand it down to the pipeline so MVC returns the proper 404.
+        // Without this guard, an SA hitting a typo'd URL gets a misleading
+        // SUPERADMIN_READ_ONLY 403 (Milos 17.06.2026: edit-payment PUT
+        // looked like it was forbidden when in reality the BE binary was
+        // stale and the route didn't exist yet).
+        var matchedMvcAction = context.GetEndpoint()?.Metadata.GetMetadata<ControllerActionDescriptor>() != null;
+
+        if (matchedMvcAction
+            && context.User?.Identity?.IsAuthenticated == true
             && context.User.IsInRole("SuperAdmin")
             && !SafeMethods.Contains(context.Request.Method)
             && !HasAllowAttribute(context))
