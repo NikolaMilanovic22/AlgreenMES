@@ -16,4 +16,10 @@ public record TenantDto(
     /// the subscription is considered paid. Null when no payments have
     /// been recorded. FE compares against today to flag "Kasni" (overdue).
     /// </summary>
-    DateTime? PaidThrough = null);
+    DateTime? PaidThrough = null,
+    /// <summary>
+    /// Feature keys the SA has disabled for this tenant. FE hides menu
+    /// items + routes whose featureKey appears in this list. Empty means
+    /// everything enabled.
+    /// </summary>
+    List<string>? DisabledFeatures = null);

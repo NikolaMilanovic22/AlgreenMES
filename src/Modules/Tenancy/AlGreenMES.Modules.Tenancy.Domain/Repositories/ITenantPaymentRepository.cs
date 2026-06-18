@@ -1,6 +1,25 @@
+using AlGreenMES.BuildingBlocks.Common.Pagination;
 using AlGreenMES.Modules.Tenancy.Domain.Entities;
 
 namespace AlGreenMES.Modules.Tenancy.Domain.Repositories;
+
+/// <summary>
+/// Aggregated row returned by GetAllPagedAsync — carries tenant name +
+/// code denormalised so the handler doesn't need a per-row join.
+/// </summary>
+public record TenantPaymentRow(
+    Guid Id,
+    Guid TenantId,
+    string TenantName,
+    string TenantCode,
+    DateTime PeriodStart,
+    DateTime PeriodEnd,
+    decimal Amount,
+    string Currency,
+    DateTime PaidAt,
+    string? InvoiceNumber,
+    string? Notes,
+    DateTime CreatedAt);
 
 public interface ITenantPaymentRepository
 {
@@ -20,4 +39,16 @@ public interface ITenantPaymentRepository
 
     /// <summary>Max PeriodEnd per tenant in one round-trip — used to flag overdue rows on the SA tenants list.</summary>
     Task<IReadOnlyDictionary<Guid, DateTime>> GetPaidThroughByTenantAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Cross-tenant paged listing for the "Sve uplate" SA view. Joins tenants table to denormalise name + code per row.</summary>
+    Task<PagedResult<TenantPaymentRow>> GetAllPagedAsync(
+        Guid? tenantId,
+        DateTime? paidFrom,
+        DateTime? paidTo,
+        string? currency,
+        string? sortBy,
+        bool isDescending,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken = default);
 }

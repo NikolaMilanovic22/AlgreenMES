@@ -397,6 +397,10 @@ public class Program
             // attribute. Ordering before the enrichment middlewares keeps
             // the 403 visible in logs as a single line.
             app.UseMiddleware<SuperAdminReadOnlyMiddleware>();
+            // Force-logout gate for tenants that get blocked while users
+            // have live JWTs. Runs after SA-read-only so SAs are excluded
+            // there too — they keep platform access on any tenant code.
+            app.UseMiddleware<TenantBlockedMiddleware>();
             app.UseMiddleware<SerilogEnrichmentMiddleware>();
             app.UseMiddleware<SentryEnrichmentMiddleware>();
             app.MapControllers();

@@ -200,6 +200,249 @@ public class TenantBillingTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task BlockedTenant_StillAllowsSuperAdminLogin_ButRejectsRegularUser()
+    {
+        // Saša 17.06.2026: blocking the MPMS / platform tenant must NOT lock
+        // SAs out — they need to be able to log in and unblock. Regular
+        // users on the blocked tenant still see TENANT_BLOCKED.
+        var sa = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.SuperAdmin);
+        var target = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var saClient = await TestDataSeeder.AuthenticatedClientAsync(Factory, sa);
+
+        // Block the target tenant.
+        var blockResp = await saClient.PostAsJsonAsync(
+            $"/api/tenants/{target.TenantId}/block", new { Reason = "Saša test" });
+        blockResp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Regular Admin on the blocked tenant → TENANT_BLOCKED.
+        var adminLogin = await Client.PostAsJsonAsync("/api/auth/login", new
+        {
+            Email = target.Email,
+            Password = TestDataSeeder.DefaultPassword,
+            TenantCode = target.TenantCode,
+        });
+        adminLogin.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await adminLogin.Content.ReadAsStringAsync()).Should().Contain("TENANT_BLOCKED");
+
+        // SA logging in with the blocked tenant's code → succeeds.
+        var saLogin = await Client.PostAsJsonAsync("/api/auth/login", new
+        {
+            Email = sa.Email,
+            Password = TestDataSeeder.DefaultPassword,
+            TenantCode = target.TenantCode,
+        });
+        saLogin.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // Saša 18.06.2026 feedback batch — feature flags, paidThrough
+    // semantics, aggregated payments endpoint.
+    // ──────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task NewTenant_DefaultsToBasicPlan_BothFeaturesDisabled()
+    {
+        var sa = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.SuperAdmin);
+        var saClient = await TestDataSeeder.AuthenticatedClientAsync(Factory, sa);
+
+        var code = "TBP" + Guid.NewGuid().ToString("N")[..6].ToUpperInvariant();
+        var createResp = await saClient.PostAsJsonAsync("/api/tenants", new
+        {
+            Name = "Test Basic Plan",
+            Code = code,
+            DefaultWarningDays = 7,
+            DefaultCriticalDays = 3,
+            WarningColor = "#FFA500",
+            CriticalColor = "#FF0000",
+        });
+        createResp.StatusCode.Should().BeOneOf(HttpStatusCode.OK, HttpStatusCode.Created);
+
+        var created = await createResp.Content.ReadFromJsonAsync<TenantWithFeaturesDto>();
+        created!.DisabledFeatures.Should().BeEquivalentTo(new[] { "process-times", "magacin" });
+    }
+
+    [Fact]
+    public async Task UpdateFeatures_SA_CanToggleFlagsAndPersist()
+    {
+        var sa = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.SuperAdmin);
+        var target = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var saClient = await TestDataSeeder.AuthenticatedClientAsync(Factory, sa);
+
+        // Enable everything (clear the list).
+        var enableAll = await saClient.PutAsJsonAsync(
+            $"/api/tenants/{target.TenantId}/features",
+            new { DisabledFeatures = Array.Empty<string>() });
+        enableAll.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var fetched = await (await saClient.GetAsync($"/api/tenants/{target.TenantId}")).Content
+            .ReadFromJsonAsync<TenantWithFeaturesDto>();
+        fetched!.DisabledFeatures.Should().BeEmpty();
+
+        // Disable only magacin.
+        var disableMagacin = await saClient.PutAsJsonAsync(
+            $"/api/tenants/{target.TenantId}/features",
+            new { DisabledFeatures = new[] { "magacin" } });
+        disableMagacin.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        fetched = await (await saClient.GetAsync($"/api/tenants/{target.TenantId}")).Content
+            .ReadFromJsonAsync<TenantWithFeaturesDto>();
+        fetched!.DisabledFeatures.Should().BeEquivalentTo(new[] { "magacin" });
+    }
+
+    [Fact]
+    public async Task UpdateFeatures_UnknownKey_Returns400()
+    {
+        var sa = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.SuperAdmin);
+        var target = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var saClient = await TestDataSeeder.AuthenticatedClientAsync(Factory, sa);
+
+        var resp = await saClient.PutAsJsonAsync(
+            $"/api/tenants/{target.TenantId}/features",
+            new { DisabledFeatures = new[] { "magacin", "typo-feature-key" } });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("UNKNOWN_FEATURE");
+    }
+
+    [Fact]
+    public async Task UpdateFeatures_RegularAdmin_GetsForbidden()
+    {
+        var target = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var adminClient = await TestDataSeeder.AuthenticatedClientAsync(Factory, target);
+
+        var resp = await adminClient.PutAsJsonAsync(
+            $"/api/tenants/{target.TenantId}/features",
+            new { DisabledFeatures = Array.Empty<string>() });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task PaidThrough_OnlyCountsPaymentsWherePeriodHasStarted()
+    {
+        // Saša 18.06.2026: a payment with periodStart in the future doesn't
+        // promote the tenant to "Plaćeno" until that date arrives. paidThrough
+        // and lastPaidAt aggregates must filter on periodStart <= today.
+        var sa = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.SuperAdmin);
+        var target = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var saClient = await TestDataSeeder.AuthenticatedClientAsync(Factory, sa);
+
+        var futureStart = DateTime.UtcNow.Date.AddDays(30);
+        var addResp = await saClient.PostAsJsonAsync(
+            $"/api/tenants/{target.TenantId}/payments",
+            new
+            {
+                PeriodStart = futureStart.ToString("yyyy-MM-dd"),
+                PeriodEnd = futureStart.AddMonths(6).ToString("yyyy-MM-dd"),
+                Amount = 100.00m,
+                Currency = "EUR",
+                PaidAt = DateTime.UtcNow.Date.AddDays(-1).ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                InvoiceNumber = (string?)null,
+                Notes = (string?)null,
+            });
+        addResp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var tenant = await (await saClient.GetAsync($"/api/tenants/{target.TenantId}")).Content
+            .ReadFromJsonAsync<TenantWithFeaturesDto>();
+        tenant!.PaidThrough.Should().BeNull("payment's period hasn't started yet");
+        tenant.LastPaidAt.Should().NotBeNull("paidAt itself was yesterday so the payment IS recorded");
+    }
+
+    [Fact]
+    public async Task PaidThrough_CountsPaymentWhosePeriodHasAlreadyStarted()
+    {
+        var sa = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.SuperAdmin);
+        var target = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var saClient = await TestDataSeeder.AuthenticatedClientAsync(Factory, sa);
+
+        var startedYesterday = DateTime.UtcNow.Date.AddDays(-1);
+        var endsInFuture = startedYesterday.AddMonths(6);
+        var addResp = await saClient.PostAsJsonAsync(
+            $"/api/tenants/{target.TenantId}/payments",
+            new
+            {
+                PeriodStart = startedYesterday.ToString("yyyy-MM-dd"),
+                PeriodEnd = endsInFuture.ToString("yyyy-MM-dd"),
+                Amount = 100.00m,
+                Currency = "EUR",
+                PaidAt = startedYesterday.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                InvoiceNumber = (string?)null,
+                Notes = (string?)null,
+            });
+        addResp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var tenant = await (await saClient.GetAsync($"/api/tenants/{target.TenantId}")).Content
+            .ReadFromJsonAsync<TenantWithFeaturesDto>();
+        tenant!.PaidThrough.Should().NotBeNull();
+        tenant.PaidThrough!.Value.Date.Should().Be(endsInFuture);
+    }
+
+    [Fact]
+    public async Task GetAllPayments_ReturnsRowsFromMultipleTenants_WithTenantNameAndCode()
+    {
+        var sa = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.SuperAdmin);
+        var (a, b) = await TestDataSeeder.SeedTwoTenantsAsync(Factory);
+        var saClient = await TestDataSeeder.AuthenticatedClientAsync(Factory, sa);
+
+        await AddSimplePaymentAsync(saClient, a.TenantId, amount: 100m, paidAt: DateTime.UtcNow.Date.AddDays(-2));
+        await AddSimplePaymentAsync(saClient, b.TenantId, amount: 200m, paidAt: DateTime.UtcNow.Date.AddDays(-1));
+
+        var resp = await saClient.GetAsync("/api/tenants/payments?page=1&pageSize=50");
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var body = await resp.Content.ReadAsStringAsync();
+        body.Should().Contain(a.TenantCode);
+        body.Should().Contain(b.TenantCode);
+        body.Should().Contain("100");
+        body.Should().Contain("200");
+    }
+
+    [Fact]
+    public async Task GetAllPayments_FilteredByTenantId_ReturnsOnlyThatTenantsRows()
+    {
+        var sa = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.SuperAdmin);
+        var (a, b) = await TestDataSeeder.SeedTwoTenantsAsync(Factory);
+        var saClient = await TestDataSeeder.AuthenticatedClientAsync(Factory, sa);
+
+        await AddSimplePaymentAsync(saClient, a.TenantId, amount: 100m, paidAt: DateTime.UtcNow.Date.AddDays(-2));
+        await AddSimplePaymentAsync(saClient, b.TenantId, amount: 200m, paidAt: DateTime.UtcNow.Date.AddDays(-1));
+
+        var resp = await saClient.GetAsync($"/api/tenants/payments?tenantId={a.TenantId}&page=1&pageSize=50");
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var body = await resp.Content.ReadAsStringAsync();
+        body.Should().Contain(a.TenantCode);
+        body.Should().NotContain(b.TenantCode);
+    }
+
+    [Fact]
+    public async Task GetAllPayments_RegularAdmin_GetsForbidden()
+    {
+        var target = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var adminClient = await TestDataSeeder.AuthenticatedClientAsync(Factory, target);
+
+        var resp = await adminClient.GetAsync("/api/tenants/payments");
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    private async Task AddSimplePaymentAsync(HttpClient saClient, Guid tenantId, decimal amount, DateTime paidAt)
+    {
+        var resp = await saClient.PostAsJsonAsync(
+            $"/api/tenants/{tenantId}/payments",
+            new
+            {
+                PeriodStart = paidAt.ToString("yyyy-MM-dd"),
+                PeriodEnd = paidAt.AddMonths(1).ToString("yyyy-MM-dd"),
+                Amount = amount,
+                Currency = "EUR",
+                PaidAt = paidAt.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                InvoiceNumber = (string?)null,
+                Notes = (string?)null,
+            });
+        resp.EnsureSuccessStatusCode();
+    }
+
+    [Fact]
     public async Task SA_HittingNonExistentRoute_Gets404_NotSuperAdminReadOnly()
     {
         // Regression for a misleading 403: the middleware used to fire
@@ -220,4 +463,21 @@ public class TenantBillingTests : IntegrationTestBase
     }
 
     private sealed record TenantPaymentRow(Guid Id);
+
+    // Mirror of the BE TenantDto fields the tests need. Letting the test
+    // own a local shape keeps it independent of internal DTO churn — only
+    // breaks if these specific fields change semantics.
+    private sealed record TenantWithFeaturesDto(
+        Guid Id,
+        string Name,
+        string Code,
+        bool IsActive,
+        DateTime CreatedAt,
+        DateTime? UpdatedAt,
+        string? LogoUrl,
+        DateTime? BlockedAt,
+        string? BlockedReason,
+        DateTime? LastPaidAt,
+        DateTime? PaidThrough,
+        List<string>? DisabledFeatures);
 }

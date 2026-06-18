@@ -7,8 +7,10 @@ using AlGreenMES.Modules.Tenancy.Application.Commands.DeleteTenantPayment;
 using AlGreenMES.Modules.Tenancy.Application.Commands.SetTenantLogo;
 using AlGreenMES.Modules.Tenancy.Application.Commands.UnblockTenant;
 using AlGreenMES.Modules.Tenancy.Application.Commands.UpdateTenant;
+using AlGreenMES.Modules.Tenancy.Application.Commands.UpdateTenantFeatures;
 using AlGreenMES.Modules.Tenancy.Application.Commands.UpdateTenantPayment;
 using AlGreenMES.Modules.Tenancy.Application.Commands.UpdateTenantSettings;
+using AlGreenMES.Modules.Tenancy.Application.Queries.GetAllPayments;
 using AlGreenMES.Modules.Tenancy.Application.Queries.GetTenantById;
 using AlGreenMES.Modules.Tenancy.Application.Queries.GetTenantPayments;
 using AlGreenMES.Modules.Tenancy.Application.Queries.GetTenants;
@@ -256,6 +258,28 @@ public class TenantsController : ControllerBase
         return Ok(result);
     }
 
+    // Saša 17.06.2026: cross-tenant payments view for the SA "Sve uplate"
+    // page. Filters: tenant, paid-at date range, currency. Tenant name +
+    // code denormalised onto each row.
+    [HttpGet("payments")]
+    [Authorize(Policy = "RequireSuperAdmin")]
+    public async Task<IActionResult> GetAllPayments(
+        [FromQuery] Guid? tenantId,
+        [FromQuery] DateTime? paidFrom,
+        [FromQuery] DateTime? paidTo,
+        [FromQuery] string? currency,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50,
+        [FromQuery] string? sortBy = null,
+        [FromQuery] string? sortDirection = null,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await _mediator.Send(new GetAllPaymentsQuery(
+            tenantId, paidFrom, paidTo, currency,
+            page, pageSize, sortBy, sortDirection), cancellationToken);
+        return Ok(result);
+    }
+
     [HttpPost("{id:guid}/payments")]
     [Authorize(Policy = "RequireSuperAdmin")]
     [AllowSuperAdminWrite]
@@ -315,6 +339,17 @@ public class TenantsController : ControllerBase
     public async Task<IActionResult> UnblockTenant(Guid id, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new UnblockTenantCommand(id), cancellationToken);
+        return Ok(result);
+    }
+
+    // Saša 17.06.2026: SA-only feature toggle. List of feature keys the
+    // SA has disabled for this tenant. Empty = everything enabled.
+    [HttpPut("{id:guid}/features")]
+    [Authorize(Policy = "RequireSuperAdmin")]
+    [AllowSuperAdminWrite]
+    public async Task<IActionResult> UpdateTenantFeatures(Guid id, [FromBody] UpdateTenantFeaturesRequest request, CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(new UpdateTenantFeaturesCommand(id, request.DisabledFeatures ?? new List<string>()), cancellationToken);
         return Ok(result);
     }
 }

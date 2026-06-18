@@ -62,17 +62,11 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, LoginResponseDt
             await LogAndSaveAsync(LoginAttempt.RecordFailure(null, emailNormalized, "TENANT_NOT_FOUND", request.IpAddress, request.UserAgent, now), cancellationToken);
             throw new NotFoundException("Tenant", request.TenantCode);
         }
-        if (!tenant.IsActive)
-        {
-            // Block() and Update(isActive: false) both flip IsActive — they
-            // are distinguished by BlockedAt so the FE can show "Pretplata
-            // istekla, kontaktirajte podršku" vs the generic deactivated
-            // tenant message. The reason itself is SA-only and stays in
-            // the Naplata tab; users only see the bucketed error code.
-            var code = tenant.IsBlocked ? "TENANT_BLOCKED" : "TENANT_INACTIVE";
-            await LogAndSaveAsync(LoginAttempt.RecordFailure(tenant.Id, emailNormalized, code, request.IpAddress, request.UserAgent, now), cancellationToken);
-            throw new DomainException(code, tenant.IsBlocked ? "Tenant subscription is on hold." : "The tenant is not active.");
-        }
+        // tenant.IsActive check is intentionally DEFERRED until after we
+        // know whether the caller is a SuperAdmin (Saša 17.06.2026):
+        // blocking the MPMS / platform tenant for non-payment must not
+        // lock SAs out of recovering the system. The check applies only
+        // to regular users below.
 
         // ──────────────────────────────────────────────────────────────
         // Stage 2: resolve the user. If the email doesn't match, we still
@@ -107,6 +101,21 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, LoginResponseDt
         {
             await LogAndSaveAsync(LoginAttempt.RecordFailure(tenant.Id, emailNormalized, "USER_INACTIVE", request.IpAddress, request.UserAgent, now), cancellationToken);
             throw new DomainException("USER_INACTIVE", "The user account is not active.");
+        }
+
+        // Now apply the deferred tenant-block check — but only for non-SA
+        // users. SuperAdmins bypass this so they can always reach the
+        // platform to unblock a tenant they accidentally blocked.
+        if (!tenant.IsActive && user.Role != UserRole.SuperAdmin)
+        {
+            // Block() and Update(isActive: false) both flip IsActive — they
+            // are distinguished by BlockedAt so the FE can show "Pretplata
+            // istekla, kontaktirajte podršku" vs the generic deactivated
+            // tenant message. The reason itself is SA-only and stays in
+            // the Naplata tab; users only see the bucketed error code.
+            var code = tenant.IsBlocked ? "TENANT_BLOCKED" : "TENANT_INACTIVE";
+            await LogAndSaveAsync(LoginAttempt.RecordFailure(tenant.Id, emailNormalized, code, request.IpAddress, request.UserAgent, now), cancellationToken);
+            throw new DomainException(code, tenant.IsBlocked ? "Tenant subscription is on hold." : "The tenant is not active.");
         }
 
         // ──────────────────────────────────────────────────────────────
