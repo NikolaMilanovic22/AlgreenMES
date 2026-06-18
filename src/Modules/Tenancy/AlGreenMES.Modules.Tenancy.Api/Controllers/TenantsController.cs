@@ -258,6 +258,19 @@ public class TenantsController : ControllerBase
         return Ok(result);
     }
 
+    // Saša 18.06.2026: tenant Admin gets a read-only view of their own
+    // company's billing history so they can confirm "did our last
+    // payment register". Tenant resolved from the JWT; no mutation
+    // endpoints exposed on /me (Add/Edit/Delete stay SuperAdmin-only).
+    [HttpGet("me/payments")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
+    public async Task<IActionResult> GetMyPayments(CancellationToken cancellationToken)
+    {
+        var tenantId = _tenantService.GetCurrentTenantId();
+        var result = await _mediator.Send(new GetTenantPaymentsQuery(tenantId), cancellationToken);
+        return Ok(result);
+    }
+
     // Saša 17.06.2026: cross-tenant payments view for the SA "Sve uplate"
     // page. Filters: tenant, paid-at date range, currency. Tenant name +
     // code denormalised onto each row.
