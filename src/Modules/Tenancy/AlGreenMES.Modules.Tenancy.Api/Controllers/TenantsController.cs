@@ -271,6 +271,7 @@ public class TenantsController : ControllerBase
         return Ok(result);
     }
 
+
     // Saša 17.06.2026: cross-tenant payments view for the SA "Sve uplate"
     // page. Filters: tenant, paid-at date range, currency. Tenant name +
     // code denormalised onto each row.

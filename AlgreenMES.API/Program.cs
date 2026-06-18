@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
+using AlgreenMES.API.BackgroundServices;
 using AlgreenMES.API.Middleware;
 using AlgreenMES.API.Services;
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
@@ -233,6 +234,12 @@ public class Program
             builder.Services.AddHostedService<DeadlineWarningService>();
             builder.Services.AddHostedService<AutoLogoutBackgroundService>();
             builder.Services.AddHostedService<LoginAttemptRetentionService>();
+            // Saša 18.06.2026: daily subscription-expiring nudge to tenant
+            // Admins. Registered as singleton AND hosted-service so the
+            // manual trigger endpoint can call RunOnceAsync on the same
+            // instance the background loop uses.
+            builder.Services.AddSingleton<BillingReminderService>();
+            builder.Services.AddHostedService(sp => sp.GetRequiredService<BillingReminderService>());
 
             // Module registrations
             builder.Services.AddTenancyModule(builder.Configuration);
