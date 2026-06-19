@@ -145,7 +145,7 @@ public class TenantsController : ControllerBase
     // ─────────────────────────────────────────────────────────────────────
 
     [HttpGet("me/settings")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator,SalesManager,Department,Magacioner")]
+    [Authorize(Roles = RoleGroups.AnyAuthenticated)]
     public async Task<IActionResult> GetMyTenantSettings(CancellationToken cancellationToken)
     {
         var tenantId = _tenantService.GetCurrentTenantId();
@@ -154,7 +154,7 @@ public class TenantsController : ControllerBase
     }
 
     [HttpPut("me/settings")]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = RoleGroups.AdminUp)]
     public async Task<IActionResult> UpdateMyTenantSettings([FromBody] UpdateTenantSettingsRequest request, CancellationToken cancellationToken)
     {
         var tenantId = _tenantService.GetCurrentTenantId();
@@ -168,7 +168,7 @@ public class TenantsController : ControllerBase
     }
 
     [HttpGet("me")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator,SalesManager,Department,Magacioner")]
+    [Authorize(Roles = RoleGroups.AnyAuthenticated)]
     public async Task<IActionResult> GetMyTenant(CancellationToken cancellationToken)
     {
         var tenantId = _tenantService.GetCurrentTenantId();
@@ -184,7 +184,7 @@ public class TenantsController : ControllerBase
     // render the logo regardless of role.
 
     [HttpPost("me/logo")]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = RoleGroups.AdminUp)]
     [RequestSizeLimit(5 * 1024 * 1024)]
     public async Task<IActionResult> UploadMyLogo(IFormFile file, CancellationToken cancellationToken)
     {
@@ -215,7 +215,7 @@ public class TenantsController : ControllerBase
     }
 
     [HttpGet("me/logo")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator,SalesManager,Department,Magacioner")]
+    [Authorize(Roles = RoleGroups.AnyAuthenticated)]
     public async Task<IActionResult> GetMyLogo(CancellationToken cancellationToken)
     {
         var tenantId = _tenantService.GetCurrentTenantId();
@@ -231,7 +231,7 @@ public class TenantsController : ControllerBase
     }
 
     [HttpDelete("me/logo")]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = RoleGroups.AdminUp)]
     public async Task<IActionResult> DeleteMyLogo(CancellationToken cancellationToken)
     {
         var tenantId = _tenantService.GetCurrentTenantId();
@@ -263,7 +263,7 @@ public class TenantsController : ControllerBase
     // payment register". Tenant resolved from the JWT; no mutation
     // endpoints exposed on /me (Add/Edit/Delete stay SuperAdmin-only).
     [HttpGet("me/payments")]
-    [Authorize(Roles = "Admin,SuperAdmin")]
+    [Authorize(Roles = RoleGroups.AdminUp)]
     public async Task<IActionResult> GetMyPayments(CancellationToken cancellationToken)
     {
         var tenantId = _tenantService.GetCurrentTenantId();

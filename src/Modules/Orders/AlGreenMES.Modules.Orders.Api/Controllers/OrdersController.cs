@@ -33,6 +33,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using AlGreenMES.BuildingBlocks.Common.Authorization;
 
 namespace AlGreenMES.Modules.Orders.Api.Controllers;
 
@@ -125,7 +126,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager")]
+    [Authorize(Roles = RoleGroups.ManagerOrSales)]
     [RequestSizeLimit(50 * 1024 * 1024)]
     public async Task<IActionResult> CreateOrder([FromForm] CreateOrderRequest request, CancellationToken cancellationToken)
     {
@@ -153,7 +154,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager")]
+    [Authorize(Roles = RoleGroups.ManagerOrSales)]
     public async Task<IActionResult> UpdateOrder(Guid id, [FromBody] UpdateOrderRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -169,7 +170,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/activate")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator")]
+    [Authorize(Roles = RoleGroups.CoordinatorUp)]
     public async Task<IActionResult> ActivateOrder(Guid id, [FromBody] ActivateOrderRequest? request = null, CancellationToken cancellationToken = default)
     {
         await _mediator.Send(new ActivateOrderCommand(id, request?.ResetProcessIds), cancellationToken);
@@ -177,7 +178,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/pause")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator")]
+    [Authorize(Roles = RoleGroups.CoordinatorUp)]
     public async Task<IActionResult> PauseOrder(Guid id, CancellationToken cancellationToken)
     {
         await _mediator.Send(new PauseOrderCommand(id), cancellationToken);
@@ -185,7 +186,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/resume")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator")]
+    [Authorize(Roles = RoleGroups.CoordinatorUp)]
     public async Task<IActionResult> ResumeOrder(Guid id, CancellationToken cancellationToken)
     {
         await _mediator.Send(new ResumeOrderCommand(id), cancellationToken);
@@ -193,7 +194,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/cancel")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
+    [Authorize(Roles = RoleGroups.ManagerUp)]
     public async Task<IActionResult> CancelOrder(Guid id, CancellationToken cancellationToken)
     {
         await _mediator.Send(new CancelOrderCommand(id), cancellationToken);
@@ -201,7 +202,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/reopen")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
+    [Authorize(Roles = RoleGroups.ManagerUp)]
     public async Task<IActionResult> ReopenOrder(Guid id, CancellationToken cancellationToken)
     {
         await _mediator.Send(new ReopenOrderCommand(id), cancellationToken);
@@ -209,7 +210,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("{orderId:guid}/items")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager")]
+    [Authorize(Roles = RoleGroups.ManagerOrSales)]
     public async Task<IActionResult> AddOrderItem(Guid orderId, [FromBody] AddOrderItemRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -219,7 +220,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpDelete("{orderId:guid}/items/{itemId:guid}")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager")]
+    [Authorize(Roles = RoleGroups.ManagerOrSales)]
     public async Task<IActionResult> RemoveOrderItem(Guid orderId, Guid itemId, CancellationToken cancellationToken)
     {
         await _mediator.Send(new RemoveOrderItemCommand(orderId, itemId), cancellationToken);
@@ -227,7 +228,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPut("{id:guid}/priority")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator")]
+    [Authorize(Roles = RoleGroups.CoordinatorUp)]
     public async Task<IActionResult> ChangePriority(Guid id, [FromBody] ChangePriorityRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new ChangePriorityCommand(id, request.Priority), cancellationToken);
@@ -235,7 +236,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPut("{id:guid}/invoiced")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager,Coordinator")]
+    [Authorize(Roles = RoleGroups.ManagerOrSales)]
     public async Task<IActionResult> SetInvoiced(Guid id, [FromBody] SetOrderInvoicedRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new SetOrderInvoicedCommand(id, request.IsInvoiced), cancellationToken);
@@ -243,7 +244,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/withdraw")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator")]
+    [Authorize(Roles = RoleGroups.CoordinatorUp)]
     public async Task<IActionResult> WithdrawOrderToProcess(Guid id, [FromBody] WithdrawOrderToProcessRequest request, CancellationToken cancellationToken)
     {
         await _mediator.Send(new WithdrawOrderToProcessCommand(id, request.TargetProcessId, request.Reason, request.UserId), cancellationToken);
@@ -251,7 +252,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("{orderId:guid}/items/{itemId:guid}/special-requests")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager")]
+    [Authorize(Roles = RoleGroups.ManagerOrSales)]
     public async Task<IActionResult> AddSpecialRequest(Guid orderId, Guid itemId, [FromBody] AddSpecialRequestRequest request, CancellationToken cancellationToken)
     {
         await _mediator.Send(new AddSpecialRequestCommand(orderId, itemId, request.SpecialRequestTypeId), cancellationToken);
@@ -259,7 +260,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpDelete("{orderId:guid}/items/{itemId:guid}/special-requests/{specialRequestId:guid}")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager")]
+    [Authorize(Roles = RoleGroups.ManagerOrSales)]
     public async Task<IActionResult> RemoveSpecialRequest(Guid orderId, Guid itemId, Guid specialRequestId, CancellationToken cancellationToken)
     {
         await _mediator.Send(new RemoveSpecialRequestCommand(orderId, itemId, specialRequestId), cancellationToken);
@@ -267,7 +268,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPut("{orderId:guid}/items/{itemId:guid}/processes/{processId:guid}/complexity")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager")]
+    [Authorize(Roles = RoleGroups.ManagerOrSales)]
     public async Task<IActionResult> OverrideComplexity(Guid orderId, Guid itemId, Guid processId, [FromBody] OverrideComplexityRequest request, CancellationToken cancellationToken)
     {
         await _mediator.Send(new OverrideComplexityCommand(orderId, itemId, processId, request.Complexity), cancellationToken);
@@ -277,7 +278,7 @@ public class OrdersController : ControllerBase
     // --- Attachments ---
 
     [HttpPost("{orderId:guid}/attachments")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager")]
+    [Authorize(Roles = RoleGroups.ManagerOrSales)]
     [RequestSizeLimit(10 * 1024 * 1024)]
     public async Task<IActionResult> UploadAttachment(Guid orderId, IFormFile file, [FromQuery] Guid? orderItemId, CancellationToken cancellationToken)
     {
@@ -330,7 +331,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpDelete("{orderId:guid}/attachments/{id:guid}")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager")]
+    [Authorize(Roles = RoleGroups.ManagerOrSales)]
     public async Task<IActionResult> DeleteAttachment(Guid orderId, Guid id, [FromQuery] Guid tenantId, CancellationToken cancellationToken)
     {
         await _mediator.Send(new DeleteOrderAttachmentCommand(orderId, id, tenantId), cancellationToken);
