@@ -2,6 +2,7 @@ using AlGreenMES.Modules.Identity.Api.Requests;
 using AlGreenMES.Modules.Identity.Application.Commands.Login;
 using AlGreenMES.Modules.Identity.Application.Commands.RefreshToken;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 
@@ -9,6 +10,12 @@ namespace AlGreenMES.Modules.Identity.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+// Login and refresh are by definition pre-auth — there's no JWT to
+// validate yet. Explicit [AllowAnonymous] both documents that and
+// satisfies the pre-commit "no controller without an auth declaration"
+// check (so a future authenticated endpoint added here doesn't quietly
+// become public).
+[AllowAnonymous]
 public class AuthController : ControllerBase
 {
     private readonly IMediator _mediator;

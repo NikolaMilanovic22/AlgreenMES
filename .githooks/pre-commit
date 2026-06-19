@@ -63,4 +63,91 @@ if [ -n "$AUTHZ_HITS" ]; then
   exit 1
 fi
 
+# ─── Check 4: Merge conflict markers in staged content ────────────
+# Five-line check; accidentally committing leftover conflict text breaks
+# the build silently for everyone else.
+if git diff --cached -U0 | grep -E '^\+(<{7}|={7}|>{7})' >/dev/null 2>&1; then
+  echo "✗ Merge conflict markers in staged content. Resolve before committing."
+  exit 1
+fi
+
+# ─── Check 5: DateTime.Now (local time) instead of DateTime.UtcNow ─
+# Postgres columns are timestamptz; mixing local-time Now corrupts the
+# stored time (gotchas.md calls this out specifically). Always UtcNow.
+# Allowed: tests that explicitly need local time, and the now-utc helper
+# we already have — both grep-exempt via the "DateTime\.Now" exact form
+# (no .Today / .DayOfWeek / .Year etc.).
+NOW_HITS=$(grep -rn --include='*.cs' --exclude-dir=bin --exclude-dir=obj 'DateTime\.Now\b' src/ AlgreenMES.API/ 2>/dev/null \
+  | grep -vE ':\s*(//|\*|///)' \
+  || true)
+
+if [ -n "$NOW_HITS" ]; then
+  echo "✗ DateTime.Now used — switch to DateTime.UtcNow."
+  echo "  All DB columns are timestamptz; local-time Now corrupts stored times"
+  echo "  when the server moves between timezones (gotchas.md)."
+  echo
+  echo "$NOW_HITS"
+  exit 1
+fi
+
+# ─── Check 6: .Result / .GetAwaiter().GetResult() on Tasks ────────
+# Classic async deadlock pattern in ASP.NET request contexts. Use await.
+RESULT_HITS=$(grep -rnE --include='*.cs' --exclude-dir=bin --exclude-dir=obj '\.GetAwaiter\(\)\.GetResult\(\)|\.Result\s*[;,)]' src/ AlgreenMES.API/ 2>/dev/null \
+  | grep -vE ':\s*(//|\*|///)' \
+  | grep -vE '\b(IActionResult|TaskResult|ApiResult|OperationResult|PagedResult|FluentResult)\b' \
+  || true)
+
+if [ -n "$RESULT_HITS" ]; then
+  echo "✗ Synchronous Task wait found (.Result or .GetAwaiter().GetResult())."
+  echo "  Deadlocks under load in ASP.NET request contexts. Use await."
+  echo
+  echo "$RESULT_HITS"
+  exit 1
+fi
+
+# ─── Check 7: Missing [Authorize] on a controller ─────────────────
+# A controller declared without [Authorize] (and without [AllowAnonymous]
+# explicitly opting out) is an accidentally-public endpoint. Same blast
+# radius as the tenant-filter regression.
+for f in $(find src/ AlgreenMES.API/ -name '*Controller.cs' -not -path '*/bin/*' -not -path '*/obj/*' 2>/dev/null); do
+  if grep -q '^\s*public\s\+class\s\+\w\+Controller' "$f" && \
+     ! grep -qE '\[Authorize|\[AllowAnonymous' "$f"; then
+    echo "✗ Controller without [Authorize] or [AllowAnonymous]: $f"
+    echo "  Add one of them at the class level; accidentally-public endpoints are"
+    echo "  the same blast radius as the cross-tenant filter regression."
+    exit 1
+  fi
+done
+
+# ─── Check 8: Console.WriteLine left in code ──────────────────────
+# Should be ILogger. Catches debug statements that escaped review.
+CONSOLE_HITS=$(grep -rn --include='*.cs' --exclude-dir=bin --exclude-dir=obj 'Console\.WriteLine\b' src/ AlgreenMES.API/ 2>/dev/null \
+  | grep -vE ':\s*(//|\*|///)' \
+  || true)
+
+if [ -n "$CONSOLE_HITS" ]; then
+  echo "✗ Console.WriteLine found — use ILogger instead."
+  echo "  Console.* doesn't go through Serilog enrichment (correlation id,"
+  echo "  tenant id, etc.) and isn't structured for log queries."
+  echo
+  echo "$CONSOLE_HITS"
+  exit 1
+fi
+
+# ─── Check 9: Thread.Sleep instead of Task.Delay ──────────────────
+# Synchronous sleep blocks the thread; in an async pipeline that's a
+# fast track to ThreadPool starvation. Use await Task.Delay(...).
+SLEEP_HITS=$(grep -rn --include='*.cs' --exclude-dir=bin --exclude-dir=obj 'Thread\.Sleep\b' src/ AlgreenMES.API/ 2>/dev/null \
+  | grep -vE ':\s*(//|\*|///)' \
+  || true)
+
+if [ -n "$SLEEP_HITS" ]; then
+  echo "✗ Thread.Sleep found — use 'await Task.Delay(...)' instead."
+  echo "  Synchronous sleep blocks the calling thread; in async contexts"
+  echo "  that's a fast track to ThreadPool starvation."
+  echo
+  echo "$SLEEP_HITS"
+  exit 1
+fi
+
 echo "✓ BE static checks: 0 issues"

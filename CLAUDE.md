@@ -35,18 +35,27 @@ dotnet ef migrations add {Name} -p src/Modules/Orders/...Infrastructure -s Algre
 
 ## Pre-commit hooks
 `./setup.sh` (one-time after clone) points git at `.githooks/` so the
-pre-commit script fires on every commit. Catches three regressions we've
-actually shipped:
-- `EF.Property<Guid>(... "TenantId" ...)` — must be `Guid?` (19.06.2026
-  cross-tenant filter no-op). Background in CHANGELOG 2026-06-19.
-- Magic `IsInRole("…")` strings — must use `RoleNames.SuperAdmin` /
-  `ICurrentUserService.IsSuperAdmin`.
-- Magic `[Authorize(Roles = "…")]` — must use `RoleGroups.*` constants
-  (`AdminUp`, `ManagerUp`, `CoordinatorUp`, `ManagerOrSales`,
-  `ManagerOrWarehouse`, `ProductionFloor`, `AnyAuthenticated`,
-  `SuperAdminOnly`).
+pre-commit script fires on every commit. Catches regressions we've
+actually shipped or could plausibly ship (~0.5s total):
+1. **`EF.Property<Guid>(... "TenantId" ...)`** — must be `Guid?`
+   (19.06.2026 cross-tenant filter no-op; CHANGELOG 2026-06-19).
+2. **Magic `IsInRole("…")`** — must use `RoleNames.*` / `IsSuperAdmin`.
+3. **Magic `[Authorize(Roles = "…")]`** — must use `RoleGroups.*`.
+4. **Merge conflict markers** — fails on staged `<<<<<<<` / `=======` /
+   `>>>>>>>`.
+5. **`DateTime.Now`** — must be `DateTime.UtcNow` (Postgres columns are
+   `timestamptz`; mixing local time corrupts stored times).
+6. **`.Result` / `.GetAwaiter().GetResult()`** on Tasks — classic async
+   deadlock pattern in ASP.NET request contexts.
+7. **Controller without `[Authorize]` or `[AllowAnonymous]`** —
+   accidentally-public endpoint. Same blast radius as the tenant-filter
+   regression.
+8. **`Console.WriteLine`** — must be `ILogger` (Serilog enrichment is
+   how we get correlation id / tenant id into log queries).
+9. **`Thread.Sleep`** — must be `await Task.Delay(...)` (sync sleep in
+   async pipelines starves ThreadPool).
 
-Total ~0.5s. Bypass with `git commit --no-verify` only when reverting.
+Bypass with `git commit --no-verify` only when reverting.
 
 ## Patterns
 - **CQRS + MediatR**: Commands return DTOs, Queries return DTOs/lists
