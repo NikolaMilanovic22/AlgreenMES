@@ -1,0 +1,50 @@
+name: CI
+
+# Catches anything that escapes the local pre-commit (.githooks/pre-commit):
+# bypasses via --no-verify, env-specific failures, or breakage in code that
+# wasn't grep-detectable. Runs build + the full integration suite on every
+# push to staging/master and on PRs.
+
+on:
+  push:
+    branches: [staging, master]
+  pull_request:
+    branches: [staging, master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: build + integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+      # The integration suite uses Testcontainers to spin up Postgres; GHA
+      # ubuntu runners ship with Docker, so this just works. Locally we
+      # have to set DOCKER_HOST explicitly for Apple Silicon (see
+      # tests/AlGreenMES.Tests.Integration/IntegrationTestBase.cs) but on
+      # Linux runners Docker is on the default socket.
+      - name: Integration tests
+        run: dotnet test tests/AlGreenMES.Tests.Integration/AlGreenMES.Tests.Integration.csproj --no-build --configuration Release --logger "console;verbosity=normal"

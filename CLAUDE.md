@@ -57,6 +57,14 @@ actually shipped or could plausibly ship (~0.5s total):
 
 Bypass with `git commit --no-verify` only when reverting.
 
+## Tooling
+- **CI**: `.github/workflows/ci.yml` runs `dotnet build` + the full
+  integration test suite (Testcontainers spins up Postgres on the GHA
+  Ubuntu runner) on every push to `staging`/`master` + PR. Catches
+  anything bypassed via `--no-verify`.
+- **Dependabot**: `.github/dependabot.yml` — weekly NuGet patch/minor
+  PRs grouped, immediate security advisories, monthly GHA updates.
+
 ## Patterns
 - **CQRS + MediatR**: Commands return DTOs, Queries return DTOs/lists
 - **Command structure**: `{Name}Command.cs` (record : IRequest<T>) + `{Name}CommandHandler.cs`
