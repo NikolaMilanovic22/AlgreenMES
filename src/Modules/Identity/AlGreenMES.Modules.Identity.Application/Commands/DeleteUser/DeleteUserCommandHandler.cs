@@ -1,6 +1,7 @@
 using AlGreenMES.BuildingBlocks.Common.Exceptions;
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using AlGreenMES.Modules.Identity.Application.Interfaces;
+using AlGreenMES.Modules.Identity.Application.Services;
 using AlGreenMES.Modules.Identity.Domain.Entities;
 using AlGreenMES.Modules.Identity.Domain.Repositories;
 using MediatR;
@@ -32,16 +33,8 @@ public class DeleteUserCommandHandler : IRequestHandler<DeleteUserCommand, Unit>
             ?? throw new NotFoundException("User", request.UserId);
 
         var callerUserId = _currentUser.GetCurrentUserId();
-        var isCallerSuperAdmin = _currentUser.IsInRole("SuperAdmin");
 
-        // Cross-tenant boundary. A non-SA caller may only delete users in
-        // their own tenant. Return 404 for misses so we don't leak the
-        // existence of users in other tenants — same semantic the EF query
-        // filter used to produce before SAs went tenantless. SA targets are
-        // intentionally exempt from this check (they have null TenantId);
-        // the peer-SA guard below returns 403 for them instead.
-        if (!isCallerSuperAdmin && user.Role != UserRole.SuperAdmin && user.TenantId != _currentUser.GetCurrentTenantId())
-            throw new NotFoundException("User", request.UserId);
+        UserAuthorizationGuards.RequireSameTenantOrSuperAdminTarget(_currentUser, user);
 
         // Sprint 3.0 F-2a — cannot delete yourself. Even a SuperAdmin should
         // not delete their own row in a single click; demote first or have

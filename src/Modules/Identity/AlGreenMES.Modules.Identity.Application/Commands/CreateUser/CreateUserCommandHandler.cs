@@ -38,7 +38,7 @@ public class CreateUserCommandHandler : IRequestHandler<CreateUserCommand, UserD
         //   - The created SA carries TenantId = null; the request's
         //     TenantId is ignored on this path so we don't accidentally
         //     pin them to whichever tenant the caller is browsing.
-        if (request.Role == UserRole.SuperAdmin && !_currentUser.IsInRole("SuperAdmin"))
+        if (request.Role == UserRole.SuperAdmin && !_currentUser.IsSuperAdmin)
             throw new ForbiddenException("FORBIDDEN_ROLE_ASSIGNMENT", "Only SuperAdmin can create a SuperAdmin user.");
 
         var passwordHash = _passwordHasher.HashPassword(request.Password);

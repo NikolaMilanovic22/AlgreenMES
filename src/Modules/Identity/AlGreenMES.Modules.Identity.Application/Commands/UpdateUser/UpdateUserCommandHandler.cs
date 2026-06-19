@@ -2,6 +2,7 @@ using AlGreenMES.BuildingBlocks.Common.Exceptions;
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using AlGreenMES.Modules.Identity.Application.DTOs;
 using AlGreenMES.Modules.Identity.Application.Interfaces;
+using AlGreenMES.Modules.Identity.Application.Services;
 using AlGreenMES.Modules.Identity.Domain.Entities;
 using AlGreenMES.Modules.Identity.Domain.Repositories;
 using Mapster;
@@ -41,17 +42,10 @@ public class UpdateUserCommandHandler : IRequestHandler<UpdateUserCommand, UserD
 
         var oldRole = user.Role;
         var isRoleChange = request.Role != oldRole;
-        var isCallerSuperAdmin = _currentUser.IsInRole("SuperAdmin");
+        var isCallerSuperAdmin = _currentUser.IsSuperAdmin;
         var callerUserId = _currentUser.GetCurrentUserId();
 
-        // Cross-tenant boundary. A non-SA caller may only operate on users in
-        // their own tenant. Return 404 (not 403) for misses so we don't leak
-        // the existence of users in other tenants — same semantic the EF
-        // query filter used to produce before SAs went tenantless. SA
-        // targets are exempt (they have null TenantId); the peer-SA guard
-        // below returns 403 for them instead.
-        if (!isCallerSuperAdmin && user.Role != UserRole.SuperAdmin && user.TenantId != _currentUser.GetCurrentTenantId())
-            throw new NotFoundException("User", request.Id);
+        UserAuthorizationGuards.RequireSameTenantOrSuperAdminTarget(_currentUser, user);
 
         // Peer SuperAdmin protection (Milos 15.06.2026). No SuperAdmin can
         // edit another SuperAdmin's record — only their own. This shuts down

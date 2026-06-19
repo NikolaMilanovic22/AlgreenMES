@@ -96,7 +96,7 @@ public class UsersController : ControllerBase
         Guid tenantId;
         if (request.TenantId.HasValue && request.TenantId.Value != Guid.Empty)
         {
-            if (!User.IsInRole("SuperAdmin"))
+            if (!User.IsInRole(RoleNames.SuperAdmin))
                 throw new ForbiddenException(
                     "FORBIDDEN_TENANT_OVERRIDE",
                     "Only SuperAdmin can create users in another tenant.");

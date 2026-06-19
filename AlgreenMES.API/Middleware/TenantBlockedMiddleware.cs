@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AlGreenMES.BuildingBlocks.Common.Authorization;
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using AlGreenMES.Modules.Tenancy.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc.Controllers;
@@ -46,7 +47,7 @@ public class TenantBlockedMiddleware
         if (!matchedMvcAction) { await _next(context); return; }
 
         if (context.User?.Identity?.IsAuthenticated != true) { await _next(context); return; }
-        if (context.User.IsInRole("SuperAdmin")) { await _next(context); return; }
+        if (context.User.IsInRole(RoleNames.SuperAdmin)) { await _next(context); return; }
 
         var path = context.Request.Path.Value ?? string.Empty;
         if (AlwaysAllowedPaths.Contains(path)) { await _next(context); return; }

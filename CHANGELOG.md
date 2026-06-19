@@ -8,6 +8,39 @@ Mirrored to `easy-mes-be` (skyhard) — keep both in sync when editing.
 
 ---
 
+## 2026-06-19 — Audit follow-up: role constants, guard helper, tenant-isolation regression tests
+
+### Added
+- **`RoleNames` constants** (`BuildingBlocks.Common.Authorization`). Replaces
+  every inline `IsInRole("SuperAdmin")` / `[Authorize(Roles = "...")]` magic
+  string. A typo in the string form silently flipped authorization to false
+  (the SA case never fired and the handler treated them as a regular user) —
+  the constants make that impossible.
+- **`ICurrentUserService.IsSuperAdmin`** property — typed shortcut for the
+  most common role check, removes the need to even import `RoleNames` in
+  handlers.
+- **`UserAuthorizationGuards.RequireSameTenantOrSuperAdminTarget`**
+  (Identity.Application/Services). Single source of truth for the
+  cross-tenant boundary check on user-management mutations — extracted from
+  three handlers (Update / Delete / ResetPassword) that all duplicated the
+  same SA-exempt three-clause check.
+- **`TenantIsolationRegressionTests`** integration suite. One golden-path
+  test per high-risk listing endpoint (orders, processes, shifts, users):
+  seed two tenants, write in A, log in as B, assert A's IDs aren't in the
+  response. If the `HasQueryFilter` regresses again (e.g., someone reverts
+  `EF.Property<Guid?>` back to `EF.Property<Guid>`), one of these turns red
+  immediately instead of leaking for days.
+
+### Changed
+- `UpdateUserCommandHandler`, `DeleteUserCommandHandler`,
+  `ResetPasswordCommandHandler`, `CreateUserCommandHandler` now use
+  `_currentUser.IsSuperAdmin` / `UserAuthorizationGuards` instead of inline
+  string checks + duplicated guard logic.
+- `SuperAdminReadOnlyMiddleware` and `TenantBlockedMiddleware` use
+  `RoleNames.SuperAdmin`.
+
+---
+
 ## 2026-06-19 — Tenant filter regression fix + tenantless-SA handler hardening
 
 ### Fixed

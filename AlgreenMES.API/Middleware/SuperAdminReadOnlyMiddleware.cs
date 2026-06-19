@@ -48,7 +48,7 @@ public class SuperAdminReadOnlyMiddleware
 
         if (matchedMvcAction
             && context.User?.Identity?.IsAuthenticated == true
-            && context.User.IsInRole("SuperAdmin")
+            && context.User.IsInRole(RoleNames.SuperAdmin)
             && !SafeMethods.Contains(context.Request.Method)
             && !HasAllowAttribute(context))
         {

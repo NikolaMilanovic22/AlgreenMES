@@ -1,5 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using AlGreenMES.BuildingBlocks.Common.Authorization;
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
 
 namespace AlgreenMES.API.Services;
@@ -18,6 +19,8 @@ public class CurrentUserService : ICurrentUserService
 
     public bool IsInRole(string role) =>
         _httpContextAccessor.HttpContext?.User?.IsInRole(role) ?? false;
+
+    public bool IsSuperAdmin => IsInRole(RoleNames.SuperAdmin);
 
     public Guid GetCurrentTenantId()
     {

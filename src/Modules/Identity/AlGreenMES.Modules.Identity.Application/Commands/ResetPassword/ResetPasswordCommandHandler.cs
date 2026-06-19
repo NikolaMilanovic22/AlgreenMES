@@ -38,11 +38,7 @@ public class ResetPasswordCommandHandler : IRequestHandler<ResetPasswordCommand,
         var user = await _userRepository.GetByIdWithProcessesIgnoreFiltersAsync(request.UserId, cancellationToken)
             ?? throw new NotFoundException("User", request.UserId);
 
-        // Cross-tenant boundary. SA targets are exempt — they have null
-        // TenantId; the peer-SA guard below returns 403 for them instead.
-        var isCallerSuperAdmin = _currentUser.IsInRole("SuperAdmin");
-        if (!isCallerSuperAdmin && user.Role != UserRole.SuperAdmin && user.TenantId != _currentUser.GetCurrentTenantId())
-            throw new NotFoundException("User", request.UserId);
+        UserAuthorizationGuards.RequireSameTenantOrSuperAdminTarget(_currentUser, user);
 
         // Peer SuperAdmin protection (Milos 15.06.2026). SuperAdmin passwords
         // can only be changed by the owner through ChangePassword (which
