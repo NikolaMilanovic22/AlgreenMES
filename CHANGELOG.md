@@ -8,6 +8,56 @@ Mirrored to `easy-mes-be` (skyhard) — keep both in sync when editing.
 
 ---
 
+## 2026-06-19 — Tenant filter regression fix + tenantless-SA handler hardening
+
+### Fixed
+- **Cross-tenant data leak in EF query filters.** The 16.06.2026 refactor
+  that made `TenantEntity.TenantId` nullable (for tenantless SAs)
+  silently turned off `HasQueryFilter` on every `TenantEntity` child —
+  the strongly-typed `EF.Property<Guid>` lambda no longer matched the
+  now-nullable column, so the filter became a no-op for Shifts, Orders,
+  Production rows, etc. Caught by integration tests after Saša's
+  19.06.2026 prod audit. Fix: switch filter to `EF.Property<Guid?>` in
+  `IdentityDbContext` / `OrdersDbContext` / `ProductionDbContext`. SQL
+  `NULL = X` is still false so tenantless SA rows are still correctly
+  excluded from tenant-scoped queries.
+- `LoginAttempt` is explicitly skipped from the Identity tenant filter
+  (it's intentionally not a `TenantEntity` — pre-auth failures with an
+  unknown tenant code must still be logged).
+
+### Changed
+- **User-management handlers locate tenantless SAs explicitly.**
+  `UpdateUserCommandHandler`, `DeleteUserCommandHandler`, and
+  `ResetPasswordCommandHandler` now load the target via the new
+  `IUserRepository.GetByIdWithProcessesIgnoreFiltersAsync` and enforce
+  the cross-tenant boundary inline (non-SA caller hitting a different
+  tenant → 404). SA targets are exempted from the cross-tenant check so
+  the role-based peer-SA guard (`FORBIDDEN_PEER_SUPERADMIN`) fires
+  instead of returning a misleading 404. Without this an Admin attempting
+  to delete an SA got 404 instead of 403, and SA self-update silently
+  failed because the filter hid the SA from their own session.
+- `UsersController`: `[AllowSuperAdminWrite]` added to `UpdateUser` /
+  `DeleteUser` / `ResetPassword`. SAs can call these endpoints; the
+  handler-level peer-SA guard does the real protection. Aligns the
+  controller with the class-doc design ("Self-modification IS allowed;
+  only peer-targeting operations are blocked").
+- `NotificationCreator.NotifyManagementAsync` includes tenantless
+  SuperAdmins in the recipient set (their `tenant_id` is NULL so
+  `GetByTenantIdAsync` misses them, but they should still see bell
+  notifications for tenants they're viewing).
+
+### Tests
+- `IdentityAuthzTests.DeleteUser_AdminDeletesSuperAdmin_Returns403_F2b`
+  now asserts `FORBIDDEN_PEER_SUPERADMIN` (the older
+  `FORBIDDEN_SUPERADMIN_DELETE` was subsumed on 15.06.2026).
+- `SuperAdminPeerProtectionTests` peer-target assertions switched from
+  middleware-level `SUPERADMIN_READ_ONLY` to handler-level
+  `FORBIDDEN_PEER_SUPERADMIN`. `UpdateUser_Self_AsSuperAdmin_IsAlsoBlocked`
+  renamed to `UpdateUser_Self_AsSuperAdmin_Succeeds` to match the class
+  doc — self-modification is allowed.
+
+---
+
 ## 2026-06-18 — Saša feedback round + Admin Naplata view + daily subscription reminders
 
 ### Added

@@ -54,7 +54,11 @@ public class OrdersDbContext : DbContext, IOrdersUnitOfWork
 
     private void SetTenantFilter<TEntity>(ModelBuilder modelBuilder) where TEntity : class
     {
+        // EF.Property<Guid?> so the filter still applies after TenantEntity
+        // turned its TenantId column into Guid? on 16.06.2026 — the strongly-
+        // typed Guid version silently became a no-op for every TenantEntity
+        // child (Saša 19.06.2026).
         modelBuilder.Entity<TEntity>().HasQueryFilter(
-            e => EF.Property<Guid>(e, "TenantId") == _currentUser.GetCurrentTenantId());
+            e => EF.Property<Guid?>(e, "TenantId") == _currentUser.GetCurrentTenantId());
     }
 }

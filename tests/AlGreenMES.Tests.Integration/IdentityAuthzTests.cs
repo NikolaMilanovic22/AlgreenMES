@@ -138,8 +138,11 @@ public class IdentityAuthzTests : IntegrationTestBase
 
         var resp = await client.DeleteAsync($"/api/users/{superAdminId}");
 
+        // FORBIDDEN_SUPERADMIN_DELETE was subsumed by the stronger peer-SA
+        // guard on 15.06.2026 — SuperAdmin accounts are never deletable via
+        // the API regardless of caller role.
         resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        (await resp.Content.ReadAsStringAsync()).Should().Contain("FORBIDDEN_SUPERADMIN_DELETE");
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("FORBIDDEN_PEER_SUPERADMIN");
     }
 
     [Fact]

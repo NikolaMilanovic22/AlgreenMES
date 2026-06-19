@@ -32,14 +32,20 @@ public class IdentityDbContext : DbContext, IIdentityUnitOfWork
 
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())
         {
-            var tenantProperty = entityType.FindProperty("TenantId");
-            if (tenantProperty == null) continue;
-            // Skip entities where TenantId is nullable — those are
-            // cross-tenant audit tables (e.g. LoginAttempt where a failed
-            // pre-auth attempt has no tenant). The HasQueryFilter expression
-            // assumes a non-null Guid, so it can't be applied to Guid?.
-            if (Nullable.GetUnderlyingType(tenantProperty.ClrType) != null) continue;
-
+            if (entityType.FindProperty("TenantId") == null) continue;
+            // LoginAttempt is intentionally NOT tenant-filtered — a failed
+            // login with an unknown tenant code can't resolve a tenant, and
+            // we still want the row in the audit table (see the class doc on
+            // LoginAttempt). Pre-auth queries against this table run from a
+            // scope with no tenant claim, so any filter would drop every row.
+            if (entityType.ClrType == typeof(LoginAttempt)) continue;
+            // Apply the filter to every remaining entity with a TenantId
+            // column, including User (TenantId became Guid? on 16.06.2026
+            // when SuperAdmins went tenantless). Skipping nullable TenantId
+            // silently turned the filter off for every TenantEntity child
+            // (Saša 19.06.2026: cross-tenant Shift writes leaked through this
+            // hole until the audit caught it). SA lookup sites use
+            // IgnoreQueryFilters() where they need to see tenantless rows.
             typeof(IdentityDbContext)
                 .GetMethod(nameof(SetTenantFilter), BindingFlags.NonPublic | BindingFlags.Instance)!
                 .MakeGenericMethod(entityType.ClrType)
@@ -49,7 +55,12 @@ public class IdentityDbContext : DbContext, IIdentityUnitOfWork
 
     private void SetTenantFilter<TEntity>(ModelBuilder modelBuilder) where TEntity : class
     {
+        // Read the column as Guid? so the comparison compiles for both
+        // non-null tenant columns (most entities) and nullable User.
+        // A row with TenantId == null never matches GetCurrentTenantId
+        // (which throws on missing claim or returns Guid.Empty), so SAs
+        // are correctly filtered out of tenant-scoped queries by default.
         modelBuilder.Entity<TEntity>().HasQueryFilter(
-            e => EF.Property<Guid>(e, "TenantId") == _currentUser.GetCurrentTenantId());
+            e => EF.Property<Guid?>(e, "TenantId") == _currentUser.GetCurrentTenantId());
     }
 }

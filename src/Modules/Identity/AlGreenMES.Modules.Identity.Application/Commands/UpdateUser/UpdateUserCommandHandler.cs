@@ -33,13 +33,25 @@ public class UpdateUserCommandHandler : IRequestHandler<UpdateUserCommand, UserD
 
     public async Task<UserDto> Handle(UpdateUserCommand request, CancellationToken cancellationToken)
     {
-        var user = await _userRepository.GetByIdWithProcessesAsync(request.Id, cancellationToken)
+        // Unfiltered lookup so the handler can locate tenantless SuperAdmins
+        // and apply the peer-SA guard below. The tenant boundary for non-SA
+        // targets is enforced explicitly a few lines down.
+        var user = await _userRepository.GetByIdWithProcessesIgnoreFiltersAsync(request.Id, cancellationToken)
             ?? throw new NotFoundException("User", request.Id);
 
         var oldRole = user.Role;
         var isRoleChange = request.Role != oldRole;
         var isCallerSuperAdmin = _currentUser.IsInRole("SuperAdmin");
         var callerUserId = _currentUser.GetCurrentUserId();
+
+        // Cross-tenant boundary. A non-SA caller may only operate on users in
+        // their own tenant. Return 404 (not 403) for misses so we don't leak
+        // the existence of users in other tenants — same semantic the EF
+        // query filter used to produce before SAs went tenantless. SA
+        // targets are exempt (they have null TenantId); the peer-SA guard
+        // below returns 403 for them instead.
+        if (!isCallerSuperAdmin && user.Role != UserRole.SuperAdmin && user.TenantId != _currentUser.GetCurrentTenantId())
+            throw new NotFoundException("User", request.Id);
 
         // Peer SuperAdmin protection (Milos 15.06.2026). No SuperAdmin can
         // edit another SuperAdmin's record — only their own. This shuts down

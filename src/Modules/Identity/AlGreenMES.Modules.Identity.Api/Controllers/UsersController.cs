@@ -123,6 +123,7 @@ public class UsersController : ControllerBase
 
     [HttpPut("{id:guid}")]
     [Authorize(Roles = "SuperAdmin,Admin")]
+    [AllowSuperAdminWrite]
     public async Task<IActionResult> UpdateUser(Guid id, [FromBody] UpdateUserRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -171,6 +172,7 @@ public class UsersController : ControllerBase
 
     [HttpPost("{id:guid}/reset-password")]
     [Authorize(Roles = "SuperAdmin,Admin")]
+    [AllowSuperAdminWrite]
     public async Task<IActionResult> ResetPassword(Guid id, [FromBody] ResetPasswordRequest request, CancellationToken cancellationToken)
     {
         await _mediator.Send(
@@ -182,6 +184,7 @@ public class UsersController : ControllerBase
 
     [HttpDelete("{id:guid}")]
     [Authorize(Roles = "SuperAdmin,Admin")]
+    [AllowSuperAdminWrite]
     public async Task<IActionResult> DeleteUser(Guid id, CancellationToken cancellationToken)
     {
         var currentUserId = User.FindFirstValue(JwtRegisteredClaimNames.Sub);

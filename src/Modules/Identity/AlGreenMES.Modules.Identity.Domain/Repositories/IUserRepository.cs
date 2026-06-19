@@ -7,6 +7,16 @@ public interface IUserRepository
 {
     Task<User?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
     Task<User?> GetByIdWithProcessesAsync(Guid id, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Variant of <see cref="GetByIdWithProcessesAsync"/> that bypasses the
+    /// tenant filter so it resolves tenantless SuperAdmins. Used by the
+    /// Update/Delete user-management handlers so they can locate SA targets
+    /// and apply peer-SA protection — the handlers then enforce the cross-
+    /// tenant boundary explicitly. Without this the tenant filter masks SAs
+    /// from an Admin's view and the auth check falls through to 404 instead
+    /// of 403 (Saša 19.06.2026).
+    /// </summary>
+    Task<User?> GetByIdWithProcessesIgnoreFiltersAsync(Guid id, CancellationToken cancellationToken = default);
     /// <summary>For pre-auth flows (refresh) where the JWT and tenant scope are not yet established.</summary>
     Task<User?> GetByIdIgnoreFiltersAsync(Guid id, CancellationToken cancellationToken = default);
     Task<User?> GetByEmailAsync(string email, Guid tenantId, CancellationToken cancellationToken = default);

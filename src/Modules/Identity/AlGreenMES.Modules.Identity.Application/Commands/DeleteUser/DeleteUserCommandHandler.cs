@@ -25,10 +25,23 @@ public class DeleteUserCommandHandler : IRequestHandler<DeleteUserCommand, Unit>
 
     public async Task<Unit> Handle(DeleteUserCommand request, CancellationToken cancellationToken)
     {
-        var user = await _userRepository.GetByIdAsync(request.UserId, cancellationToken)
+        // Unfiltered lookup so the handler can locate tenantless SuperAdmins
+        // and apply the peer-SA guard below. The tenant boundary for non-SA
+        // targets is enforced explicitly a few lines down.
+        var user = await _userRepository.GetByIdWithProcessesIgnoreFiltersAsync(request.UserId, cancellationToken)
             ?? throw new NotFoundException("User", request.UserId);
 
         var callerUserId = _currentUser.GetCurrentUserId();
+        var isCallerSuperAdmin = _currentUser.IsInRole("SuperAdmin");
+
+        // Cross-tenant boundary. A non-SA caller may only delete users in
+        // their own tenant. Return 404 for misses so we don't leak the
+        // existence of users in other tenants — same semantic the EF query
+        // filter used to produce before SAs went tenantless. SA targets are
+        // intentionally exempt from this check (they have null TenantId);
+        // the peer-SA guard below returns 403 for them instead.
+        if (!isCallerSuperAdmin && user.Role != UserRole.SuperAdmin && user.TenantId != _currentUser.GetCurrentTenantId())
+            throw new NotFoundException("User", request.UserId);
 
         // Sprint 3.0 F-2a — cannot delete yourself. Even a SuperAdmin should
         // not delete their own row in a single click; demote first or have
