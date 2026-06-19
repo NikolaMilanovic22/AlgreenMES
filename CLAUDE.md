@@ -27,10 +27,26 @@ src/
 
 ## Key Commands
 ```bash
+./setup.sh                                      # One-time: activate git pre-commit hooks
 dotnet build                                    # Build
 dotnet run --project AlgreenMES.API             # Run on :5030
 dotnet ef migrations add {Name} -p src/Modules/Orders/...Infrastructure -s AlgreenMES.API
 ```
+
+## Pre-commit hooks
+`./setup.sh` (one-time after clone) points git at `.githooks/` so the
+pre-commit script fires on every commit. Catches three regressions we've
+actually shipped:
+- `EF.Property<Guid>(... "TenantId" ...)` — must be `Guid?` (19.06.2026
+  cross-tenant filter no-op). Background in CHANGELOG 2026-06-19.
+- Magic `IsInRole("…")` strings — must use `RoleNames.SuperAdmin` /
+  `ICurrentUserService.IsSuperAdmin`.
+- Magic `[Authorize(Roles = "…")]` — must use `RoleGroups.*` constants
+  (`AdminUp`, `ManagerUp`, `CoordinatorUp`, `ManagerOrSales`,
+  `ManagerOrWarehouse`, `ProductionFloor`, `AnyAuthenticated`,
+  `SuperAdminOnly`).
+
+Total ~0.5s. Bypass with `git commit --no-verify` only when reverting.
 
 ## Patterns
 - **CQRS + MediatR**: Commands return DTOs, Queries return DTOs/lists
