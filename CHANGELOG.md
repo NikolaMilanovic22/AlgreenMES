@@ -8,6 +8,81 @@ Mirrored to `easy-mes-be` (skyhard) — keep both in sync when editing.
 
 ---
 
+## 2026-06-18 — Saša feedback round + Admin Naplata view + daily subscription reminders
+
+### Added
+- **Tenant feature flags** (Saša #7). New `tenants.disabled_features` JSON
+  column + `Tenant.DisabledFeatures` / `SetDisabledFeatures()` /
+  `KnownFeatures` / `BasicPlanDisabledFeatures`. Endpoint
+  `PUT /api/tenants/{id}/features` (`[AllowSuperAdminWrite]`); unknown
+  feature keys rejected with `UNKNOWN_FEATURE`. New tenants default to
+  Basic (`["process-times", "magacin"]` disabled); existing tenants
+  grandfathered to everything enabled by the migration.
+- **Cross-tenant payments endpoint** (Saša #4).
+  `GET /api/tenants/payments` (SA-only) returns the paged aggregated
+  view across all tenants with tenant name + code denormalised. Filters:
+  `tenantId`, `paidFrom`, `paidTo`, `currency`. Sort: `paidAt` (default
+  desc) / `tenantName` / `amount` / `periodStart`.
+- **Admin read-only payment ledger.** `GET /api/tenants/me/payments`
+  resolves tenant from JWT — Admin role only; no mutation endpoints
+  exposed on `/me`. Powers the new Profil firme → Naplata tab on the FE.
+- **Daily subscription-expiry nudge.** `BillingReminderService`
+  (HostedService) scans hourly, fires the actual work at 06:00 UTC. For
+  each active tenant whose `paidThrough` is ≤ today+14 days OR already
+  past, creates one `SubscriptionExpiring` (warning) or
+  `SubscriptionExpired` (error) notification per Admin user.
+  Idempotent per `(user, day)`. SA manual trigger at
+  `POST /api/tenants/billing-reminders/run` so testing doesn't have to
+  wait for the next morning.
+- **`NotificationType.SubscriptionExpiring`** and
+  **`SubscriptionExpired`** enum values, stored as strings so no
+  migration needed.
+- **`TenantBlockedMiddleware`** (Saša 17.06.2026 follow-up). Rejects
+  authenticated requests from a blocked tenant's user with `401
+  TENANT_BLOCKED` so the FE's axios interceptor force-logs-out instead
+  of letting the JWT linger until expiry. SuperAdmins bypass.
+
+### Changed
+- **`paidThrough` semantics** (Saša #2 follow-up).
+  `TenantPaymentRepository.GetPaidThroughAsync` /
+  `GetPaidThroughByTenantAsync` now filter `periodStart <= today` so a
+  pre-paid future period doesn't promote the tenant to "Plaćeno" until
+  its start date arrives. Same filter governs the daily-reminder
+  threshold.
+- **Login flow** defers `tenant.IsActive` check until after the user is
+  resolved, and skips it entirely for SuperAdmins. Blocking the MPMS /
+  platform tenant no longer locks SAs out.
+- **`Tenant.Update()`** no longer takes `isActive`. `Block` / `Unblock`
+  are the only off-switch for a tenant — legacy "Deactivate" command
+  parameter removed end-to-end.
+
+### Fixed (during BillingReminderService test backfill)
+- Admin-user lookup in the daily-reminder loop now uses
+  `IgnoreQueryFilters()`. Without it, the tenant-scoped Users query
+  returned zero rows in the absence of a JWT and the service silently
+  notified nobody on prod.
+- Same fix applied to the idempotency check (`alreadyNotified` query).
+  Without it the check returned zero, so the service would have
+  created a fresh batch of duplicate notifications on every run.
+
+### Migrations
+- `20260618072741_AddTenantDisabledFeatures` (TenancyDbContext) — adds
+  `tenants.disabled_features text NOT NULL DEFAULT '[]'`. Existing rows
+  inherit the empty list (grandfathered); new tenants go through
+  `Tenant.Create` which seeds the Basic plan.
+
+### Tests
+- `TenantBillingTests` grows from 8 to 17: SA bypass of blocked-tenant
+  login, paidThrough excludes future / counts started periods, feature
+  flag toggle round-trip + unknown-key rejection + 403 for regular
+  Admin, cross-tenant payments listing + tenantId filter + 403.
+- New `BillingReminderServiceTests` (6 cases): expiring window creates
+  warning for Admin only, expired uses the Expired type, beyond
+  threshold + no payments + blocked all skip, double-run is idempotent.
+  Suite total: 23/23.
+
+---
+
 ## 2026-06-16 — Naplata (SA-only billing) + seed CLI flag + tenantless SA refactor
 
 ### Added

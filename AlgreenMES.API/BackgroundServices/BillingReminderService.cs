@@ -109,8 +109,11 @@ public class BillingReminderService : BackgroundService
                 ? NotificationType.SubscriptionExpired
                 : NotificationType.SubscriptionExpiring;
 
-            // Admin users of this tenant.
+            // Admin users of this tenant. IgnoreQueryFilters because the
+            // background service runs without a tenant scope on the JWT,
+            // and the default Users filter would drop every row.
             var adminUserIds = await identityDb.Users
+                .IgnoreQueryFilters()
                 .Where(u => u.TenantId == tenant.Id && u.IsActive && u.Role == UserRole.Admin)
                 .Select(u => u.Id)
                 .ToListAsync(cancellationToken);
@@ -121,6 +124,7 @@ public class BillingReminderService : BackgroundService
             // SubscriptionExpiring notification today.
             var tomorrow = today.AddDays(1);
             var alreadyNotified = await ordersDb.Notifications
+                .IgnoreQueryFilters()
                 .Where(n => adminUserIds.Contains(n.UserId)
                             && (n.Type == NotificationType.SubscriptionExpiring
                                 || n.Type == NotificationType.SubscriptionExpired)
