@@ -13,4 +13,4 @@ public record GetTimeTrackingQuery(
     ComplexityType? Complexity,
     string? OrderNumber,
     List<Guid>? ProductCategoryIds,
-    List<OrderType>? OrderTypes) : IRequest<TimeTrackingReportDto>;
+    List<string>? OrderTypes) : IRequest<TimeTrackingReportDto>;

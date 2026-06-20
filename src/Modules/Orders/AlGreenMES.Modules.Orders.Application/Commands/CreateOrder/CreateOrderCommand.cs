@@ -1,5 +1,4 @@
 using AlGreenMES.Modules.Orders.Application.DTOs;
-using AlGreenMES.Modules.Orders.Domain.Enums;
 using AlGreenMES.Modules.Production.Domain.Enums;
 using MediatR;
 
@@ -16,7 +15,7 @@ public record CreateOrderCommand(
     string OrderNumber,
     DateTime DeliveryDate,
     int Priority,
-    OrderType OrderType,
+    string OrderType,
     Guid CreatedByUserId,
     string? Notes,
     int? CustomWarningDays = null,

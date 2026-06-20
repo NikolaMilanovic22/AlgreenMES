@@ -53,24 +53,17 @@ public class OrderTypeRepository : IOrderTypeRepository
 
     public async Task<bool> IsInUseAsync(Guid orderTypeId, CancellationToken cancellationToken = default)
     {
-        // Phase A: Order entity still carries the OrderType enum. Map the entity Code
-        // back to the enum value and check the Orders table. Phase B switches Order to
-        // an FK and this becomes a direct Orders.Any(o.OrderTypeId == id).
+        // Order.OrderType is a free-form string code referencing OrderType.Code
+        // (Saša 20.06.2026: admins can create custom types beyond the original
+        // 4-enum set). Direct string comparison — no enum round-trip needed.
         var type = await _dbContext.OrderTypes
             .Where(t => t.Id == orderTypeId)
             .Select(t => new { t.Code, t.TenantId })
             .FirstOrDefaultAsync(cancellationToken);
         if (type is null) return false;
 
-        if (!Enum.TryParse<Domain.Enums.OrderType>(type.Code, ignoreCase: true, out var enumValue))
-        {
-            // Custom (admin-created) type has no matching enum — by definition no
-            // existing order references it yet (orders today only carry the 4 seed
-            // codes that round-trip through the enum). Safe to allow delete.
-            return false;
-        }
         return await _dbContext.Orders
-            .AnyAsync(o => o.TenantId == type.TenantId && o.OrderType == enumValue, cancellationToken);
+            .AnyAsync(o => o.TenantId == type.TenantId && o.OrderType == type.Code, cancellationToken);
     }
 
     public async Task<PagedResult<OrderType>> GetPagedAsync(Guid tenantId, bool? isActive, string? search, DateTime? createdFrom, DateTime? createdTo, string? sortBy, bool isDescending, int page, int pageSize, CancellationToken cancellationToken = default)

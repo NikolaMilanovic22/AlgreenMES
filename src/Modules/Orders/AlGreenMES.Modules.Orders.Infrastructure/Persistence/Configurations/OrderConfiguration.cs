@@ -25,7 +25,6 @@ public class OrderConfiguration : IEntityTypeConfiguration<Order>
 
         builder.Property(o => o.OrderType)
             .IsRequired()
-            .HasConversion<string>()
             .HasMaxLength(20);
 
         builder.Property(o => o.Status)

@@ -8,6 +8,45 @@ Mirrored to `easy-mes-be` (skyhard) — keep both in sync when editing.
 
 ---
 
+## 2026-06-20 — OrderType: admins can create custom types beyond the original 4 (Saša)
+
+### Fixed
+- **Bug from Saša (20.06.2026)**: newly-created order types (e.g. "Novi")
+  didn't show up in the create-order dropdown. Root cause: `Order.OrderType`
+  was a C# enum with 4 fixed values (Standard/Repair/Complaint/Rework);
+  the OrderTypes admin table only RENAMED those 4 slots. Creating a 5th
+  row had no enum value to map to, so orders couldn't reference it and
+  the dropdown (which iterated the enum) silently skipped it.
+
+### Changed
+- `Order.OrderType` is now a free-form `string` referencing
+  `OrderType.Code` in the per-tenant `OrderTypes` table. DB schema
+  unchanged — the column was always `varchar(20)` via
+  `HasConversion<string>()`; only the C# domain constraint blocked
+  custom values. No migration needed.
+- `CreateOrderCommandHandler` validates the order type code exists for
+  the tenant + is active (`INVALID_ORDER_TYPE` on miss). This replaces
+  the enum-shape validation FluentValidation used to do via `IsInEnum`.
+- All call sites that filtered/sorted/grouped by `OrderType` enum
+  (OrderRepository, ReportingQueryService, Reports + Orders query
+  handlers + DTOs + API requests) now use `string` / `List<string>`.
+- `OrderTypeRepository.IsInUseAsync` does direct string comparison
+  instead of round-tripping through the enum.
+- `TestDataSeeder.SeedTenantWithUserAsync` now also seeds the 4
+  default `OrderType` rows per tenant — the new handler-level
+  validation requires at least one matching row to exist.
+
+### Migration notes
+- Existing tenants on staging/pilot already have `OrderType` rows
+  (Saša's screenshot showed the DEMO tenant with 5 rows: Vrata,
+  Prozor, Reklamacija, Dorada, Novi). No data migration required.
+- New tenants created via the SA admin flow will need the 4 default
+  `OrderType` rows seeded manually — added to onboarding checklist.
+- The `Domain.Enums.OrderType` C# enum is left in place for now (dead
+  code, removable in a follow-up sweep).
+
+---
+
 ## 2026-06-19 — Audit follow-up: role constants, guard helper, tenant-isolation regression tests
 
 ### Added

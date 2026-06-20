@@ -9,4 +9,4 @@ public record GetProcessTimesQuery(
     DateTime? From,
     DateTime? To,
     List<Guid>? ProductCategoryIds,
-    List<OrderType>? OrderTypes) : IRequest<ProcessTimesDto>;
+    List<string>? OrderTypes) : IRequest<ProcessTimesDto>;

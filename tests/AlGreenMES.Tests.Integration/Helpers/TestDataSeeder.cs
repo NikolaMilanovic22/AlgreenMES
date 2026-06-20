@@ -48,6 +48,25 @@ public static class TestDataSeeder
         identityDb.Users.Add(user);
         await identityDb.SaveChangesAsync();
 
+        // Seed the 4 default OrderType rows for this tenant — CreateOrder
+        // now validates the OrderType code against the per-tenant
+        // OrderTypes table (Saša 20.06.2026: admins can create custom
+        // types, so the C# enum no longer constrains the value). Without
+        // these rows, any order-creating test fails INVALID_ORDER_TYPE.
+        var ordersDb = sp.GetRequiredService<AlGreenMES.Modules.Orders.Infrastructure.Persistence.OrdersDbContext>();
+        foreach (var (code_, name_) in new[]
+        {
+            ("Standard", "Standard"),
+            ("Repair", "Repair"),
+            ("Complaint", "Complaint"),
+            ("Rework", "Rework"),
+        })
+        {
+            ordersDb.OrderTypes.Add(AlGreenMES.Modules.Orders.Domain.Entities.OrderTypes.OrderType.Create(
+                tenant.Id, code_, name_, allowsManualProcesses: false));
+        }
+        await ordersDb.SaveChangesAsync();
+
         return new SeededTenant(tenant.Id, tenant.Code, user.Id, email, DefaultPassword, role);
     }
 
@@ -129,7 +148,7 @@ public static class TestDataSeeder
             number,
             DateTime.UtcNow.AddDays(7),
             priority: 3,
-            OrderType.Standard,
+            "Standard",
             createdByUserId,
             notes: null);
 
@@ -178,7 +197,7 @@ public static class TestDataSeeder
             $"ORD-{Guid.NewGuid():N}".Substring(0, 16),
             DateTime.UtcNow.AddDays(7),
             priority: 3,
-            OrderType.Standard,
+            "Standard",
             createdByUserId,
             notes: null);
         var item = order.AddItem(productCategoryId, productName: null, quantity: 1);
@@ -285,7 +304,7 @@ public static class TestDataSeeder
             $"ORD-{Guid.NewGuid():N}".Substring(0, 16),
             deliveryDate ?? DateTime.UtcNow.AddDays(7),
             priority: 3,
-            OrderType.Standard,
+            "Standard",
             createdByUserId,
             notes: null);
         var item = order.AddItem(productCategoryId, productName: null, quantity: 1);
@@ -350,7 +369,7 @@ public static class TestDataSeeder
             $"ORD-{Guid.NewGuid():N}".Substring(0, 16),
             DateTime.UtcNow.AddDays(7),
             priority: 3,
-            OrderType.Standard,
+            "Standard",
             createdByUserId,
             notes: null);
 

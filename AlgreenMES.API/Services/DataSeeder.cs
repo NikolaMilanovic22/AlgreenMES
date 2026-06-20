@@ -383,7 +383,7 @@ public static class DataSeeder
         // --- ORD-2026-001: Standard, Priority 1, +14 days, Active ---
         // 2 items of Vrata Pivot; item1 process A started; item2 process A completed, B started
         var order1 = Order.Create(tenantId, "ORD-2026-001", DateTime.UtcNow.AddDays(14),
-            1, OrderType.Standard, adminUser.Id, "Prva narudžba - pivot vrata");
+            1, "Standard", adminUser.Id, "Prva narudžba - pivot vrata");
         var item1_1 = order1.AddItem(catPivot.Id, "Vrata Pivot", 2, "Stavka 1");
         AddProcessesAndSubProcesses(item1_1, catPivot);
         var item1_2 = order1.AddItem(catPivot.Id, "Vrata Pivot", 2, "Stavka 2");
@@ -406,7 +406,7 @@ public static class DataSeeder
 
         // --- ORD-2026-002: Standard, Priority 2, +21 days, Draft ---
         var order2 = Order.Create(tenantId, "ORD-2026-002", DateTime.UtcNow.AddDays(21),
-            2, OrderType.Standard, adminUser.Id, "Druga narudžba - standardna vrata");
+            2, "Standard", adminUser.Id, "Druga narudžba - standardna vrata");
         var item2_1 = order2.AddItem(catStandard.Id, "Vrata Standard", 1);
         AddProcessesAndSubProcesses(item2_1, catStandard);
         ordersDb.Orders.Add(order2);
@@ -415,7 +415,7 @@ public static class DataSeeder
         // --- ORD-2026-003: Repair, Priority 1, +7 days, Active ---
         // Prozori; processes A,B,C completed; F InProgress
         var order3 = Order.Create(tenantId, "ORD-2026-003", DateTime.UtcNow.AddDays(7),
-            1, OrderType.Repair, adminUser.Id, "Popravka prozora");
+            1, "Repair", adminUser.Id, "Popravka prozora");
         var item3_1 = order3.AddItem(catProzori.Id, "Prozori", 1);
         AddProcessesAndSubProcesses(item3_1, catProzori);
         ordersDb.Orders.Add(order3);
@@ -438,7 +438,7 @@ public static class DataSeeder
 
         // --- ORD-2026-004: Standard, Priority 3, +30 days, Paused ---
         var order4 = Order.Create(tenantId, "ORD-2026-004", DateTime.UtcNow.AddDays(30),
-            3, OrderType.Standard, adminUser.Id, "Narudžba na čekanju");
+            3, "Standard", adminUser.Id, "Narudžba na čekanju");
         var item4_1 = order4.AddItem(catPivot.Id, "Vrata Pivot", 1);
         AddProcessesAndSubProcesses(item4_1, catPivot);
         ordersDb.Orders.Add(order4);
@@ -451,7 +451,7 @@ public static class DataSeeder
         // --- ORD-2026-005: Complaint, Priority 2, Completed ---
         // Create with future date (domain validates), then complete all processes
         var order5 = Order.Create(tenantId, "ORD-2026-005", DateTime.UtcNow.AddDays(1),
-            2, OrderType.Complaint, adminUser.Id, "Reklamacija - završena");
+            2, "Complaint", adminUser.Id, "Reklamacija - završena");
         var item5_1 = order5.AddItem(catStandard.Id, "Vrata Standard", 1);
         AddProcessesAndSubProcesses(item5_1, catStandard);
         ordersDb.Orders.Add(order5);
@@ -477,7 +477,7 @@ public static class DataSeeder
         // A-F completed, G (Grundiranje) InProgress → H (Farbanje) pending, blocked by G
         // This shows as "incoming" for worker3 (Nikola, process H)
         var order6 = Order.Create(tenantId, "ORD-2026-006", DateTime.UtcNow.AddDays(10),
-            1, OrderType.Standard, adminUser.Id, "Hitna narudžba - pivot vrata za klijenta Petrović");
+            1, "Standard", adminUser.Id, "Hitna narudžba - pivot vrata za klijenta Petrović");
         var item6_1 = order6.AddItem(catPivot.Id, "Vrata Pivot", 3, "Stavka 1 - bijela");
         AddProcessesAndSubProcesses(item6_1, catPivot);
         ordersDb.Orders.Add(order6);
@@ -500,7 +500,7 @@ public static class DataSeeder
         // A-E completed, F (Brušenje) InProgress → G pending (blocked by F), H pending (blocked by G)
         // Shows as incoming for worker3 (process H) — blocked by G which is blocked by F
         var order7 = Order.Create(tenantId, "ORD-2026-007", DateTime.UtcNow.AddDays(5),
-            2, OrderType.Repair, adminUser.Id, "Popravka vrata - hitan rok");
+            2, "Repair", adminUser.Id, "Popravka vrata - hitan rok");
         var item7_1 = order7.AddItem(catStandard.Id, "Vrata Standard", 1, "Popravka okvira");
         AddProcessesAndSubProcesses(item7_1, catStandard);
         ordersDb.Orders.Add(order7);
@@ -525,7 +525,7 @@ public static class DataSeeder
         // BUT also: second item where A-D completed, E InProgress
         // For worker3: item2 has H blocked by G (which is pending, blocked by F which is pending)
         var order8 = Order.Create(tenantId, "ORD-2026-008", DateTime.UtcNow.AddDays(18),
-            3, OrderType.Standard, adminUser.Id, "Velika narudžba - 2 stavke pivot vrata");
+            3, "Standard", adminUser.Id, "Velika narudžba - 2 stavke pivot vrata");
         var item8_1 = order8.AddItem(catPivot.Id, "Vrata Pivot", 2, "Stavka 1 - crna");
         AddProcessesAndSubProcesses(item8_1, catPivot);
         var item8_2 = order8.AddItem(catPivot.Id, "Vrata Pivot", 1, "Stavka 2 - siva");

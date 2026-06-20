@@ -65,7 +65,7 @@ public class OrdersController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> GetOrders(
         [FromQuery] OrderStatus? status,
-        [FromQuery] OrderType? orderType,
+        [FromQuery] string? orderType,
         [FromQuery] DateTime? dateFrom,
         [FromQuery] DateTime? dateTo,
         [FromQuery] int page = 1,
@@ -90,7 +90,7 @@ public class OrdersController : ControllerBase
     [HttpGet("master-view")]
     public async Task<IActionResult> GetOrdersMasterView(
         [FromQuery] OrderStatus? status,
-        [FromQuery] OrderType? orderType,
+        [FromQuery] string? orderType,
         [FromQuery] bool? isInvoiced,
         [FromQuery] DateTime? dateFrom,
         [FromQuery] DateTime? dateTo,
