@@ -70,6 +70,7 @@ public static class TestDataSeeder
         return new SeededTenant(tenant.Id, tenant.Code, user.Id, email, DefaultPassword, role);
     }
 
+
     public static async Task<string> LoginAndGetTokenAsync(
         HttpClient client, string email, string password, string tenantCode)
     {
