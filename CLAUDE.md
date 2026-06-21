@@ -27,10 +27,43 @@ src/
 
 ## Key Commands
 ```bash
+./setup.sh                                      # One-time: activate git pre-commit hooks
 dotnet build                                    # Build
 dotnet run --project AlgreenMES.API             # Run on :5030
 dotnet ef migrations add {Name} -p src/Modules/Orders/...Infrastructure -s AlgreenMES.API
 ```
+
+## Pre-commit hooks
+`./setup.sh` (one-time after clone) points git at `.githooks/` so the
+pre-commit script fires on every commit. Catches regressions we've
+actually shipped or could plausibly ship (~0.5s total):
+1. **`EF.Property<Guid>(... "TenantId" ...)`** — must be `Guid?`
+   (19.06.2026 cross-tenant filter no-op; CHANGELOG 2026-06-19).
+2. **Magic `IsInRole("…")`** — must use `RoleNames.*` / `IsSuperAdmin`.
+3. **Magic `[Authorize(Roles = "…")]`** — must use `RoleGroups.*`.
+4. **Merge conflict markers** — fails on staged `<<<<<<<` / `=======` /
+   `>>>>>>>`.
+5. **`DateTime.Now`** — must be `DateTime.UtcNow` (Postgres columns are
+   `timestamptz`; mixing local time corrupts stored times).
+6. **`.Result` / `.GetAwaiter().GetResult()`** on Tasks — classic async
+   deadlock pattern in ASP.NET request contexts.
+7. **Controller without `[Authorize]` or `[AllowAnonymous]`** —
+   accidentally-public endpoint. Same blast radius as the tenant-filter
+   regression.
+8. **`Console.WriteLine`** — must be `ILogger` (Serilog enrichment is
+   how we get correlation id / tenant id into log queries).
+9. **`Thread.Sleep`** — must be `await Task.Delay(...)` (sync sleep in
+   async pipelines starves ThreadPool).
+
+Bypass with `git commit --no-verify` only when reverting.
+
+## Tooling
+- **CI**: `.github/workflows/ci.yml` runs `dotnet build` + the full
+  integration test suite (Testcontainers spins up Postgres on the GHA
+  Ubuntu runner) on every push to `staging`/`master` + PR. Catches
+  anything bypassed via `--no-verify`.
+- **Dependabot**: `.github/dependabot.yml` — weekly NuGet patch/minor
+  PRs grouped, immediate security advisories, monthly GHA updates.
 
 ## Patterns
 - **CQRS + MediatR**: Commands return DTOs, Queries return DTOs/lists

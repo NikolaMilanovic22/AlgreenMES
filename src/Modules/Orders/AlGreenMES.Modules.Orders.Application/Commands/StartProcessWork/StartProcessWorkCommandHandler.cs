@@ -104,7 +104,7 @@ public class StartProcessWorkCommandHandler : IRequestHandler<StartProcessWorkCo
                 process.ProcessId,
                 process.OrderItem.Order.Id,
                 process.OrderItem.Order.OrderNumber,
-                process.TenantId), cancellationToken);
+                process.TenantIdRequired), cancellationToken);
 
         _logger.LogInformation("[StartProcess] Event sent. Mapping DTO...");
         var result = process.Adapt<OrderItemProcessDto>();

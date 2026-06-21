@@ -52,10 +52,17 @@ public class NotificationCreator : INotificationCreator
         CancellationToken cancellationToken = default)
     {
         var type = (NotificationType)notificationTypeValue;
-        var users = await _userRepo.GetByTenantIdAsync(tenantId, cancellationToken);
-        var recipients = users
+        var tenantUsers = await _userRepo.GetByTenantIdAsync(tenantId, cancellationToken);
+        // Include SuperAdmins explicitly: they're tenantless (user.tenant_id
+        // is NULL post-16.06.2026 refactor) so GetByTenantIdAsync misses
+        // them, but the notification's tenant_id matches the tenant they're
+        // currently viewing, so they should see the bell entry there.
+        var superAdmins = await _userRepo.GetAllSuperAdminsAsync(cancellationToken);
+        var recipients = tenantUsers
+            .Concat(superAdmins)
             .Where(u => u.IsActive && ManagementRoles.Contains(u.Role))
             .Select(u => u.Id)
+            .Distinct()
             .ToList();
 
         if (recipients.Count == 0) return;

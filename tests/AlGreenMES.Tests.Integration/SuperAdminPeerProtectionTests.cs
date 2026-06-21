@@ -58,6 +58,11 @@ public class SuperAdminPeerProtectionTests : IntegrationTestBase
     [Fact]
     public async Task UpdateUser_Self_AsSuperAdmin_Succeeds()
     {
+        // Per class doc: self-modification IS allowed; only peer-targeting
+        // operations against another SuperAdmin are blocked. A SA can rename
+        // / toggle active on their own row through /api/users PUT — the
+        // peer-SA handler guard exempts the self-target case (Milos
+        // 15.06.2026).
         var caller = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.SuperAdmin);
 
         var token = await TestDataSeeder.LoginAndGetTokenAsync(Client, caller.Email, caller.Password, caller.TenantCode);
@@ -194,8 +199,8 @@ public class SuperAdminPeerProtectionTests : IntegrationTestBase
         var users = await resp.Content.ReadFromJsonAsync<List<UserListEntry>>();
         users.Should().NotBeNull();
         users!.Select(u => u.Id).Should().Contain(saA.UserId);
-        users.Select(u => u.Id).Should().Contain(saB_id);
-        users.All(u => u.Role == "SuperAdmin").Should().BeTrue();
+        users!.Select(u => u.Id).Should().Contain(saB_id);
+        users!.All(u => u.Role == "SuperAdmin").Should().BeTrue();
     }
 
     // ──────────────────────────────────────────────────────────────────────

@@ -38,7 +38,7 @@ public class RejectBlockRequestCommandHandler : IRequestHandler<RejectBlockReque
                 blockRequest.Id,
                 blockRequest.RequestedByUserId,
                 request.RejectionNote,
-                blockRequest.TenantId), cancellationToken);
+                blockRequest.TenantIdRequired), cancellationToken);
 
         return blockRequest.Adapt<BlockRequestDto>();
     }

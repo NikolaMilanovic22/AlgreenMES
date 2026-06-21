@@ -45,7 +45,7 @@ public class RejectChangeRequestCommandHandler : IRequestHandler<RejectChangeReq
                 order.OrderNumber,
                 changeRequest.RequestedByUserId,
                 request.ResponseNote,
-                changeRequest.TenantId),
+                changeRequest.TenantIdRequired),
             cancellationToken);
 
         return changeRequest.Adapt<ChangeRequestDto>();

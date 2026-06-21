@@ -35,7 +35,7 @@ public class ReportsController : ControllerBase
         [FromQuery] DateTime? from,
         [FromQuery] DateTime? to,
         [FromQuery] List<Guid>? productCategoryIds,
-        [FromQuery] List<OrderType>? orderTypes,
+        [FromQuery] List<string>? orderTypes,
         CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -52,7 +52,7 @@ public class ReportsController : ControllerBase
         [FromQuery] ComplexityType? complexity,
         [FromQuery] string? orderNumber,
         [FromQuery] List<Guid>? productCategoryIds,
-        [FromQuery] List<OrderType>? orderTypes,
+        [FromQuery] List<string>? orderTypes,
         CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -146,7 +146,7 @@ public class ReportsController : ControllerBase
     /// </summary>
     [HttpGet("active-process-funnel")]
     public async Task<IActionResult> GetActiveProcessFunnel(
-        [FromQuery] List<OrderType>? orderTypes,
+        [FromQuery] List<string>? orderTypes,
         [FromQuery] ComplexityType? complexity,
         CancellationToken cancellationToken)
     {
@@ -166,7 +166,7 @@ public class ReportsController : ControllerBase
     public async Task<IActionResult> GetProductManufacturingTime(
         [FromQuery] DateTime? from,
         [FromQuery] DateTime? to,
-        [FromQuery] List<OrderType>? orderTypes,
+        [FromQuery] List<string>? orderTypes,
         [FromQuery] List<Guid>? productCategoryIds,
         CancellationToken cancellationToken)
     {
@@ -186,7 +186,7 @@ public class ReportsController : ControllerBase
         [FromQuery] DateTime? from,
         [FromQuery] DateTime? to,
         [FromQuery] ReportGranularity granularity,
-        [FromQuery] List<OrderType>? orderTypes,
+        [FromQuery] List<string>? orderTypes,
         CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(

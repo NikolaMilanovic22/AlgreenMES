@@ -44,7 +44,7 @@ public class ApproveChangeRequestCommandHandler : IRequestHandler<ApproveChangeR
                 changeRequest.OrderId,
                 order.OrderNumber,
                 changeRequest.RequestedByUserId,
-                changeRequest.TenantId),
+                changeRequest.TenantIdRequired),
             cancellationToken);
 
         return changeRequest.Adapt<ChangeRequestDto>();

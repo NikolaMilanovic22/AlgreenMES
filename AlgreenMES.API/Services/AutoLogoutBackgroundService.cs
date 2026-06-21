@@ -83,7 +83,10 @@ public class AutoLogoutBackgroundService : BackgroundService
                 .Select(ws => new { ws.TenantId, ws.UserId })
                 .Distinct()
                 .ToListAsync(ct);
-            openSessions = rows.Select(x => (x.TenantId, x.UserId)).ToList();
+            // x.TenantId is Guid? at the projection level (TenantEntity
+            // base is nullable for SA support), but WorkSession rows always
+            // belong to a tenant — the !.Value is safe.
+            openSessions = rows.Select(x => (x.TenantId!.Value, x.UserId)).ToList();
         }
 
         if (openSessions.Count == 0) return 0;

@@ -8,5 +8,5 @@ public record GetProductManufacturingTimeQuery(
     Guid TenantId,
     DateTime? From,
     DateTime? To,
-    List<OrderType>? OrderTypes,
+    List<string>? OrderTypes,
     List<Guid>? ProductCategoryIds) : IRequest<ProductManufacturingTimeReportDto>;

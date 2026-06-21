@@ -15,4 +15,9 @@ public enum NotificationType
     ChangeRequest,
     ChangeRequestApproved,
     ChangeRequestRejected,
+    // Saša 18.06.2026: daily nudge for tenant Admins. Two distinct
+    // types so the FE bell can color them differently (warning vs error)
+    // — same template family, different visual urgency.
+    SubscriptionExpiring,
+    SubscriptionExpired,
 }

@@ -62,34 +62,34 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, LoginResponseDt
             await LogAndSaveAsync(LoginAttempt.RecordFailure(null, emailNormalized, "TENANT_NOT_FOUND", request.IpAddress, request.UserAgent, now), cancellationToken);
             throw new NotFoundException("Tenant", request.TenantCode);
         }
-        if (!tenant.IsActive)
-        {
-            await LogAndSaveAsync(LoginAttempt.RecordFailure(tenant.Id, emailNormalized, "TENANT_INACTIVE", request.IpAddress, request.UserAgent, now), cancellationToken);
-            throw new DomainException("TENANT_INACTIVE", "The tenant is not active.");
-        }
+        // tenant.IsActive check is intentionally DEFERRED until after we
+        // know whether the caller is a SuperAdmin (Saša 17.06.2026):
+        // blocking the MPMS / platform tenant for non-payment must not
+        // lock SAs out of recovering the system. The check applies only
+        // to regular users below.
 
         // ──────────────────────────────────────────────────────────────
         // Stage 2: resolve the user. If the email doesn't match, we still
         // log with TenantId set so an admin can later see "this tenant got
         // hit with these unknown emails".
         //
-        // SuperAdmin cross-tenant login: if a normal lookup misses, we try
-        // a cross-tenant lookup. If THAT finds a SuperAdmin, the login is
-        // allowed — the resulting JWT carries tenant_id = target tenant
-        // and cross_tenant_session=true so the read-only middleware can
-        // block all writes. Non-SuperAdmin cross-tenant matches collapse
-        // back to INVALID_CREDENTIALS so we don't leak "this email exists
-        // in some other tenant".
+        // SuperAdmin login (Milos 16.06.2026 refactor): SAs are tenantless
+        // (user.TenantId is null in DB), so the tenant-scoped lookup misses
+        // for them. We fall back to a cross-tenant lookup and accept only
+        // if the matched user IS a SuperAdmin. The JWT carries tenant_id =
+        // the tenant code the SA typed (so reads are scoped to that
+        // tenant); the SuperAdminReadOnly middleware blocks writes
+        // everywhere except a small allow-list. Non-SuperAdmin matches
+        // collapse to INVALID_CREDENTIALS so we don't leak "this email
+        // exists somewhere".
         // ──────────────────────────────────────────────────────────────
         var user = await _userRepository.GetByEmailAsync(emailNormalized, tenant.Id, cancellationToken);
-        bool isCrossTenantSession = false;
         if (user == null)
         {
             var crossTenant = await _userRepository.GetByEmailAcrossTenantsAsync(emailNormalized, cancellationToken);
             if (crossTenant != null && crossTenant.Role == UserRole.SuperAdmin)
             {
                 user = crossTenant;
-                isCrossTenantSession = true;
             }
         }
         if (user == null)
@@ -101,6 +101,21 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, LoginResponseDt
         {
             await LogAndSaveAsync(LoginAttempt.RecordFailure(tenant.Id, emailNormalized, "USER_INACTIVE", request.IpAddress, request.UserAgent, now), cancellationToken);
             throw new DomainException("USER_INACTIVE", "The user account is not active.");
+        }
+
+        // Now apply the deferred tenant-block check — but only for non-SA
+        // users. SuperAdmins bypass this so they can always reach the
+        // platform to unblock a tenant they accidentally blocked.
+        if (!tenant.IsActive && user.Role != UserRole.SuperAdmin)
+        {
+            // Block() and Update(isActive: false) both flip IsActive — they
+            // are distinguished by BlockedAt so the FE can show "Pretplata
+            // istekla, kontaktirajte podršku" vs the generic deactivated
+            // tenant message. The reason itself is SA-only and stays in
+            // the Naplata tab; users only see the bucketed error code.
+            var code = tenant.IsBlocked ? "TENANT_BLOCKED" : "TENANT_INACTIVE";
+            await LogAndSaveAsync(LoginAttempt.RecordFailure(tenant.Id, emailNormalized, code, request.IpAddress, request.UserAgent, now), cancellationToken);
+            throw new DomainException(code, tenant.IsBlocked ? "Tenant subscription is on hold." : "The tenant is not active.");
         }
 
         // ──────────────────────────────────────────────────────────────
@@ -129,9 +144,10 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, LoginResponseDt
 
         user.RegisterSuccessfulLogin();
 
-        var token = isCrossTenantSession
-            ? _jwtTokenService.GenerateCrossTenantToken(user, tenant.Id)
-            : _jwtTokenService.GenerateToken(user);
+        // Effective tenant id on the JWT is always the login's target
+        // tenant: for a normal user it equals user.TenantId; for a
+        // SuperAdmin it's whichever tenant they typed at login.
+        var token = _jwtTokenService.GenerateToken(user, tenant.Id);
         var refreshTokenValue = _jwtTokenService.GenerateRefreshToken();
 
         var refreshToken = RefreshTokenEntity.Create(

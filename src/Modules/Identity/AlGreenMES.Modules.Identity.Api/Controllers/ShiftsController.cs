@@ -6,6 +6,7 @@ using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using AlGreenMES.BuildingBlocks.Common.Authorization;
 
 namespace AlGreenMES.Modules.Identity.Api.Controllers;
 
@@ -51,7 +52,7 @@ public class ShiftsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
+    [Authorize(Roles = RoleGroups.ManagerUp)]
     public async Task<IActionResult> CreateShift([FromBody] CreateShiftRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -71,7 +72,7 @@ public class ShiftsController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
+    [Authorize(Roles = RoleGroups.ManagerUp)]
     public async Task<IActionResult> UpdateShift(Guid id, [FromBody] UpdateShiftRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(

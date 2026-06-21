@@ -35,7 +35,7 @@ public class BlockProcessCommandHandler : IRequestHandler<BlockProcessCommand, U
                 process.OrderItem.Order.Id,
                 process.OrderItem.Order.OrderNumber,
                 request.Reason,
-                process.TenantId), cancellationToken);
+                process.TenantIdRequired), cancellationToken);
 
         return Unit.Value;
     }

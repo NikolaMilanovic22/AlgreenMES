@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
+using AlgreenMES.API.BackgroundServices;
 using AlgreenMES.API.Middleware;
 using AlgreenMES.API.Services;
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
@@ -46,6 +47,19 @@ public class Program
         if (args.Contains("--migrate"))
         {
             return await RunMigrationsAsync(args);
+        }
+
+        // --seed: bring up the demo dataset (DEMO tenant, demo users, demo
+        // processes, bootstrap SuperAdmin). Explicit and one-shot — runs
+        // when invoked, then exits (Milos 16.06.2026: no more auto-seed
+        // on startup; that flow was overwriting locally-changed
+        // passwords every time the BE restarted). Use:
+        //   dotnet run --project AlgreenMES.API -- --seed
+        // or on a deployed binary:
+        //   dotnet AlgreenMES.API.dll --seed
+        if (args.Contains("--seed"))
+        {
+            return await RunSeederAsync(args);
         }
 
         try
@@ -220,6 +234,12 @@ public class Program
             builder.Services.AddHostedService<DeadlineWarningService>();
             builder.Services.AddHostedService<AutoLogoutBackgroundService>();
             builder.Services.AddHostedService<LoginAttemptRetentionService>();
+            // Saša 18.06.2026: daily subscription-expiring nudge to tenant
+            // Admins. Registered as singleton AND hosted-service so the
+            // manual trigger endpoint can call RunOnceAsync on the same
+            // instance the background loop uses.
+            builder.Services.AddSingleton<BillingReminderService>();
+            builder.Services.AddHostedService(sp => sp.GetRequiredService<BillingReminderService>());
 
             // Module registrations
             builder.Services.AddTenancyModule(builder.Configuration);
@@ -377,11 +397,17 @@ public class Program
             app.UseAuthentication();
             app.UseAuthorization();
             app.UseRateLimiter();
-            // Read-only gate for SuperAdmin cross-tenant sessions. Must run
-            // AFTER UseAuthentication so HttpContext.User claims are populated;
-            // ordering before the enrichment middlewares keeps the 403 visible
-            // in logs as a single line rather than a nested authn flow.
-            app.UseMiddleware<CrossTenantReadOnlyMiddleware>();
+            // Read-only gate for SuperAdmin sessions (Milos 16.06.2026 —
+            // tenantless SA model). Must run AFTER UseAuthentication so
+            // HttpContext.User claims are populated AND after routing so
+            // we can read the matched action's [AllowSuperAdminWrite]
+            // attribute. Ordering before the enrichment middlewares keeps
+            // the 403 visible in logs as a single line.
+            app.UseMiddleware<SuperAdminReadOnlyMiddleware>();
+            // Force-logout gate for tenants that get blocked while users
+            // have live JWTs. Runs after SA-read-only so SAs are excluded
+            // there too — they keep platform access on any tenant code.
+            app.UseMiddleware<TenantBlockedMiddleware>();
             app.UseMiddleware<SerilogEnrichmentMiddleware>();
             app.UseMiddleware<SentryEnrichmentMiddleware>();
             app.MapControllers();
@@ -407,12 +433,12 @@ public class Program
             // invokes `dotnet AlgreenMES.API.dll --migrate` as an explicit step
             // before restarting the service. In development, run migrations
             // manually: `dotnet run --project AlgreenMES.API -- --migrate`.
-
-            // Seed demo data (testing phase — runs in all environments except Test)
-            if (!app.Environment.IsEnvironment("Test"))
-            {
-                await DataSeeder.SeedAsync(app.Services);
-            }
+            //
+            // Demo seed no longer runs on startup (Milos 16.06.2026) — that
+            // flow was undoing locally-changed passwords on every BE restart
+            // because the seeder treated hash drift as "needs reset". Use
+            // `dotnet AlgreenMES.API.dll --seed` (or `dotnet run … -- --seed`)
+            // when you actually want the demo dataset.
 
             app.Run();
             return 0;
@@ -483,6 +509,53 @@ public class Program
         catch (Exception ex)
         {
             Log.Fatal(ex, "Migration runner failed.");
+            return 1;
+        }
+        finally
+        {
+            Log.CloseAndFlush();
+        }
+    }
+
+    /// <summary>
+    /// Explicit demo-seed entry point invoked via <c>--seed</c>. Sets up
+    /// the same module wiring as <see cref="RunMigrationsAsync"/> so the
+    /// DataSeeder sees an identical DI graph, calls <c>SeedAsync</c>, and
+    /// exits. Idempotent: safe to re-run, won't reset existing user
+    /// passwords (Milos 16.06.2026 fix).
+    /// </summary>
+    private static async Task<int> RunSeederAsync(string[] args)
+    {
+        try
+        {
+            var builder = WebApplication.CreateBuilder(args);
+            builder.Logging.ClearProviders();
+            builder.Logging.AddConsole();
+
+            builder.Host.UseDefaultServiceProvider(o =>
+            {
+                o.ValidateScopes = false;
+                o.ValidateOnBuild = false;
+            });
+
+            builder.Services.AddHttpContextAccessor();
+            builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
+            builder.Services.AddScoped<ITenantService, TenantService>();
+
+            builder.Services.AddTenancyModule(builder.Configuration);
+            builder.Services.AddIdentityModule(builder.Configuration);
+            builder.Services.AddProductionModule(builder.Configuration);
+            builder.Services.AddOrdersModule(builder.Configuration);
+
+            var app = builder.Build();
+            await DataSeeder.SeedAsync(app.Services);
+
+            Log.Information("Demo seed completed.");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Log.Fatal(ex, "Seeder failed.");
             return 1;
         }
         finally

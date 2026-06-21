@@ -7,6 +7,7 @@ using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using AlGreenMES.BuildingBlocks.Common.Authorization;
 
 namespace AlGreenMES.Modules.Production.Api.Controllers;
 
@@ -33,7 +34,7 @@ public class WarehouseController : ControllerBase
     }
 
     [HttpGet("stock")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator,Magacioner")]
+    [Authorize(Roles = RoleGroups.ProductionFloor)]
     public async Task<IActionResult> GetStockBalances(CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new GetStockBalancesQuery(_tenantService.GetCurrentTenantId()), cancellationToken);
@@ -41,7 +42,7 @@ public class WarehouseController : ControllerBase
     }
 
     [HttpGet("history")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator,Magacioner")]
+    [Authorize(Roles = RoleGroups.ProductionFloor)]
     public async Task<IActionResult> GetStockHistory(
         [FromQuery] StockMovementType? type,
         [FromQuery] Guid? materialId,
@@ -62,7 +63,7 @@ public class WarehouseController : ControllerBase
     }
 
     [HttpPost("entries")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Magacioner")]
+    [Authorize(Roles = RoleGroups.ManagerOrWarehouse)]
     public async Task<IActionResult> CreateEntry([FromBody] CreateStockEntryRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new CreateStockEntryCommand(

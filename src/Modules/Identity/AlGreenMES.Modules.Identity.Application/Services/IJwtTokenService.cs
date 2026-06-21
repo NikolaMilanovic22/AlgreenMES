@@ -4,17 +4,15 @@ namespace AlGreenMES.Modules.Identity.Application.Services;
 
 public interface IJwtTokenService
 {
-    /// <summary>Standard token — user logs into their home tenant.</summary>
-    string GenerateToken(User user);
-
     /// <summary>
-    /// Cross-tenant token for a SuperAdmin logging into a tenant that
-    /// isn't their home. The token's <c>tenant_id</c> claim is the target
-    /// tenant (so the API scopes reads to that tenant), and
-    /// <c>cross_tenant_session=true</c> is set so the read-only middleware
-    /// can block all writes.
+    /// Issue an access token for <paramref name="user"/> scoped to
+    /// <paramref name="effectiveTenantId"/>. For a normal user that's their
+    /// home tenant. For a SuperAdmin (who has no home tenant since
+    /// 16.06.2026) it's the tenant code they typed at login — the API
+    /// then scopes reads to that tenant. Writes are gated separately by
+    /// the SuperAdminReadOnly middleware.
     /// </summary>
-    string GenerateCrossTenantToken(User superAdminUser, Guid targetTenantId);
+    string GenerateToken(User user, Guid effectiveTenantId);
 
     string GenerateRefreshToken();
 }

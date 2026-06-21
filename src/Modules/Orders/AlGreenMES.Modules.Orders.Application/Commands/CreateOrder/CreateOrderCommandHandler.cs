@@ -14,6 +14,7 @@ namespace AlGreenMES.Modules.Orders.Application.Commands.CreateOrder;
 public class CreateOrderCommandHandler : IRequestHandler<CreateOrderCommand, OrderDetailDto>
 {
     private readonly IOrderRepository _orderRepository;
+    private readonly IOrderTypeRepository _orderTypeRepository;
     private readonly IProductCategoryRepository _categoryRepository;
     private readonly IProcessRepository _processRepository;
     private readonly IOrderAttachmentRepository _attachmentRepository;
@@ -23,6 +24,7 @@ public class CreateOrderCommandHandler : IRequestHandler<CreateOrderCommand, Ord
 
     public CreateOrderCommandHandler(
         IOrderRepository orderRepository,
+        IOrderTypeRepository orderTypeRepository,
         IProductCategoryRepository categoryRepository,
         IProcessRepository processRepository,
         IOrderAttachmentRepository attachmentRepository,
@@ -31,6 +33,7 @@ public class CreateOrderCommandHandler : IRequestHandler<CreateOrderCommand, Ord
         IOptions<FileStorageSettings> settings)
     {
         _orderRepository = orderRepository;
+        _orderTypeRepository = orderTypeRepository;
         _categoryRepository = categoryRepository;
         _processRepository = processRepository;
         _attachmentRepository = attachmentRepository;
@@ -44,6 +47,14 @@ public class CreateOrderCommandHandler : IRequestHandler<CreateOrderCommand, Ord
         var exists = await _orderRepository.ExistsByOrderNumberAsync(request.OrderNumber, request.TenantId, cancellationToken);
         if (exists)
             throw new DomainException("ORDER_NUMBER_EXISTS", $"An order with number '{request.OrderNumber}' already exists.");
+
+        // Validate the order type code exists for this tenant — the C# enum
+        // used to enforce a fixed set of 4 values; since 20.06.2026 admins
+        // can create their own types and the BE side now relies on this
+        // existence check to keep referential integrity.
+        var orderTypeEntity = await _orderTypeRepository.GetByCodeAsync(request.OrderType, request.TenantId, cancellationToken);
+        if (orderTypeEntity == null || !orderTypeEntity.IsActive)
+            throw new DomainException("INVALID_ORDER_TYPE", $"Order type '{request.OrderType}' does not exist or is inactive.");
 
         var order = Order.Create(
             request.TenantId,
@@ -165,7 +176,7 @@ public class CreateOrderCommandHandler : IRequestHandler<CreateOrderCommand, Ord
             orderId,
             file.FileName,
             storedFileName,
-            file.ContentType,
+            contentType,
             file.FileSizeBytes,
             relativePath,
             userId,

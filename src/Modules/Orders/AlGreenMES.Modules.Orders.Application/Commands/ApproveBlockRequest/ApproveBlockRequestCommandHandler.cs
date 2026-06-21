@@ -77,7 +77,7 @@ public class ApproveBlockRequestCommandHandler : IRequestHandler<ApproveBlockReq
                 blockRequest.OrderItemProcessId,
                 blockRequest.OrderItemSubProcessId,
                 request.BlockReason,
-                blockRequest.TenantId,
+                blockRequest.TenantIdRequired,
                 blockRequest.RequestedByUserId), cancellationToken);
 
         return blockRequest.Adapt<BlockRequestDto>();

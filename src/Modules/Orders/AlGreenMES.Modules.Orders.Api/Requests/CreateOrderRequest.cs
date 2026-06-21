@@ -1,4 +1,3 @@
-using AlGreenMES.Modules.Orders.Domain.Enums;
 using Microsoft.AspNetCore.Http;
 
 namespace AlGreenMES.Modules.Orders.Api.Requests;
@@ -17,7 +16,7 @@ public class CreateOrderRequest
     public string OrderNumber { get; set; } = string.Empty;
     public DateTime DeliveryDate { get; set; }
     public int Priority { get; set; }
-    public OrderType OrderType { get; set; }
+    public string OrderType { get; set; } = string.Empty;
     public string? Notes { get; set; }
     public int? CustomWarningDays { get; set; }
     public int? CustomCriticalDays { get; set; }

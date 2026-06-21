@@ -63,7 +63,7 @@ public class AutoCheckOutCommandHandler : IRequestHandler<AutoCheckOutCommand, W
         {
             try
             {
-                await _mediator.Send(new PauseOnLogoutCommand(processId, session.TenantId, request.UserId), cancellationToken);
+                await _mediator.Send(new PauseOnLogoutCommand(processId, session.TenantIdRequired, request.UserId), cancellationToken);
             }
             catch (Exception ex)
             {
@@ -82,9 +82,9 @@ public class AutoCheckOutCommandHandler : IRequestHandler<AutoCheckOutCommand, W
         // the coordinator-targeted AutoLoggedOut event (broadcasts + persisted
         // Notification per coordinator/manager — Bojan 30.05.2026 ask).
         await _eventService.NotifyWorkerCheckedOutAsync(
-            new WorkerCheckedOutEvent(session.UserId, session.Id, session.DurationMinutes, session.TenantId), cancellationToken);
+            new WorkerCheckedOutEvent(session.UserId, session.Id, session.DurationMinutes, session.TenantIdRequired), cancellationToken);
         await _eventService.NotifyWorkerAutoLoggedOutAsync(
-            new WorkerAutoLoggedOutEvent(session.UserId, session.Id, session.CheckOutTime!.Value, session.DurationMinutes, session.TenantId),
+            new WorkerAutoLoggedOutEvent(session.UserId, session.Id, session.CheckOutTime!.Value, session.DurationMinutes, session.TenantIdRequired),
             cancellationToken);
 
         return session.Adapt<WorkSessionDto>();

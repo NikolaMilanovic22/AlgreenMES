@@ -95,7 +95,7 @@ namespace AlGreenMES.Modules.Identity.Infrastructure.Migrations
                         .HasDefaultValue(false)
                         .HasColumnName("is_revoked");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -187,7 +187,7 @@ namespace AlGreenMES.Modules.Identity.Infrastructure.Migrations
                         .HasColumnType("time without time zone")
                         .HasColumnName("start_time");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -269,7 +269,7 @@ namespace AlGreenMES.Modules.Identity.Infrastructure.Migrations
                         .HasColumnType("character varying(50)")
                         .HasColumnName("role");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 

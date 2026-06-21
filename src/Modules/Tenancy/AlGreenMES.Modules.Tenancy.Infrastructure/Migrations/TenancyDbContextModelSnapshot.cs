@@ -30,6 +30,15 @@ namespace AlGreenMES.Modules.Tenancy.Infrastructure.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<DateTime?>("BlockedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("blocked_at");
+
+                    b.Property<string>("BlockedReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("blocked_reason");
+
                     b.Property<string>("Code")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -39,6 +48,13 @@ namespace AlGreenMES.Modules.Tenancy.Infrastructure.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
+
+                    b.Property<string>("DisabledFeatures")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("[]")
+                        .HasColumnName("disabled_features");
 
                     b.Property<bool>("IsActive")
                         .ValueGeneratedOnAdd()
@@ -69,6 +85,67 @@ namespace AlGreenMES.Modules.Tenancy.Infrastructure.Migrations
                         .HasDatabaseName("ix_tenants_code");
 
                     b.ToTable("tenants", "tenancy");
+                });
+
+            modelBuilder.Entity("AlGreenMES.Modules.Tenancy.Domain.Entities.TenantPayment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("amount");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)")
+                        .HasColumnName("currency");
+
+                    b.Property<string>("InvoiceNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("invoice_number");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("notes");
+
+                    b.Property<DateTime>("PaidAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("paid_at");
+
+                    b.Property<DateTime>("PeriodEnd")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("period_end");
+
+                    b.Property<DateTime>("PeriodStart")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("period_start");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_tenant_payments");
+
+                    b.HasIndex("TenantId", "PaidAt")
+                        .HasDatabaseName("ix_tenant_payments_tenant_id_paid_at");
+
+                    b.ToTable("tenant_payments", "tenancy");
                 });
 
             modelBuilder.Entity("AlGreenMES.Modules.Tenancy.Domain.Entities.TenantSettings", b =>
@@ -126,6 +203,16 @@ namespace AlGreenMES.Modules.Tenancy.Infrastructure.Migrations
                         .HasDatabaseName("ix_tenant_settings_tenant_id");
 
                     b.ToTable("tenant_settings", "tenancy");
+                });
+
+            modelBuilder.Entity("AlGreenMES.Modules.Tenancy.Domain.Entities.TenantPayment", b =>
+                {
+                    b.HasOne("AlGreenMES.Modules.Tenancy.Domain.Entities.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_tenant_payments_tenants_tenant_id");
                 });
 
             modelBuilder.Entity("AlGreenMES.Modules.Tenancy.Domain.Entities.TenantSettings", b =>

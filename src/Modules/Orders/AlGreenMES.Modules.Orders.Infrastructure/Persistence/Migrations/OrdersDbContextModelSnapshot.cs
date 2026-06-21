@@ -75,7 +75,7 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(20)")
                         .HasColumnName("status");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -148,7 +148,7 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(20)")
                         .HasColumnName("status");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -202,7 +202,7 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(50)")
                         .HasColumnName("reference_type");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -296,7 +296,7 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(20)")
                         .HasColumnName("status");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -370,7 +370,7 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(255)")
                         .HasColumnName("stored_file_name");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -435,7 +435,7 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("quantity");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -550,7 +550,7 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(2000)")
                         .HasColumnName("stopped_reason");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -622,7 +622,7 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("start_time");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -719,7 +719,7 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("sub_process_id");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -780,7 +780,7 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("start_time");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -832,7 +832,7 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("sequence_order");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -884,7 +884,7 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("process_id");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -944,7 +944,7 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(200)")
                         .HasColumnName("name");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -998,7 +998,7 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("p256dh_key");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -1047,7 +1047,7 @@ namespace AlGreenMES.Modules.Orders.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("duration_minutes");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 

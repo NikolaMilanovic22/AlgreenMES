@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# Pre-commit checks that catch the two BE regressions we've shipped in the
+# last week — the tenant-filter no-op (19.06.2026 security fix) and the
+# magic IsInRole("SuperAdmin") strings that drift from the typed helper.
+# Run on every commit; total budget under 1s since these are plain greps.
+#
+# Install once after cloning:
+#   git config core.hooksPath .githooks
+
+set -e
+
+# ─── Check 1: EF.Property<Guid>("TenantId") trap ───────────────────
+# Background: TenantEntity.TenantId became Guid? on 16.06.2026 when
+# SuperAdmins went tenantless. The pre-existing HasQueryFilter lambda
+# kept using EF.Property<Guid> on the now-nullable column and silently
+# stopped matching — every TenantEntity child became cross-tenant
+# readable for 3 days before integration tests caught it. The fix is
+# always EF.Property<Guid?> here; this check stops a revert.
+EF_HITS=$(grep -rn --include='*.cs' --exclude-dir=bin --exclude-dir=obj'EF\.Property<Guid>([^)]*"TenantId"' src/ AlgreenMES.API/ 2>/dev/null \
+  || true)
+
+if [ -n "$EF_HITS" ]; then
+  echo "✗ EF.Property<Guid>(... \"TenantId\" ...) found — use EF.Property<Guid?> instead."
+  echo "  TenantEntity.TenantId is nullable; the typed lambda silently no-ops"
+  echo "  on a nullable column and turns the tenant filter off."
+  echo
+  echo "$EF_HITS"
+  exit 1
+fi
+
+# ─── Check 2: Magic IsInRole("…") strings outside RoleNames.cs ────
+# We have RoleNames + ICurrentUserService.IsSuperAdmin specifically so
+# a typo in the string form can't silently flip auth to false. Catch
+# any caller that's still using the literal-string form.
+ROLE_HITS=$(grep -rn --include='*.cs' --exclude-dir=bin --exclude-dir=obj'IsInRole("' src/ AlgreenMES.API/ 2>/dev/null \
+  | grep -v 'RoleNames\.cs' \
+  | grep -v '// ' \
+  || true)
+
+if [ -n "$ROLE_HITS" ]; then
+  echo "✗ Magic IsInRole(\"…\") string found — use RoleNames.* or _currentUser.IsSuperAdmin."
+  echo "  A typo in the string form silently flips authorization to false:"
+  echo "  the SA case never fires and the handler treats them as a regular user."
+  echo
+  echo "$ROLE_HITS"
+  exit 1
+fi
+
+# ─── Check 3: Magic [Authorize(Roles = "…")] strings ───────────────
+# RoleGroups.AdminUp / ManagerUp / etc. replaced 76 magic-string
+# attributes on 19.06.2026. Catch any new attribute that drifts back.
+AUTHZ_HITS=$(grep -rn --include='*.cs' --exclude-dir=bin --exclude-dir=obj'\[Authorize(Roles\s*=\s*"' src/ AlgreenMES.API/ 2>/dev/null \
+  | grep -vE ':\s*(//|\*|///)' \
+  || true)
+
+if [ -n "$AUTHZ_HITS" ]; then
+  echo "✗ [Authorize(Roles = \"…\")] literal string found — use RoleGroups.* constant."
+  echo "  RoleGroups names per seniority: SuperAdminOnly, AdminUp, ManagerUp,"
+  echo "  CoordinatorUp, ManagerOrSales, ManagerOrWarehouse, ProductionFloor,"
+  echo "  AnyAuthenticated."
+  echo
+  echo "$AUTHZ_HITS"
+  exit 1
+fi
+
+# ─── Check 4: Merge conflict markers in staged content ────────────
+# Five-line check; accidentally committing leftover conflict text breaks
+# the build silently for everyone else.
+if git diff --cached -U0 | grep -E '^\+(<{7}|={7}|>{7})' >/dev/null 2>&1; then
+  echo "✗ Merge conflict markers in staged content. Resolve before committing."
+  exit 1
+fi
+
+# ─── Check 5: DateTime.Now (local time) instead of DateTime.UtcNow ─
+# Postgres columns are timestamptz; mixing local-time Now corrupts the
+# stored time (gotchas.md calls this out specifically). Always UtcNow.
+# Allowed: tests that explicitly need local time, and the now-utc helper
+# we already have — both grep-exempt via the "DateTime\.Now" exact form
+# (no .Today / .DayOfWeek / .Year etc.).
+NOW_HITS=$(grep -rn --include='*.cs' --exclude-dir=bin --exclude-dir=obj 'DateTime\.Now\b' src/ AlgreenMES.API/ 2>/dev/null \
+  | grep -vE ':\s*(//|\*|///)' \
+  || true)
+
+if [ -n "$NOW_HITS" ]; then
+  echo "✗ DateTime.Now used — switch to DateTime.UtcNow."
+  echo "  All DB columns are timestamptz; local-time Now corrupts stored times"
+  echo "  when the server moves between timezones (gotchas.md)."
+  echo
+  echo "$NOW_HITS"
+  exit 1
+fi
+
+# ─── Check 6: .Result / .GetAwaiter().GetResult() on Tasks ────────
+# Classic async deadlock pattern in ASP.NET request contexts. Use await.
+RESULT_HITS=$(grep -rnE --include='*.cs' --exclude-dir=bin --exclude-dir=obj '\.GetAwaiter\(\)\.GetResult\(\)|\.Result\s*[;,)]' src/ AlgreenMES.API/ 2>/dev/null \
+  | grep -vE ':\s*(//|\*|///)' \
+  | grep -vE '\b(IActionResult|TaskResult|ApiResult|OperationResult|PagedResult|FluentResult)\b' \
+  || true)
+
+if [ -n "$RESULT_HITS" ]; then
+  echo "✗ Synchronous Task wait found (.Result or .GetAwaiter().GetResult())."
+  echo "  Deadlocks under load in ASP.NET request contexts. Use await."
+  echo
+  echo "$RESULT_HITS"
+  exit 1
+fi
+
+# ─── Check 7: Missing [Authorize] on a controller ─────────────────
+# A controller declared without [Authorize] (and without [AllowAnonymous]
+# explicitly opting out) is an accidentally-public endpoint. Same blast
+# radius as the tenant-filter regression.
+for f in $(find src/ AlgreenMES.API/ -name '*Controller.cs' -not -path '*/bin/*' -not -path '*/obj/*' 2>/dev/null); do
+  if grep -q '^\s*public\s\+class\s\+\w\+Controller' "$f" && \
+     ! grep -qE '\[Authorize|\[AllowAnonymous' "$f"; then
+    echo "✗ Controller without [Authorize] or [AllowAnonymous]: $f"
+    echo "  Add one of them at the class level; accidentally-public endpoints are"
+    echo "  the same blast radius as the cross-tenant filter regression."
+    exit 1
+  fi
+done
+
+# ─── Check 8: Console.WriteLine left in code ──────────────────────
+# Should be ILogger. Catches debug statements that escaped review.
+CONSOLE_HITS=$(grep -rn --include='*.cs' --exclude-dir=bin --exclude-dir=obj 'Console\.WriteLine\b' src/ AlgreenMES.API/ 2>/dev/null \
+  | grep -vE ':\s*(//|\*|///)' \
+  || true)
+
+if [ -n "$CONSOLE_HITS" ]; then
+  echo "✗ Console.WriteLine found — use ILogger instead."
+  echo "  Console.* doesn't go through Serilog enrichment (correlation id,"
+  echo "  tenant id, etc.) and isn't structured for log queries."
+  echo
+  echo "$CONSOLE_HITS"
+  exit 1
+fi
+
+# ─── Check 9: Thread.Sleep instead of Task.Delay ──────────────────
+# Synchronous sleep blocks the thread; in an async pipeline that's a
+# fast track to ThreadPool starvation. Use await Task.Delay(...).
+SLEEP_HITS=$(grep -rn --include='*.cs' --exclude-dir=bin --exclude-dir=obj 'Thread\.Sleep\b' src/ AlgreenMES.API/ 2>/dev/null \
+  | grep -vE ':\s*(//|\*|///)' \
+  || true)
+
+if [ -n "$SLEEP_HITS" ]; then
+  echo "✗ Thread.Sleep found — use 'await Task.Delay(...)' instead."
+  echo "  Synchronous sleep blocks the calling thread; in async contexts"
+  echo "  that's a fast track to ThreadPool starvation."
+  echo
+  echo "$SLEEP_HITS"
+  exit 1
+fi
+
+echo "✓ BE static checks: 0 issues"

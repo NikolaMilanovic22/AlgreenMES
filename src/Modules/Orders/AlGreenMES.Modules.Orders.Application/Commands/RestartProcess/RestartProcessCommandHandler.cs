@@ -40,7 +40,7 @@ public class RestartProcessCommandHandler : IRequestHandler<RestartProcessComman
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         await _eventService.NotifyOrderUpdatedAsync(
-            process.OrderItem.Order.TenantId, process.OrderItem.Order.Id, cancellationToken);
+            process.OrderItem.Order.TenantIdRequired, process.OrderItem.Order.Id, cancellationToken);
 
         return Unit.Value;
     }

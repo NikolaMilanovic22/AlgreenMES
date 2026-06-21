@@ -31,6 +31,18 @@ public class UserRepository : IUserRepository
             .FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
     }
 
+    public async Task<User?> GetByIdWithProcessesIgnoreFiltersAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        // Same includes as GetByIdWithProcessesAsync but bypasses HasQueryFilter
+        // so a tenantless SuperAdmin row is reachable from user-management
+        // handlers. Callers MUST enforce the tenant boundary themselves.
+        return await _dbContext.Users
+            .IgnoreQueryFilters()
+            .Include(u => u.UserProcesses)
+            .Include(u => u.AdditionalRoles)
+            .FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
+    }
+
     public async Task<User?> GetByIdIgnoreFiltersAsync(Guid id, CancellationToken cancellationToken = default)
     {
         // Refresh flow runs unauthenticated — bypass HasQueryFilter, caller validates tenant explicitly.

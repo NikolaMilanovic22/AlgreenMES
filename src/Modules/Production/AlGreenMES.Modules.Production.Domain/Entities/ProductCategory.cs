@@ -56,7 +56,7 @@ public class ProductCategory : AuditableEntity
         if (_processes.Any(p => p.ProcessId == processId))
             throw new DomainException("DUPLICATE_PROCESS", "Process already added to category.");
 
-        _processes.Add(new ProductCategoryProcess(TenantId, Id, processId, sequenceOrder, defaultComplexity));
+        _processes.Add(new ProductCategoryProcess(TenantIdRequired, Id, processId, sequenceOrder, defaultComplexity));
     }
 
     public void RemoveProcess(Guid processId)
@@ -81,7 +81,7 @@ public class ProductCategory : AuditableEntity
         if (WouldCreateCircularDependency(processId, dependsOnProcessId))
             throw new DomainException("CIRCULAR_DEPENDENCY", "This would create a circular dependency.");
 
-        _dependencies.Add(new ProductCategoryDependency(TenantId, Id, processId, dependsOnProcessId));
+        _dependencies.Add(new ProductCategoryDependency(TenantIdRequired, Id, processId, dependsOnProcessId));
     }
 
     public void RemoveDependency(Guid dependencyId)
@@ -97,7 +97,7 @@ public class ProductCategory : AuditableEntity
         _processes.Clear();
         _dependencies.Clear();
         foreach (var (processId, sequenceOrder, defaultComplexity) in processes)
-            _processes.Add(new ProductCategoryProcess(TenantId, Id, processId, sequenceOrder, defaultComplexity));
+            _processes.Add(new ProductCategoryProcess(TenantIdRequired, Id, processId, sequenceOrder, defaultComplexity));
     }
 
     public void ReplaceDependencies(IEnumerable<(Guid processId, Guid dependsOnProcessId)> dependencies)

@@ -8,6 +8,7 @@ using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using AlGreenMES.BuildingBlocks.Common.Authorization;
 
 namespace AlGreenMES.Modules.Production.Api.Controllers;
 
@@ -53,7 +54,7 @@ public class SpecialRequestTypesController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
+    [Authorize(Roles = RoleGroups.ManagerUp)]
     public async Task<IActionResult> CreateSpecialRequestType([FromBody] CreateSpecialRequestTypeRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -65,7 +66,7 @@ public class SpecialRequestTypesController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
+    [Authorize(Roles = RoleGroups.ManagerUp)]
     public async Task<IActionResult> UpdateSpecialRequestType(Guid id, [FromBody] UpdateSpecialRequestTypeRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -77,7 +78,7 @@ public class SpecialRequestTypesController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = RoleGroups.AdminUp)]
     public async Task<IActionResult> DeactivateSpecialRequestType(Guid id, CancellationToken cancellationToken)
     {
         await _mediator.Send(new DeactivateSpecialRequestTypeCommand(id), cancellationToken);
@@ -85,7 +86,7 @@ public class SpecialRequestTypesController : ControllerBase
     }
 
     [HttpPost("{id:guid}/activate")]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = RoleGroups.AdminUp)]
     public async Task<IActionResult> ActivateSpecialRequestType(Guid id, CancellationToken cancellationToken)
     {
         await _mediator.Send(new ActivateSpecialRequestTypeCommand(id), cancellationToken);

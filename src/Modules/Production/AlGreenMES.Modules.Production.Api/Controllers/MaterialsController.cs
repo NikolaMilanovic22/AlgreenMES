@@ -9,6 +9,7 @@ using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using AlGreenMES.BuildingBlocks.Common.Authorization;
 
 namespace AlGreenMES.Modules.Production.Api.Controllers;
 
@@ -29,7 +30,7 @@ public class MaterialsController : ControllerBase
     }
 
     [HttpGet]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator,Magacioner")]
+    [Authorize(Roles = RoleGroups.ProductionFloor)]
     public async Task<IActionResult> GetMaterials(
         [FromQuery] bool? isActive,
         [FromQuery] string? category,
@@ -47,7 +48,7 @@ public class MaterialsController : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator,Magacioner")]
+    [Authorize(Roles = RoleGroups.ProductionFloor)]
     public async Task<IActionResult> GetMaterial(Guid id, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new GetMaterialQuery(id), cancellationToken);
@@ -55,7 +56,7 @@ public class MaterialsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Magacioner")]
+    [Authorize(Roles = RoleGroups.ManagerOrWarehouse)]
     public async Task<IActionResult> CreateMaterial([FromBody] CreateMaterialRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new CreateMaterialCommand(
@@ -69,7 +70,7 @@ public class MaterialsController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Magacioner")]
+    [Authorize(Roles = RoleGroups.ManagerOrWarehouse)]
     public async Task<IActionResult> UpdateMaterial(Guid id, [FromBody] UpdateMaterialRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new UpdateMaterialCommand(
@@ -82,7 +83,7 @@ public class MaterialsController : ControllerBase
     }
 
     [HttpPost("import")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Magacioner")]
+    [Authorize(Roles = RoleGroups.ManagerOrWarehouse)]
     public async Task<IActionResult> Import([FromBody] ImportMaterialsRequest request, CancellationToken cancellationToken)
     {
         var items = request.Items
@@ -99,7 +100,7 @@ public class MaterialsController : ControllerBase
     }
 
     [HttpPost("{id:guid}/activate")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Magacioner")]
+    [Authorize(Roles = RoleGroups.ManagerOrWarehouse)]
     public async Task<IActionResult> Activate(Guid id, CancellationToken cancellationToken)
     {
         await _mediator.Send(new SetMaterialActiveCommand(id, true), cancellationToken);
@@ -107,7 +108,7 @@ public class MaterialsController : ControllerBase
     }
 
     [HttpPost("{id:guid}/deactivate")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Magacioner")]
+    [Authorize(Roles = RoleGroups.ManagerOrWarehouse)]
     public async Task<IActionResult> Deactivate(Guid id, CancellationToken cancellationToken)
     {
         await _mediator.Send(new SetMaterialActiveCommand(id, false), cancellationToken);

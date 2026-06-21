@@ -7,5 +7,5 @@ namespace AlGreenMES.Modules.Orders.Application.Queries.Reports.GetActiveProcess
 
 public record GetActiveProcessFunnelQuery(
     Guid TenantId,
-    List<OrderType>? OrderTypes,
+    List<string>? OrderTypes,
     ComplexityType? Complexity) : IRequest<ActiveProcessFunnelDto>;

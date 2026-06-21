@@ -8,6 +8,262 @@ Mirrored to `easy-mes-be` (skyhard) — keep both in sync when editing.
 
 ---
 
+## 2026-06-20 — OrderType: admins can create custom types beyond the original 4 (Saša)
+
+### Fixed
+- **Bug from Saša (20.06.2026)**: newly-created order types (e.g. "Novi")
+  didn't show up in the create-order dropdown. Root cause: `Order.OrderType`
+  was a C# enum with 4 fixed values (Standard/Repair/Complaint/Rework);
+  the OrderTypes admin table only RENAMED those 4 slots. Creating a 5th
+  row had no enum value to map to, so orders couldn't reference it and
+  the dropdown (which iterated the enum) silently skipped it.
+
+### Changed
+- `Order.OrderType` is now a free-form `string` referencing
+  `OrderType.Code` in the per-tenant `OrderTypes` table. DB schema
+  unchanged — the column was always `varchar(20)` via
+  `HasConversion<string>()`; only the C# domain constraint blocked
+  custom values. No migration needed.
+- `CreateOrderCommandHandler` validates the order type code exists for
+  the tenant + is active (`INVALID_ORDER_TYPE` on miss). This replaces
+  the enum-shape validation FluentValidation used to do via `IsInEnum`.
+- All call sites that filtered/sorted/grouped by `OrderType` enum
+  (OrderRepository, ReportingQueryService, Reports + Orders query
+  handlers + DTOs + API requests) now use `string` / `List<string>`.
+- `OrderTypeRepository.IsInUseAsync` does direct string comparison
+  instead of round-tripping through the enum.
+- `TestDataSeeder.SeedTenantWithUserAsync` now also seeds the 4
+  default `OrderType` rows per tenant — the new handler-level
+  validation requires at least one matching row to exist.
+
+### Migration notes
+- Existing tenants on staging/pilot already have `OrderType` rows
+  (Saša's screenshot showed the DEMO tenant with 5 rows: Vrata,
+  Prozor, Reklamacija, Dorada, Novi). No data migration required.
+- New tenants created via the SA admin flow will need the 4 default
+  `OrderType` rows seeded manually — added to onboarding checklist.
+- The `Domain.Enums.OrderType` C# enum is left in place for now (dead
+  code, removable in a follow-up sweep).
+
+---
+
+## 2026-06-19 — Audit follow-up: role constants, guard helper, tenant-isolation regression tests
+
+### Added
+- **`RoleNames` constants** (`BuildingBlocks.Common.Authorization`). Replaces
+  every inline `IsInRole("SuperAdmin")` / `[Authorize(Roles = "...")]` magic
+  string. A typo in the string form silently flipped authorization to false
+  (the SA case never fired and the handler treated them as a regular user) —
+  the constants make that impossible.
+- **`ICurrentUserService.IsSuperAdmin`** property — typed shortcut for the
+  most common role check, removes the need to even import `RoleNames` in
+  handlers.
+- **`UserAuthorizationGuards.RequireSameTenantOrSuperAdminTarget`**
+  (Identity.Application/Services). Single source of truth for the
+  cross-tenant boundary check on user-management mutations — extracted from
+  three handlers (Update / Delete / ResetPassword) that all duplicated the
+  same SA-exempt three-clause check.
+- **`TenantIsolationRegressionTests`** integration suite. One golden-path
+  test per high-risk listing endpoint (orders, processes, shifts, users):
+  seed two tenants, write in A, log in as B, assert A's IDs aren't in the
+  response. If the `HasQueryFilter` regresses again (e.g., someone reverts
+  `EF.Property<Guid?>` back to `EF.Property<Guid>`), one of these turns red
+  immediately instead of leaking for days.
+
+### Changed
+- `UpdateUserCommandHandler`, `DeleteUserCommandHandler`,
+  `ResetPasswordCommandHandler`, `CreateUserCommandHandler` now use
+  `_currentUser.IsSuperAdmin` / `UserAuthorizationGuards` instead of inline
+  string checks + duplicated guard logic.
+- `SuperAdminReadOnlyMiddleware` and `TenantBlockedMiddleware` use
+  `RoleNames.SuperAdmin`.
+
+---
+
+## 2026-06-19 — Tenant filter regression fix + tenantless-SA handler hardening
+
+### Fixed
+- **Cross-tenant data leak in EF query filters.** The 16.06.2026 refactor
+  that made `TenantEntity.TenantId` nullable (for tenantless SAs)
+  silently turned off `HasQueryFilter` on every `TenantEntity` child —
+  the strongly-typed `EF.Property<Guid>` lambda no longer matched the
+  now-nullable column, so the filter became a no-op for Shifts, Orders,
+  Production rows, etc. Caught by integration tests after Saša's
+  19.06.2026 prod audit. Fix: switch filter to `EF.Property<Guid?>` in
+  `IdentityDbContext` / `OrdersDbContext` / `ProductionDbContext`. SQL
+  `NULL = X` is still false so tenantless SA rows are still correctly
+  excluded from tenant-scoped queries.
+- `LoginAttempt` is explicitly skipped from the Identity tenant filter
+  (it's intentionally not a `TenantEntity` — pre-auth failures with an
+  unknown tenant code must still be logged).
+
+### Changed
+- **User-management handlers locate tenantless SAs explicitly.**
+  `UpdateUserCommandHandler`, `DeleteUserCommandHandler`, and
+  `ResetPasswordCommandHandler` now load the target via the new
+  `IUserRepository.GetByIdWithProcessesIgnoreFiltersAsync` and enforce
+  the cross-tenant boundary inline (non-SA caller hitting a different
+  tenant → 404). SA targets are exempted from the cross-tenant check so
+  the role-based peer-SA guard (`FORBIDDEN_PEER_SUPERADMIN`) fires
+  instead of returning a misleading 404. Without this an Admin attempting
+  to delete an SA got 404 instead of 403, and SA self-update silently
+  failed because the filter hid the SA from their own session.
+- `UsersController`: `[AllowSuperAdminWrite]` added to `UpdateUser` /
+  `DeleteUser` / `ResetPassword`. SAs can call these endpoints; the
+  handler-level peer-SA guard does the real protection. Aligns the
+  controller with the class-doc design ("Self-modification IS allowed;
+  only peer-targeting operations are blocked").
+- `NotificationCreator.NotifyManagementAsync` includes tenantless
+  SuperAdmins in the recipient set (their `tenant_id` is NULL so
+  `GetByTenantIdAsync` misses them, but they should still see bell
+  notifications for tenants they're viewing).
+
+### Tests
+- `IdentityAuthzTests.DeleteUser_AdminDeletesSuperAdmin_Returns403_F2b`
+  now asserts `FORBIDDEN_PEER_SUPERADMIN` (the older
+  `FORBIDDEN_SUPERADMIN_DELETE` was subsumed on 15.06.2026).
+- `SuperAdminPeerProtectionTests` peer-target assertions switched from
+  middleware-level `SUPERADMIN_READ_ONLY` to handler-level
+  `FORBIDDEN_PEER_SUPERADMIN`. `UpdateUser_Self_AsSuperAdmin_IsAlsoBlocked`
+  renamed to `UpdateUser_Self_AsSuperAdmin_Succeeds` to match the class
+  doc — self-modification is allowed.
+
+---
+
+## 2026-06-18 — Saša feedback round + Admin Naplata view + daily subscription reminders
+
+### Added
+- **Tenant feature flags** (Saša #7). New `tenants.disabled_features` JSON
+  column + `Tenant.DisabledFeatures` / `SetDisabledFeatures()` /
+  `KnownFeatures` / `BasicPlanDisabledFeatures`. Endpoint
+  `PUT /api/tenants/{id}/features` (`[AllowSuperAdminWrite]`); unknown
+  feature keys rejected with `UNKNOWN_FEATURE`. New tenants default to
+  Basic (`["process-times", "magacin"]` disabled); existing tenants
+  grandfathered to everything enabled by the migration.
+- **Cross-tenant payments endpoint** (Saša #4).
+  `GET /api/tenants/payments` (SA-only) returns the paged aggregated
+  view across all tenants with tenant name + code denormalised. Filters:
+  `tenantId`, `paidFrom`, `paidTo`, `currency`. Sort: `paidAt` (default
+  desc) / `tenantName` / `amount` / `periodStart`.
+- **Admin read-only payment ledger.** `GET /api/tenants/me/payments`
+  resolves tenant from JWT — Admin role only; no mutation endpoints
+  exposed on `/me`. Powers the new Profil firme → Naplata tab on the FE.
+- **Daily subscription-expiry nudge.** `BillingReminderService`
+  (HostedService) scans hourly, fires the actual work at 06:00 UTC. For
+  each active tenant whose `paidThrough` is ≤ today+14 days OR already
+  past, creates one `SubscriptionExpiring` (warning) or
+  `SubscriptionExpired` (error) notification per Admin user.
+  Idempotent per `(user, day)`. SA manual trigger at
+  `POST /api/tenants/billing-reminders/run` so testing doesn't have to
+  wait for the next morning.
+- **`NotificationType.SubscriptionExpiring`** and
+  **`SubscriptionExpired`** enum values, stored as strings so no
+  migration needed.
+- **`TenantBlockedMiddleware`** (Saša 17.06.2026 follow-up). Rejects
+  authenticated requests from a blocked tenant's user with `401
+  TENANT_BLOCKED` so the FE's axios interceptor force-logs-out instead
+  of letting the JWT linger until expiry. SuperAdmins bypass.
+
+### Changed
+- **`paidThrough` semantics** (Saša #2 follow-up).
+  `TenantPaymentRepository.GetPaidThroughAsync` /
+  `GetPaidThroughByTenantAsync` now filter `periodStart <= today` so a
+  pre-paid future period doesn't promote the tenant to "Plaćeno" until
+  its start date arrives. Same filter governs the daily-reminder
+  threshold.
+- **Login flow** defers `tenant.IsActive` check until after the user is
+  resolved, and skips it entirely for SuperAdmins. Blocking the MPMS /
+  platform tenant no longer locks SAs out.
+- **`Tenant.Update()`** no longer takes `isActive`. `Block` / `Unblock`
+  are the only off-switch for a tenant — legacy "Deactivate" command
+  parameter removed end-to-end.
+
+### Fixed (during BillingReminderService test backfill)
+- Admin-user lookup in the daily-reminder loop now uses
+  `IgnoreQueryFilters()`. Without it, the tenant-scoped Users query
+  returned zero rows in the absence of a JWT and the service silently
+  notified nobody on prod.
+- Same fix applied to the idempotency check (`alreadyNotified` query).
+  Without it the check returned zero, so the service would have
+  created a fresh batch of duplicate notifications on every run.
+
+### Migrations
+- `20260618072741_AddTenantDisabledFeatures` (TenancyDbContext) — adds
+  `tenants.disabled_features text NOT NULL DEFAULT '[]'`. Existing rows
+  inherit the empty list (grandfathered); new tenants go through
+  `Tenant.Create` which seeds the Basic plan.
+
+### Tests
+- `TenantBillingTests` grows from 8 to 17: SA bypass of blocked-tenant
+  login, paidThrough excludes future / counts started periods, feature
+  flag toggle round-trip + unknown-key rejection + 403 for regular
+  Admin, cross-tenant payments listing + tenantId filter + 403.
+- New `BillingReminderServiceTests` (6 cases): expiring window creates
+  warning for Admin only, expired uses the Expired type, beyond
+  threshold + no payments + blocked all skip, double-run is idempotent.
+  Suite total: 23/23.
+
+---
+
+## 2026-06-16 — Naplata (SA-only billing) + seed CLI flag + tenantless SA refactor
+
+### Added
+- **SuperAdmin "Naplata" (billing) feature**. New `tenant_payments` table
+  (id, tenant_id, period_start, period_end, amount, currency, paid_at,
+  invoice_number?, notes?) tracked via the `TenantPayment` aggregate
+  with a date-range period so monthly / quarterly / annual subscriptions
+  all fit. `Tenant` gained `BlockedAt` + `BlockedReason`; `Block(reason)`
+  / `Unblock()` flip `IsActive`. New SA-only endpoints:
+  - `GET    /api/tenants/{id}/payments`
+  - `POST   /api/tenants/{id}/payments`
+  - `PUT    /api/tenants/{id}/payments/{paymentId}`
+  - `DELETE /api/tenants/{id}/payments/{paymentId}`
+  - `POST   /api/tenants/{id}/block` (body `{ reason }`)
+  - `POST   /api/tenants/{id}/unblock`
+  All four write endpoints carry `[AllowSuperAdminWrite]` so the
+  `SuperAdminReadOnlyMiddleware` lets them through. No auto-block on
+  unpaid invoices — manual SA action only (Milos 16.06.2026).
+- **`TenantDto.LastPaidAt`** injected into `GetTenants` (one batched
+  query via `ITenantPaymentRepository.GetLastPaidAtByTenantAsync`) and
+  `GetTenantById`, so the SA TenantsPage renders the "Poslednja uplata"
+  column without N+1 round-trips.
+- **`--seed` CLI flag**. The DataSeeder no longer runs on startup
+  (overwrote locally-changed passwords on every BE restart). Use
+  `dotnet run --project AlgreenMES.API -- --seed` (or
+  `dotnet AlgreenMES.API.dll --seed`). Idempotent: re-running against
+  an already-seeded DB is safe and doesn't reset existing passwords.
+
+### Changed
+- **Login distinguishes `TENANT_BLOCKED` from `TENANT_INACTIVE`**.
+  `ITenantLookupService.TenantLookupResult` now carries `IsBlocked`;
+  `LoginCommandHandler` picks the error code based on whether
+  `Tenant.BlockedAt` is set. FE i18n has the matching pair
+  (`Pretplata je na čekanju...` vs `Firma nije aktivna...`).
+- **Tenantless SuperAdmin model** (carried over from the 06-16 morning
+  refactor). SAs have `user.tenant_id = NULL`; the cross-tenant banner /
+  claim machinery is gone. `SuperAdminReadOnlyMiddleware` blocks all
+  non-GET writes by SA callers unless the action is opted in via
+  `[AllowSuperAdminWrite]`. Allow-list today: tenant CRUD +
+  `UpdateTenantSettings({id})` + `CreateUser` + `ChangePassword` + the
+  five Naplata endpoints above.
+
+### Tests
+- New `TenantBillingTests` (6 cases): block → `TENANT_BLOCKED` on
+  login, unblock restores login, payment add → list round-trips,
+  regular Admin hits 403 on every billing route, payment update
+  overwrites fields and persists across list, and a path-tampered
+  cross-tenant update returns 404 (handler verifies
+  `payment.TenantId == request.TenantId` before applying).
+  All pass against the testcontainers Postgres fixture.
+
+### Migrations
+- `20260616145051_AddTenantBillingAndBlock` (TenancyDbContext) — adds
+  `tenants.blocked_at`, `tenants.blocked_reason`, and the
+  `tenant_payments` table with a FK cascade on `tenant_id` plus an
+  index on `(tenant_id, paid_at)` for "most recent first" queries.
+
+---
+
 ## 2026-06-09 — Magacin module polish
 
 ### Fixed

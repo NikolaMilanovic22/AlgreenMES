@@ -94,7 +94,7 @@ namespace AlGreenMES.Modules.Production.Infrastructure.Migrations
                         .HasColumnType("character varying(1000)")
                         .HasColumnName("notes");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -160,7 +160,7 @@ namespace AlGreenMES.Modules.Production.Infrastructure.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("sequence_order");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -220,7 +220,7 @@ namespace AlGreenMES.Modules.Production.Infrastructure.Migrations
                         .HasColumnType("character varying(200)")
                         .HasColumnName("name");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -383,7 +383,7 @@ namespace AlGreenMES.Modules.Production.Infrastructure.Migrations
                         .HasColumnType("jsonb")
                         .HasColumnName("removes_processes");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -448,7 +448,7 @@ namespace AlGreenMES.Modules.Production.Infrastructure.Migrations
                         .HasColumnType("numeric(18,3)")
                         .HasColumnName("quantity");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
@@ -530,7 +530,7 @@ namespace AlGreenMES.Modules.Production.Infrastructure.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("sequence_order");
 
-                    b.Property<Guid>("TenantId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 

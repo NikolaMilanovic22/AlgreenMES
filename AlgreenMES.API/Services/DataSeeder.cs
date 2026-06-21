@@ -9,7 +9,6 @@ using AlGreenMES.Modules.Production.Infrastructure.Persistence;
 using AlGreenMES.Modules.Tenancy.Domain.Entities;
 using AlGreenMES.Modules.Tenancy.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 
 namespace AlgreenMES.API.Services;
 
@@ -22,19 +21,11 @@ public static class DataSeeder
 
         // The seeder creates the DEMO tenant, 11 demo users, the bootstrap
         // SuperAdmin (superadmin@demo.com), and a stock process list A–K.
-        // Useful for dev / staging / fresh installs; junk data next to real
-        // tenant data on a real-customer droplet.
-        //
-        // Gate is a Seeding:Enabled config flag. Default = true to preserve
-        // the existing behaviour on alblue staging (where the flag isn't
-        // set) and on dev environments. Real-customer droplets (algreen
-        // pilot, future client deploys) set "Seeding": { "Enabled": false }
-        // in their appsettings.Production.json before the first upgrade
-        // that ships this gate — keeping demo data out of their DB.
-        var config = services.GetRequiredService<IConfiguration>();
-        var seedingEnabled = config.GetValue("Seeding:Enabled", defaultValue: true);
-        if (!seedingEnabled)
-            return;
+        // Invoked exclusively via the --seed CLI flag (Milos 16.06.2026);
+        // there is no longer any auto-run path. That removed the footgun
+        // where every BE restart would silently rewrite a locally-changed
+        // demo password, AND removed the need for the Seeding:Enabled
+        // appsettings gate on real-customer droplets.
 
         var tenancyDb = services.GetRequiredService<TenancyDbContext>();
         var identityDb = services.GetRequiredService<IdentityDbContext>();
@@ -56,7 +47,12 @@ public static class DataSeeder
         // DataSeeder runs at startup with no HTTP context — every query against a tenant-scoped
         // entity must IgnoreQueryFilters and pass tenantId explicitly.
 
-        // 2. Get or create Admin User
+        // 2. Get or create Admin User. Create-only (Milos 16.06.2026): do
+        // NOT reset the password on hash drift. The old reset-if-different
+        // branch made password-change testing impossible because every BE
+        // restart would silently undo the local change. If the demo hash
+        // is ever genuinely broken (algorithm change), drop the row and
+        // let the seeder re-create.
         var adminUser = await identityDb.Users.IgnoreQueryFilters()
             .FirstOrDefaultAsync(u => u.Email == "admin@demo.com" && u.TenantId == tenantId);
         if (adminUser == null)
@@ -66,30 +62,19 @@ public static class DataSeeder
             identityDb.Users.Add(adminUser);
             await identityDb.SaveChangesAsync();
         }
-        else if (!passwordHasher.VerifyPassword("Admin123!", adminUser.PasswordHash))
-        {
-            // Reset password if hash is invalid
-            adminUser.ChangePassword(passwordHasher.HashPassword("Admin123!"));
-            await identityDb.SaveChangesAsync();
-        }
 
-        // 2b. Get or create Super Administrator. Needed for the cross-tenant
-        // login flow + the Super administratori tab (otherwise nobody can
-        // bootstrap additional Super administrators through the UI).
-        // Idempotent: created only if missing, password reset if hash drifts.
-        // Home tenant is the demo tenant — convention matches admin@demo.com.
+        // 2b. Get or create Super Administrator. Tenantless (Milos
+        // 16.06.2026): the bootstrap SA can log into any tenant code, but
+        // their own user row has tenant_id = NULL so they don't show up in
+        // /api/users listings of any tenant. Create-only — same reasoning
+        // as admin@demo.com above.
         var superAdminUser = await identityDb.Users.IgnoreQueryFilters()
-            .FirstOrDefaultAsync(u => u.Email == "superadmin@demo.com" && u.TenantId == tenantId);
+            .FirstOrDefaultAsync(u => u.Email == "superadmin@demo.com");
         if (superAdminUser == null)
         {
             var passwordHash = passwordHasher.HashPassword("SuperAdmin123!");
-            superAdminUser = User.Create(tenantId, "superadmin@demo.com", passwordHash, "Super", "Admin", UserRole.SuperAdmin);
+            superAdminUser = User.CreateSuperAdmin("superadmin@demo.com", passwordHash, "Super", "Admin");
             identityDb.Users.Add(superAdminUser);
-            await identityDb.SaveChangesAsync();
-        }
-        else if (!passwordHasher.VerifyPassword("SuperAdmin123!", superAdminUser.PasswordHash))
-        {
-            superAdminUser.ChangePassword(passwordHasher.HashPassword("SuperAdmin123!"));
             await identityDb.SaveChangesAsync();
         }
 
@@ -398,7 +383,7 @@ public static class DataSeeder
         // --- ORD-2026-001: Standard, Priority 1, +14 days, Active ---
         // 2 items of Vrata Pivot; item1 process A started; item2 process A completed, B started
         var order1 = Order.Create(tenantId, "ORD-2026-001", DateTime.UtcNow.AddDays(14),
-            1, OrderType.Standard, adminUser.Id, "Prva narudžba - pivot vrata");
+            1, "Standard", adminUser.Id, "Prva narudžba - pivot vrata");
         var item1_1 = order1.AddItem(catPivot.Id, "Vrata Pivot", 2, "Stavka 1");
         AddProcessesAndSubProcesses(item1_1, catPivot);
         var item1_2 = order1.AddItem(catPivot.Id, "Vrata Pivot", 2, "Stavka 2");
@@ -421,7 +406,7 @@ public static class DataSeeder
 
         // --- ORD-2026-002: Standard, Priority 2, +21 days, Draft ---
         var order2 = Order.Create(tenantId, "ORD-2026-002", DateTime.UtcNow.AddDays(21),
-            2, OrderType.Standard, adminUser.Id, "Druga narudžba - standardna vrata");
+            2, "Standard", adminUser.Id, "Druga narudžba - standardna vrata");
         var item2_1 = order2.AddItem(catStandard.Id, "Vrata Standard", 1);
         AddProcessesAndSubProcesses(item2_1, catStandard);
         ordersDb.Orders.Add(order2);
@@ -430,7 +415,7 @@ public static class DataSeeder
         // --- ORD-2026-003: Repair, Priority 1, +7 days, Active ---
         // Prozori; processes A,B,C completed; F InProgress
         var order3 = Order.Create(tenantId, "ORD-2026-003", DateTime.UtcNow.AddDays(7),
-            1, OrderType.Repair, adminUser.Id, "Popravka prozora");
+            1, "Repair", adminUser.Id, "Popravka prozora");
         var item3_1 = order3.AddItem(catProzori.Id, "Prozori", 1);
         AddProcessesAndSubProcesses(item3_1, catProzori);
         ordersDb.Orders.Add(order3);
@@ -453,7 +438,7 @@ public static class DataSeeder
 
         // --- ORD-2026-004: Standard, Priority 3, +30 days, Paused ---
         var order4 = Order.Create(tenantId, "ORD-2026-004", DateTime.UtcNow.AddDays(30),
-            3, OrderType.Standard, adminUser.Id, "Narudžba na čekanju");
+            3, "Standard", adminUser.Id, "Narudžba na čekanju");
         var item4_1 = order4.AddItem(catPivot.Id, "Vrata Pivot", 1);
         AddProcessesAndSubProcesses(item4_1, catPivot);
         ordersDb.Orders.Add(order4);
@@ -466,7 +451,7 @@ public static class DataSeeder
         // --- ORD-2026-005: Complaint, Priority 2, Completed ---
         // Create with future date (domain validates), then complete all processes
         var order5 = Order.Create(tenantId, "ORD-2026-005", DateTime.UtcNow.AddDays(1),
-            2, OrderType.Complaint, adminUser.Id, "Reklamacija - završena");
+            2, "Complaint", adminUser.Id, "Reklamacija - završena");
         var item5_1 = order5.AddItem(catStandard.Id, "Vrata Standard", 1);
         AddProcessesAndSubProcesses(item5_1, catStandard);
         ordersDb.Orders.Add(order5);
@@ -492,7 +477,7 @@ public static class DataSeeder
         // A-F completed, G (Grundiranje) InProgress → H (Farbanje) pending, blocked by G
         // This shows as "incoming" for worker3 (Nikola, process H)
         var order6 = Order.Create(tenantId, "ORD-2026-006", DateTime.UtcNow.AddDays(10),
-            1, OrderType.Standard, adminUser.Id, "Hitna narudžba - pivot vrata za klijenta Petrović");
+            1, "Standard", adminUser.Id, "Hitna narudžba - pivot vrata za klijenta Petrović");
         var item6_1 = order6.AddItem(catPivot.Id, "Vrata Pivot", 3, "Stavka 1 - bijela");
         AddProcessesAndSubProcesses(item6_1, catPivot);
         ordersDb.Orders.Add(order6);
@@ -515,7 +500,7 @@ public static class DataSeeder
         // A-E completed, F (Brušenje) InProgress → G pending (blocked by F), H pending (blocked by G)
         // Shows as incoming for worker3 (process H) — blocked by G which is blocked by F
         var order7 = Order.Create(tenantId, "ORD-2026-007", DateTime.UtcNow.AddDays(5),
-            2, OrderType.Repair, adminUser.Id, "Popravka vrata - hitan rok");
+            2, "Repair", adminUser.Id, "Popravka vrata - hitan rok");
         var item7_1 = order7.AddItem(catStandard.Id, "Vrata Standard", 1, "Popravka okvira");
         AddProcessesAndSubProcesses(item7_1, catStandard);
         ordersDb.Orders.Add(order7);
@@ -540,7 +525,7 @@ public static class DataSeeder
         // BUT also: second item where A-D completed, E InProgress
         // For worker3: item2 has H blocked by G (which is pending, blocked by F which is pending)
         var order8 = Order.Create(tenantId, "ORD-2026-008", DateTime.UtcNow.AddDays(18),
-            3, OrderType.Standard, adminUser.Id, "Velika narudžba - 2 stavke pivot vrata");
+            3, "Standard", adminUser.Id, "Velika narudžba - 2 stavke pivot vrata");
         var item8_1 = order8.AddItem(catPivot.Id, "Vrata Pivot", 2, "Stavka 1 - crna");
         AddProcessesAndSubProcesses(item8_1, catPivot);
         var item8_2 = order8.AddItem(catPivot.Id, "Vrata Pivot", 1, "Stavka 2 - siva");

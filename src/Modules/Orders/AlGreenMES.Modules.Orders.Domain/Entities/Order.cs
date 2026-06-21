@@ -10,7 +10,14 @@ public class Order : AuditableEntity
     public string OrderNumber { get; private set; } = null!;
     public DateTime DeliveryDate { get; private set; }
     public int Priority { get; private set; }
-    public OrderType OrderType { get; private set; }
+    // OrderType code referencing OrderType.Code in the per-tenant OrderTypes
+    // table. Was a C# enum (Standard/Repair/Complaint/Rework) until
+    // 20.06.2026 when Saša needed more than 4 types; the DB column is and
+    // always was a varchar(20), so no schema change — the C# constraint
+    // was the only thing blocking custom types. Validation that the code
+    // exists in the OrderTypes table for the tenant lives in
+    // CreateOrderCommandHandler / UpdateOrderCommandHandler.
+    public string OrderType { get; private set; } = null!;
     public OrderStatus Status { get; private set; }
     public string? Notes { get; private set; }
     public int? CustomWarningDays { get; private set; }
@@ -40,7 +47,7 @@ public class Order : AuditableEntity
     }
 
     public static Order Create(Guid tenantId, string orderNumber, DateTime deliveryDate,
-        int priority, OrderType orderType, Guid createdByUserId, string? notes = null)
+        int priority, string orderType, Guid createdByUserId, string? notes = null)
     {
         if (string.IsNullOrWhiteSpace(orderNumber))
             throw new DomainException("INVALID_ORDER_NUMBER", "Order number is required.");
@@ -48,6 +55,8 @@ public class Order : AuditableEntity
             throw new DomainException("INVALID_DATE", "Delivery date must be in the future.");
         if (priority <= 0)
             throw new DomainException("INVALID_PRIORITY", "Priority must be positive.");
+        if (string.IsNullOrWhiteSpace(orderType))
+            throw new DomainException("INVALID_ORDER_TYPE", "Order type is required.");
 
         var order = new Order
         {
@@ -70,7 +79,7 @@ public class Order : AuditableEntity
         if (quantity <= 0)
             throw new DomainException("INVALID_QUANTITY", "Quantity must be positive.");
 
-        var item = OrderItem.Create(TenantId, Id, productCategoryId, productName, quantity, notes);
+        var item = OrderItem.Create(TenantIdRequired, Id, productCategoryId, productName, quantity, notes);
         _items.Add(item);
         return item;
     }
@@ -92,7 +101,7 @@ public class Order : AuditableEntity
         if (_manualProcesses.Any(p => p.ProcessId == processId))
             throw new DomainException("DUPLICATE_PROCESS", "This process is already added.");
 
-        _manualProcesses.Add(OrderManualProcess.Create(TenantId, Id, processId, sequenceOrder, defaultComplexity));
+        _manualProcesses.Add(OrderManualProcess.Create(TenantIdRequired, Id, processId, sequenceOrder, defaultComplexity));
     }
 
     public void AddManualDependency(Guid processId, Guid dependsOnProcessId)
@@ -108,7 +117,7 @@ public class Order : AuditableEntity
         if (WouldCreateCycle(processId, dependsOnProcessId))
             throw new DomainException("CIRCULAR_DEPENDENCY", "This would create a circular dependency.");
 
-        _manualProcessDependencies.Add(OrderManualProcessDependency.Create(TenantId, Id, processId, dependsOnProcessId));
+        _manualProcessDependencies.Add(OrderManualProcessDependency.Create(TenantIdRequired, Id, processId, dependsOnProcessId));
     }
 
     /// <summary>BFS forward through existing edges from <paramref name="dependsOnProcessId"/> —

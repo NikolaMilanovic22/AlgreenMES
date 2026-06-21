@@ -13,7 +13,7 @@ public interface IReportingQueryService
         DateTime? from,
         DateTime? to,
         List<Guid>? productCategoryIds,
-        List<OrderType>? orderTypes,
+        List<string>? orderTypes,
         CancellationToken cancellationToken = default);
 
     Task<TimeTrackingReportDto> GetTimeTrackingReportAsync(
@@ -24,7 +24,7 @@ public interface IReportingQueryService
         ComplexityType? complexity,
         string? orderNumber,
         List<Guid>? productCategoryIds,
-        List<OrderType>? orderTypes,
+        List<string>? orderTypes,
         CancellationToken cancellationToken = default);
 
     Task<WorkerHoursReportDto> GetWorkerHoursReportAsync(
@@ -39,7 +39,7 @@ public interface IReportingQueryService
         DateTime? from,
         DateTime? to,
         ReportGranularity granularity,
-        List<OrderType>? orderTypes,
+        List<string>? orderTypes,
         CancellationToken cancellationToken = default);
 
     Task<ProcessTimeTrendDto> GetProcessTimeTrendAsync(
@@ -53,7 +53,7 @@ public interface IReportingQueryService
 
     Task<ActiveProcessFunnelDto> GetActiveProcessFunnelAsync(
         Guid tenantId,
-        List<OrderType>? orderTypes,
+        List<string>? orderTypes,
         ComplexityType? complexity,
         CancellationToken cancellationToken = default);
 
@@ -67,7 +67,7 @@ public interface IReportingQueryService
         Guid tenantId,
         DateTime? from,
         DateTime? to,
-        List<OrderType>? orderTypes,
+        List<string>? orderTypes,
         List<Guid>? productCategoryIds,
         CancellationToken cancellationToken = default);
 

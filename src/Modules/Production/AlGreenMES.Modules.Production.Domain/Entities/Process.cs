@@ -53,7 +53,7 @@ public class Process : AuditableEntity
         if (_subProcesses.Any(sp => sp.IsActive && sp.SequenceOrder == sequenceOrder))
             throw new DomainException("DUPLICATE_ORDER", $"Sub-process with order {sequenceOrder} already exists.");
 
-        var subProcess = SubProcess.Create(TenantId, Id, name, sequenceOrder);
+        var subProcess = SubProcess.Create(TenantIdRequired, Id, name, sequenceOrder);
         _subProcesses.Add(subProcess);
         return subProcess;
     }

@@ -137,7 +137,7 @@ public class UpdateOrderCommandHandler : IRequestHandler<UpdateOrderCommand, Ord
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
-        await _eventService.NotifyOrderUpdatedAsync(order.TenantId, order.Id, cancellationToken);
+        await _eventService.NotifyOrderUpdatedAsync(order.TenantIdRequired, order.Id, cancellationToken);
 
         return order.Adapt<OrderDto>();
     }

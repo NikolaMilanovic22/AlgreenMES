@@ -8,6 +8,7 @@ public class TenancyDbContext : DbContext, IUnitOfWork
 {
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<TenantSettings> TenantSettings => Set<TenantSettings>();
+    public DbSet<TenantPayment> TenantPayments => Set<TenantPayment>();
 
     public TenancyDbContext(DbContextOptions<TenancyDbContext> options, ICurrentUserService currentUser)
         : base(options)

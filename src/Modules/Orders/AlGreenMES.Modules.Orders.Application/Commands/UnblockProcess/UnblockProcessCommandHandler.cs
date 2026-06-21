@@ -44,7 +44,7 @@ public class UnblockProcessCommandHandler : IRequestHandler<UnblockProcessComman
                 process.ProcessId,
                 process.OrderItem.Order.Id,
                 process.OrderItem.Order.OrderNumber,
-                process.TenantId), cancellationToken);
+                process.TenantIdRequired), cancellationToken);
 
         return Unit.Value;
     }

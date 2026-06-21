@@ -43,26 +43,27 @@ public class RefreshTokenCommandHandler : IRequestHandler<RefreshTokenCommand, L
         if (!user.IsActive)
             throw new DomainException("USER_INACTIVE", "The user account is not active.");
 
-        // Defense in depth: refresh tokens are tenant-scoped. The only
-        // legitimate mismatch between user.TenantId and refreshToken.TenantId
-        // is the SuperAdmin cross-tenant flow (SuperAdmin's home tenant
-        // differs from the tenant they're logged into). Anything else means
-        // tampering or data corruption.
-        var isCrossTenantSession = user.TenantId != existingToken.TenantId;
-        if (isCrossTenantSession && user.Role != UserRole.SuperAdmin)
+        // Defense in depth: a refresh token is tenant-scoped. For a normal
+        // user, the refresh token's tenant MUST equal the user's home
+        // tenant — anything else means tampering. SuperAdmins (Milos
+        // 16.06.2026) are tenantless (user.TenantId is null) and their
+        // refresh tokens carry whatever tenant they were browsing at
+        // login, so we only enforce the equality for non-SAs.
+        if (user.Role != UserRole.SuperAdmin && user.TenantId != existingToken.TenantId)
         {
             throw new DomainException("INVALID_REFRESH_TOKEN", "The refresh token is invalid.");
         }
 
         existingToken.Revoke();
 
-        var newToken = isCrossTenantSession
-            ? _jwtTokenService.GenerateCrossTenantToken(user, existingToken.TenantId)
-            : _jwtTokenService.GenerateToken(user);
+        // The new JWT reuses the tenant the refresh token was issued for —
+        // preserves the session's scope across refresh whether normal or SA.
+        var effectiveTenantId = existingToken.TenantIdRequired;
+        var newToken = _jwtTokenService.GenerateToken(user, effectiveTenantId);
         var newRefreshTokenValue = _jwtTokenService.GenerateRefreshToken();
 
         var newRefreshToken = Domain.Entities.RefreshToken.Create(
-            existingToken.TenantId,
+            effectiveTenantId,
             user.Id,
             newRefreshTokenValue,
             DateTime.UtcNow.AddDays(7));

@@ -23,7 +23,7 @@ public class UpdateTenantCommandHandler : IRequestHandler<UpdateTenantCommand, T
         var tenant = await _tenantRepository.GetByIdAsync(request.Id, cancellationToken)
             ?? throw new NotFoundException("Tenant", request.Id);
 
-        tenant.Update(request.Name, request.IsActive);
+        tenant.Update(request.Name);
 
         if (request.DefaultWarningDays.HasValue && tenant.Settings is not null)
         {

@@ -1,4 +1,5 @@
 using AlGreenMES.BuildingBlocks.Common.Exceptions;
+using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using AlGreenMES.Modules.Identity.Application.Interfaces;
 using AlGreenMES.Modules.Identity.Application.Services;
 using AlGreenMES.Modules.Identity.Domain.Entities;
@@ -13,23 +14,31 @@ public class ResetPasswordCommandHandler : IRequestHandler<ResetPasswordCommand,
     private readonly IRefreshTokenRepository _refreshTokenRepository;
     private readonly IIdentityUnitOfWork _unitOfWork;
     private readonly IPasswordHasher _passwordHasher;
+    private readonly ICurrentUserService _currentUser;
 
     public ResetPasswordCommandHandler(
         IUserRepository userRepository,
         IRefreshTokenRepository refreshTokenRepository,
         IIdentityUnitOfWork unitOfWork,
-        IPasswordHasher passwordHasher)
+        IPasswordHasher passwordHasher,
+        ICurrentUserService currentUser)
     {
         _userRepository = userRepository;
         _refreshTokenRepository = refreshTokenRepository;
         _unitOfWork = unitOfWork;
         _passwordHasher = passwordHasher;
+        _currentUser = currentUser;
     }
 
     public async Task<Unit> Handle(ResetPasswordCommand request, CancellationToken cancellationToken)
     {
-        var user = await _userRepository.GetByIdAsync(request.UserId, cancellationToken)
+        // Unfiltered lookup so the peer-SA guard below can fire for tenantless
+        // SuperAdmin targets. The cross-tenant boundary for non-SA targets is
+        // enforced explicitly right after.
+        var user = await _userRepository.GetByIdWithProcessesIgnoreFiltersAsync(request.UserId, cancellationToken)
             ?? throw new NotFoundException("User", request.UserId);
+
+        UserAuthorizationGuards.RequireSameTenantOrSuperAdminTarget(_currentUser, user);
 
         // Peer SuperAdmin protection (Milos 15.06.2026). SuperAdmin passwords
         // can only be changed by the owner through ChangePassword (which

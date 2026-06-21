@@ -7,6 +7,7 @@ using AlGreenMES.Modules.Orders.Application.Queries.GetOrderTypes;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using AlGreenMES.BuildingBlocks.Common.Authorization;
 
 namespace AlGreenMES.Modules.Orders.Api.Controllers;
 
@@ -52,7 +53,7 @@ public class OrderTypesController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
+    [Authorize(Roles = RoleGroups.ManagerUp)]
     public async Task<IActionResult> CreateOrderType([FromBody] CreateOrderTypeRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -66,7 +67,7 @@ public class OrderTypesController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
+    [Authorize(Roles = RoleGroups.ManagerUp)]
     public async Task<IActionResult> UpdateOrderType(Guid id, [FromBody] UpdateOrderTypeRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -80,7 +81,7 @@ public class OrderTypesController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = RoleGroups.AdminUp)]
     public async Task<IActionResult> DeleteOrderType(Guid id, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new DeleteOrderTypeCommand(id), cancellationToken);

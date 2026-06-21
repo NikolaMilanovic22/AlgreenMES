@@ -1,0 +1,29 @@
+version: 2
+
+# Auto-open PRs for NuGet dependency updates with security advisories or
+# new versions. Same grouping pattern as the FE: minor/patch bundled
+# weekly; security + majors arrive individually for review.
+
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/Belgrade
+    open-pull-requests-limit: 5
+    groups:
+      patch-and-minor:
+        update-types:
+          - patch
+          - minor
+    commit-message:
+      prefix: chore(deps)
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: chore(ci)

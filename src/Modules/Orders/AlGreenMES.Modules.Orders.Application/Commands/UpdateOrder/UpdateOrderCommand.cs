@@ -4,7 +4,7 @@ using MediatR;
 
 namespace AlGreenMES.Modules.Orders.Application.Commands.UpdateOrder;
 
-public record UpdateOrderItemInput(Guid ProductCategoryId, string ProductName, int Quantity, string? Notes);
+public record UpdateOrderItemInput(Guid ProductCategoryId, string? ProductName, int Quantity, string? Notes);
 public record UpdateOrderComplexityInput(Guid ItemId, Guid ProcessId, ComplexityType Complexity);
 public record UpdateOrderSpecialRequestAdd(Guid ItemId, Guid SpecialRequestTypeId);
 public record UpdateOrderSpecialRequestRemove(Guid ItemId, Guid SpecialRequestId);

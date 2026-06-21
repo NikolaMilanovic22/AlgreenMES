@@ -1,13 +1,22 @@
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using AlGreenMES.Modules.Tenancy.Api.Requests;
+using AlGreenMES.Modules.Tenancy.Application.Commands.BlockTenant;
 using AlGreenMES.Modules.Tenancy.Application.Commands.CreateTenant;
+using AlGreenMES.Modules.Tenancy.Application.Commands.CreateTenantPayment;
+using AlGreenMES.Modules.Tenancy.Application.Commands.DeleteTenantPayment;
 using AlGreenMES.Modules.Tenancy.Application.Commands.SetTenantLogo;
+using AlGreenMES.Modules.Tenancy.Application.Commands.UnblockTenant;
 using AlGreenMES.Modules.Tenancy.Application.Commands.UpdateTenant;
+using AlGreenMES.Modules.Tenancy.Application.Commands.UpdateTenantFeatures;
+using AlGreenMES.Modules.Tenancy.Application.Commands.UpdateTenantPayment;
 using AlGreenMES.Modules.Tenancy.Application.Commands.UpdateTenantSettings;
+using AlGreenMES.Modules.Tenancy.Application.Queries.GetAllPayments;
 using AlGreenMES.Modules.Tenancy.Application.Queries.GetTenantById;
+using AlGreenMES.Modules.Tenancy.Application.Queries.GetTenantPayments;
 using AlGreenMES.Modules.Tenancy.Application.Queries.GetTenants;
 using AlGreenMES.Modules.Tenancy.Application.Queries.GetTenantSettings;
 using AlGreenMES.Modules.Tenancy.Application.Services;
+using AlGreenMES.BuildingBlocks.Common.Authorization;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -19,6 +28,13 @@ namespace AlGreenMES.Modules.Tenancy.Api.Controllers;
 // endpoints below are open to every tenant member (read settings) and
 // the tenant's own Admin (write settings) — those would conflict with
 // a class-level `RequireSuperAdmin` policy.
+//
+// [AllowSuperAdminWrite] is applied PER ACTION too — only on the
+// platform-level writes a SuperAdmin owns (tenant CRUD, tenant settings
+// addressed by id). The `me/*` writes are tenant-Admin territory and
+// must NOT be opted out, so a SuperAdmin browsing a foreign tenant gets
+// blocked by SuperAdminReadOnlyMiddleware (the whole point of the
+// tenantless model).
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
@@ -72,6 +88,7 @@ public class TenantsController : ControllerBase
 
     [HttpPost]
     [Authorize(Policy = "RequireSuperAdmin")]
+    [AllowSuperAdminWrite]
     public async Task<IActionResult> CreateTenant([FromBody] CreateTenantRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new CreateTenantCommand(
@@ -83,10 +100,11 @@ public class TenantsController : ControllerBase
 
     [HttpPut("{id:guid}")]
     [Authorize(Policy = "RequireSuperAdmin")]
+    [AllowSuperAdminWrite]
     public async Task<IActionResult> UpdateTenant(Guid id, [FromBody] UpdateTenantRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new UpdateTenantCommand(
-            id, request.Name, request.IsActive,
+            id, request.Name,
             request.DefaultWarningDays, request.DefaultCriticalDays,
             request.WarningColor, request.CriticalColor), cancellationToken);
         return Ok(result);
@@ -102,6 +120,7 @@ public class TenantsController : ControllerBase
 
     [HttpPut("{id:guid}/settings")]
     [Authorize(Policy = "RequireSuperAdmin")]
+    [AllowSuperAdminWrite]
     public async Task<IActionResult> UpdateTenantSettings(Guid id, [FromBody] UpdateTenantSettingsRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new UpdateTenantSettingsCommand(
@@ -126,7 +145,7 @@ public class TenantsController : ControllerBase
     // ─────────────────────────────────────────────────────────────────────
 
     [HttpGet("me/settings")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator,SalesManager,Department,Magacioner")]
+    [Authorize(Roles = RoleGroups.AnyAuthenticated)]
     public async Task<IActionResult> GetMyTenantSettings(CancellationToken cancellationToken)
     {
         var tenantId = _tenantService.GetCurrentTenantId();
@@ -135,7 +154,7 @@ public class TenantsController : ControllerBase
     }
 
     [HttpPut("me/settings")]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = RoleGroups.AdminUp)]
     public async Task<IActionResult> UpdateMyTenantSettings([FromBody] UpdateTenantSettingsRequest request, CancellationToken cancellationToken)
     {
         var tenantId = _tenantService.GetCurrentTenantId();
@@ -149,7 +168,7 @@ public class TenantsController : ControllerBase
     }
 
     [HttpGet("me")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator,SalesManager,Department,Magacioner")]
+    [Authorize(Roles = RoleGroups.AnyAuthenticated)]
     public async Task<IActionResult> GetMyTenant(CancellationToken cancellationToken)
     {
         var tenantId = _tenantService.GetCurrentTenantId();
@@ -165,7 +184,7 @@ public class TenantsController : ControllerBase
     // render the logo regardless of role.
 
     [HttpPost("me/logo")]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = RoleGroups.AdminUp)]
     [RequestSizeLimit(5 * 1024 * 1024)]
     public async Task<IActionResult> UploadMyLogo(IFormFile file, CancellationToken cancellationToken)
     {
@@ -196,7 +215,7 @@ public class TenantsController : ControllerBase
     }
 
     [HttpGet("me/logo")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator,SalesManager,Department,Magacioner")]
+    [Authorize(Roles = RoleGroups.AnyAuthenticated)]
     public async Task<IActionResult> GetMyLogo(CancellationToken cancellationToken)
     {
         var tenantId = _tenantService.GetCurrentTenantId();
@@ -212,7 +231,7 @@ public class TenantsController : ControllerBase
     }
 
     [HttpDelete("me/logo")]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = RoleGroups.AdminUp)]
     public async Task<IActionResult> DeleteMyLogo(CancellationToken cancellationToken)
     {
         var tenantId = _tenantService.GetCurrentTenantId();
@@ -221,6 +240,130 @@ public class TenantsController : ControllerBase
             await _logoStorage.DeleteAsync(tenant.LogoUrl, cancellationToken);
 
         var result = await _mediator.Send(new SetTenantLogoCommand(tenantId, null), cancellationToken);
+        return Ok(result);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Naplata (billing) — SuperAdmin-only. Tenant Admins never see these.
+    // Payments are free-form date ranges so monthly / quarterly / annual
+    // subscriptions all fit. Blocking flips Tenant.IsActive, which the
+    // login flow rejects with TENANT_BLOCKED.
+    // ─────────────────────────────────────────────────────────────────────
+
+    [HttpGet("{id:guid}/payments")]
+    [Authorize(Policy = "RequireSuperAdmin")]
+    public async Task<IActionResult> GetTenantPayments(Guid id, CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(new GetTenantPaymentsQuery(id), cancellationToken);
+        return Ok(result);
+    }
+
+    // Saša 18.06.2026: tenant Admin gets a read-only view of their own
+    // company's billing history so they can confirm "did our last
+    // payment register". Tenant resolved from the JWT; no mutation
+    // endpoints exposed on /me (Add/Edit/Delete stay SuperAdmin-only).
+    [HttpGet("me/payments")]
+    [Authorize(Roles = RoleGroups.AdminUp)]
+    public async Task<IActionResult> GetMyPayments(CancellationToken cancellationToken)
+    {
+        var tenantId = _tenantService.GetCurrentTenantId();
+        var result = await _mediator.Send(new GetTenantPaymentsQuery(tenantId), cancellationToken);
+        return Ok(result);
+    }
+
+
+    // Saša 17.06.2026: cross-tenant payments view for the SA "Sve uplate"
+    // page. Filters: tenant, paid-at date range, currency. Tenant name +
+    // code denormalised onto each row.
+    [HttpGet("payments")]
+    [Authorize(Policy = "RequireSuperAdmin")]
+    public async Task<IActionResult> GetAllPayments(
+        [FromQuery] Guid? tenantId,
+        [FromQuery] DateTime? paidFrom,
+        [FromQuery] DateTime? paidTo,
+        [FromQuery] string? currency,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50,
+        [FromQuery] string? sortBy = null,
+        [FromQuery] string? sortDirection = null,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await _mediator.Send(new GetAllPaymentsQuery(
+            tenantId, paidFrom, paidTo, currency,
+            page, pageSize, sortBy, sortDirection), cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpPost("{id:guid}/payments")]
+    [Authorize(Policy = "RequireSuperAdmin")]
+    [AllowSuperAdminWrite]
+    public async Task<IActionResult> CreateTenantPayment(Guid id, [FromBody] CreateTenantPaymentRequest request, CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(new CreateTenantPaymentCommand(
+            id,
+            request.PeriodStart,
+            request.PeriodEnd,
+            request.Amount,
+            request.Currency,
+            request.PaidAt,
+            request.InvoiceNumber,
+            request.Notes), cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpPut("{id:guid}/payments/{paymentId:guid}")]
+    [Authorize(Policy = "RequireSuperAdmin")]
+    [AllowSuperAdminWrite]
+    public async Task<IActionResult> UpdateTenantPayment(Guid id, Guid paymentId, [FromBody] CreateTenantPaymentRequest request, CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(new UpdateTenantPaymentCommand(
+            id,
+            paymentId,
+            request.PeriodStart,
+            request.PeriodEnd,
+            request.Amount,
+            request.Currency,
+            request.PaidAt,
+            request.InvoiceNumber,
+            request.Notes), cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpDelete("{id:guid}/payments/{paymentId:guid}")]
+    [Authorize(Policy = "RequireSuperAdmin")]
+    [AllowSuperAdminWrite]
+    public async Task<IActionResult> DeleteTenantPayment(Guid id, Guid paymentId, CancellationToken cancellationToken)
+    {
+        await _mediator.Send(new DeleteTenantPaymentCommand(id, paymentId), cancellationToken);
+        return NoContent();
+    }
+
+    [HttpPost("{id:guid}/block")]
+    [Authorize(Policy = "RequireSuperAdmin")]
+    [AllowSuperAdminWrite]
+    public async Task<IActionResult> BlockTenant(Guid id, [FromBody] BlockTenantRequest request, CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(new BlockTenantCommand(id, request.Reason), cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpPost("{id:guid}/unblock")]
+    [Authorize(Policy = "RequireSuperAdmin")]
+    [AllowSuperAdminWrite]
+    public async Task<IActionResult> UnblockTenant(Guid id, CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(new UnblockTenantCommand(id), cancellationToken);
+        return Ok(result);
+    }
+
+    // Saša 17.06.2026: SA-only feature toggle. List of feature keys the
+    // SA has disabled for this tenant. Empty = everything enabled.
+    [HttpPut("{id:guid}/features")]
+    [Authorize(Policy = "RequireSuperAdmin")]
+    [AllowSuperAdminWrite]
+    public async Task<IActionResult> UpdateTenantFeatures(Guid id, [FromBody] UpdateTenantFeaturesRequest request, CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(new UpdateTenantFeaturesCommand(id, request.DisabledFeatures ?? new List<string>()), cancellationToken);
         return Ok(result);
     }
 }

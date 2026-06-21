@@ -1,6 +1,7 @@
 using AlGreenMES.BuildingBlocks.Common.Exceptions;
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using AlGreenMES.Modules.Identity.Application.Interfaces;
+using AlGreenMES.Modules.Identity.Application.Services;
 using AlGreenMES.Modules.Identity.Domain.Entities;
 using AlGreenMES.Modules.Identity.Domain.Repositories;
 using MediatR;
@@ -25,10 +26,15 @@ public class DeleteUserCommandHandler : IRequestHandler<DeleteUserCommand, Unit>
 
     public async Task<Unit> Handle(DeleteUserCommand request, CancellationToken cancellationToken)
     {
-        var user = await _userRepository.GetByIdAsync(request.UserId, cancellationToken)
+        // Unfiltered lookup so the handler can locate tenantless SuperAdmins
+        // and apply the peer-SA guard below. The tenant boundary for non-SA
+        // targets is enforced explicitly a few lines down.
+        var user = await _userRepository.GetByIdWithProcessesIgnoreFiltersAsync(request.UserId, cancellationToken)
             ?? throw new NotFoundException("User", request.UserId);
 
         var callerUserId = _currentUser.GetCurrentUserId();
+
+        UserAuthorizationGuards.RequireSameTenantOrSuperAdminTarget(_currentUser, user);
 
         // Sprint 3.0 F-2a — cannot delete yourself. Even a SuperAdmin should
         // not delete their own row in a single click; demote first or have
@@ -48,7 +54,7 @@ public class DeleteUserCommandHandler : IRequestHandler<DeleteUserCommand, Unit>
         // (tenant lockout, same scenario as F-1).
         if (user.Role == UserRole.Admin)
         {
-            var remainingAdmins = await _userRepository.CountActiveByRoleAsync(user.TenantId, UserRole.Admin, cancellationToken);
+            var remainingAdmins = await _userRepository.CountActiveByRoleAsync(user.TenantIdRequired, UserRole.Admin, cancellationToken);
             var effectiveRemaining = user.IsActive ? remainingAdmins - 1 : remainingAdmins;
             if (effectiveRemaining <= 0)
                 throw new DomainException("LAST_ADMIN_REMOVAL", "Cannot remove the last active Admin from the tenant.");

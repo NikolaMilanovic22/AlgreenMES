@@ -2,6 +2,7 @@ using AlGreenMES.BuildingBlocks.Common.Exceptions;
 using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using AlGreenMES.Modules.Identity.Application.DTOs;
 using AlGreenMES.Modules.Identity.Application.Interfaces;
+using AlGreenMES.Modules.Identity.Application.Services;
 using AlGreenMES.Modules.Identity.Domain.Entities;
 using AlGreenMES.Modules.Identity.Domain.Repositories;
 using Mapster;
@@ -33,13 +34,18 @@ public class UpdateUserCommandHandler : IRequestHandler<UpdateUserCommand, UserD
 
     public async Task<UserDto> Handle(UpdateUserCommand request, CancellationToken cancellationToken)
     {
-        var user = await _userRepository.GetByIdWithProcessesAsync(request.Id, cancellationToken)
+        // Unfiltered lookup so the handler can locate tenantless SuperAdmins
+        // and apply the peer-SA guard below. The tenant boundary for non-SA
+        // targets is enforced explicitly a few lines down.
+        var user = await _userRepository.GetByIdWithProcessesIgnoreFiltersAsync(request.Id, cancellationToken)
             ?? throw new NotFoundException("User", request.Id);
 
         var oldRole = user.Role;
         var isRoleChange = request.Role != oldRole;
-        var isCallerSuperAdmin = _currentUser.IsInRole("SuperAdmin");
+        var isCallerSuperAdmin = _currentUser.IsSuperAdmin;
         var callerUserId = _currentUser.GetCurrentUserId();
+
+        UserAuthorizationGuards.RequireSameTenantOrSuperAdminTarget(_currentUser, user);
 
         // Peer SuperAdmin protection (Milos 15.06.2026). No SuperAdmin can
         // edit another SuperAdmin's record — only their own. This shuts down
@@ -73,7 +79,7 @@ public class UpdateUserCommandHandler : IRequestHandler<UpdateUserCommand, UserD
         // governance role.
         if (oldRole == UserRole.Admin && request.Role != UserRole.Admin)
         {
-            var remainingAdmins = await _userRepository.CountActiveByRoleAsync(user.TenantId, UserRole.Admin, cancellationToken);
+            var remainingAdmins = await _userRepository.CountActiveByRoleAsync(user.TenantIdRequired, UserRole.Admin, cancellationToken);
             // The target is included in remainingAdmins if currently active.
             // After demotion the count drops by 1 — block if that would hit 0.
             var effectiveRemaining = user.IsActive ? remainingAdmins - 1 : remainingAdmins;
@@ -112,7 +118,7 @@ public class UpdateUserCommandHandler : IRequestHandler<UpdateUserCommand, UserD
         {
             var changedByUserId = _currentUser.GetCurrentUserId();
             var logEntry = UserRoleChangeLog.Create(
-                user.TenantId, user.Id, oldRole, request.Role, changedByUserId, DateTime.UtcNow);
+                user.TenantIdRequired, user.Id, oldRole, request.Role, changedByUserId, DateTime.UtcNow);
             await _roleChangeLogRepository.AddAsync(logEntry, cancellationToken);
         }
 

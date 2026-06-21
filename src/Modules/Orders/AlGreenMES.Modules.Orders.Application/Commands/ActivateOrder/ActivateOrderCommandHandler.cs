@@ -47,7 +47,7 @@ public class ActivateOrderCommandHandler : IRequestHandler<ActivateOrderCommand,
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         await _eventService.NotifyOrderActivatedAsync(
-            new OrderActivatedEvent(order.Id, order.OrderNumber, order.TenantId), cancellationToken);
+            new OrderActivatedEvent(order.Id, order.OrderNumber, order.TenantIdRequired), cancellationToken);
 
         return Unit.Value;
     }

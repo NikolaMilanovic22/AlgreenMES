@@ -1,4 +1,5 @@
 using AlGreenMES.BuildingBlocks.Common.Exceptions;
+using AlGreenMES.BuildingBlocks.Common.Authorization;
 using AlGreenMES.Modules.Identity.Api.Requests;
 using AlGreenMES.Modules.Identity.Application.Commands.ChangePassword;
 using AlGreenMES.Modules.Identity.Application.Commands.CreateUser;
@@ -35,7 +36,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpGet]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager")]
+    [Authorize(Roles = RoleGroups.ManagerUp)]
     public async Task<IActionResult> GetUsers(
         [FromQuery] UserRole? role,
         [FromQuery] bool? isActive,
@@ -76,7 +77,7 @@ public class UsersController : ControllerBase
     // on the FE — peer-protection guards in Update/Delete/ResetPassword keep
     // it that way even if the FE skips the role check.
     [HttpGet("super-admins")]
-    [Authorize(Roles = "SuperAdmin")]
+    [Authorize(Roles = RoleGroups.SuperAdminOnly)]
     public async Task<IActionResult> GetSuperAdmins(CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new GetSuperAdminsQuery(), cancellationToken);
@@ -84,7 +85,8 @@ public class UsersController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = RoleGroups.AdminUp)]
+    [AllowSuperAdminWrite]
     public async Task<IActionResult> CreateUser([FromBody] CreateUserRequest request, CancellationToken cancellationToken)
     {
         // Tenant override (request.TenantId) is allowed only for SuperAdmin
@@ -94,7 +96,7 @@ public class UsersController : ControllerBase
         Guid tenantId;
         if (request.TenantId.HasValue && request.TenantId.Value != Guid.Empty)
         {
-            if (!User.IsInRole("SuperAdmin"))
+            if (!User.IsInRole(RoleNames.SuperAdmin))
                 throw new ForbiddenException(
                     "FORBIDDEN_TENANT_OVERRIDE",
                     "Only SuperAdmin can create users in another tenant.");
@@ -120,7 +122,8 @@ public class UsersController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = RoleGroups.AdminUp)]
+    [AllowSuperAdminWrite]
     public async Task<IActionResult> UpdateUser(Guid id, [FromBody] UpdateUserRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -136,7 +139,7 @@ public class UsersController : ControllerBase
     /// never had their role changed) and that's a valid response.
     /// </summary>
     [HttpGet("{id:guid}/role-history")]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = RoleGroups.AdminUp)]
     public async Task<IActionResult> GetRoleHistory(Guid id, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(new GetUserRoleHistoryQuery(id), cancellationToken);
@@ -149,7 +152,7 @@ public class UsersController : ControllerBase
     /// whole audit log in one call. Same authz gate as the role history.
     /// </summary>
     [HttpGet("{id:guid}/login-history")]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = RoleGroups.AdminUp)]
     public async Task<IActionResult> GetLoginHistory(Guid id, [FromQuery] int limit = 20, CancellationToken cancellationToken = default)
     {
         var result = await _mediator.Send(new GetUserLoginHistoryQuery(id, limit), cancellationToken);
@@ -157,6 +160,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/change-password")]
+    [AllowSuperAdminWrite]
     public async Task<IActionResult> ChangePassword(Guid id, [FromBody] ChangePasswordRequest request, CancellationToken cancellationToken)
     {
         await _mediator.Send(
@@ -167,7 +171,8 @@ public class UsersController : ControllerBase
     }
 
     [HttpPost("{id:guid}/reset-password")]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = RoleGroups.AdminUp)]
+    [AllowSuperAdminWrite]
     public async Task<IActionResult> ResetPassword(Guid id, [FromBody] ResetPasswordRequest request, CancellationToken cancellationToken)
     {
         await _mediator.Send(
@@ -178,7 +183,8 @@ public class UsersController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = RoleGroups.AdminUp)]
+    [AllowSuperAdminWrite]
     public async Task<IActionResult> DeleteUser(Guid id, CancellationToken cancellationToken)
     {
         var currentUserId = User.FindFirstValue(JwtRegisteredClaimNames.Sub);

@@ -15,4 +15,4 @@ public record GetDeliveryComplianceQuery(
     DateTime? From,
     DateTime? To,
     ReportGranularity Granularity,
-    List<OrderType>? OrderTypes) : IRequest<DeliveryComplianceReportDto>;
+    List<string>? OrderTypes) : IRequest<DeliveryComplianceReportDto>;

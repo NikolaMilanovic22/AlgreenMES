@@ -61,6 +61,35 @@ public class User : AuditableEntity
 
     public static User Create(Guid tenantId, string email, string passwordHash, string firstName, string lastName, UserRole role)
     {
+        // Block this overload from being used to seed a SuperAdmin. SAs are
+        // tenantless (Milos 16.06.2026); callers must use the dedicated
+        // CreateSuperAdmin factory which doesn't take a tenant. Without
+        // this guard, a stray "Role = SuperAdmin" on the normal path would
+        // create a SuperAdmin pinned to a specific tenant — the exact
+        // model we just got rid of.
+        if (role == UserRole.SuperAdmin)
+            throw new DomainException(
+                "INVALID_ROLE_FOR_TENANTED_USER",
+                "SuperAdmin users are tenantless; use CreateSuperAdmin instead.");
+
+        return CreateCore(tenantId, email, passwordHash, firstName, lastName, role);
+    }
+
+    /// <summary>
+    /// Tenantless factory for platform-level SuperAdmin users (Milos
+    /// 16.06.2026 — tenantless SA model). The user's TenantId is null so
+    /// tenant-scoped query filters (e.g. /api/users) automatically exclude
+    /// them, and the SuperAdminReadOnly middleware blocks all writes
+    /// except those explicitly allow-listed.
+    /// </summary>
+    public static User CreateSuperAdmin(string email, string passwordHash, string firstName, string lastName)
+    {
+        var user = CreateCore(tenantId: null, email, passwordHash, firstName, lastName, UserRole.SuperAdmin);
+        return user;
+    }
+
+    private static User CreateCore(Guid? tenantId, string email, string passwordHash, string firstName, string lastName, UserRole role)
+    {
         if (string.IsNullOrWhiteSpace(email))
             throw new DomainException("USER_EMAIL_REQUIRED", "User email is required.");
 

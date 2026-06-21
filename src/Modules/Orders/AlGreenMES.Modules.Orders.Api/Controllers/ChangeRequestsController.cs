@@ -9,6 +9,7 @@ using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using AlGreenMES.BuildingBlocks.Common.Authorization;
 
 namespace AlGreenMES.Modules.Orders.Api.Controllers;
 
@@ -79,7 +80,7 @@ public class ChangeRequestsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,SalesManager")]
+    [Authorize(Roles = RoleGroups.ManagerOrSales)]
     public async Task<IActionResult> CreateChangeRequest([FromBody] CreateChangeRequestRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -89,7 +90,7 @@ public class ChangeRequestsController : ControllerBase
     }
 
     [HttpPost("{id:guid}/approve")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator")]
+    [Authorize(Roles = RoleGroups.CoordinatorUp)]
     public async Task<IActionResult> ApproveChangeRequest(Guid id, [FromBody] HandleChangeRequestRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
@@ -99,7 +100,7 @@ public class ChangeRequestsController : ControllerBase
     }
 
     [HttpPost("{id:guid}/reject")]
-    [Authorize(Roles = "SuperAdmin,Admin,Manager,Coordinator")]
+    [Authorize(Roles = RoleGroups.CoordinatorUp)]
     public async Task<IActionResult> RejectChangeRequest(Guid id, [FromBody] HandleChangeRequestRequest request, CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(

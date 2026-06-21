@@ -54,7 +54,7 @@ public class OrderItem : AuditableEntity
         if (_specialRequests.Any(sr => sr.SpecialRequestTypeId == specialRequestTypeId))
             throw new DomainException("DUPLICATE_REQUEST", "Special request already added.");
 
-        _specialRequests.Add(new OrderItemSpecialRequest(TenantId, Id, specialRequestTypeId));
+        _specialRequests.Add(new OrderItemSpecialRequest(TenantIdRequired, Id, specialRequestTypeId));
     }
 
     public void RemoveSpecialRequest(Guid specialRequestTypeId)
@@ -69,7 +69,7 @@ public class OrderItem : AuditableEntity
         if (_processes.Any(p => p.ProcessId == processId))
             throw new DomainException("DUPLICATE_PROCESS", "Process already added.");
 
-        var process = OrderItemProcess.Create(TenantId, Id, processId, complexity, overridden);
+        var process = OrderItemProcess.Create(TenantIdRequired, Id, processId, complexity, overridden);
         _processes.Add(process);
         return process;
     }
