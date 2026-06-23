@@ -8,6 +8,60 @@ Mirrored to `easy-mes-be` (skyhard) — keep both in sync when editing.
 
 ---
 
+## 2026-06-23 — OrderType custom-code activate bug (follow-up to 20.06.2026 refactor)
+
+### Fixed
+- **Bug from Saša (23.06.2026)**: orders with admin-created OrderType
+  codes (e.g. "Novi") couldn't be activated — POST `/orders/{id}/activate`
+  returned 200 but the FE refetch surfaced as "narudžbina nije nađena."
+  Root cause: `OrderDto.OrderType` and `OrderDetailDto.OrderType` were
+  still typed as the C# `OrderType` enum after the 20.06.2026 refactor
+  changed `Order.OrderType` to `string`. Mapster silently coerced
+  unknown string codes to `Standard` (enum value 0) on the GET-back,
+  corrupting the response payload and breaking the FE order detail
+  query.
+
+### Changed
+- `OrderDto.OrderType` and `OrderDetailDto.OrderType` are now `string`,
+  matching the domain entity. The "free-form OrderType" refactor is now
+  consistent across all 4 DTOs (`OrderMasterViewDto` and the two
+  Reports DTOs were already `string` from the original change).
+
+### Removed
+- Deleted `Domain.Enums.OrderType` (the dead 4-value enum left behind
+  by the 20.06.2026 refactor). Verified zero references across `src/`
+  and `tests/` first — removing it means nobody can accidentally
+  reimport it and reintroduce the same coercion bug class.
+- Codebase-wide audit confirmed CLEAN: no other DTOs declare a
+  property as an enum where the matching entity field is `string`.
+
+### Tests
+- 3 new integration tests in `OrdersTests.cs` lock the regression:
+  - `CreateOrder_WithCustomOrderTypeCode_RoundtripsCodeUnchanged` —
+    POST `/orders` with custom code → GET → both responses preserve it.
+  - `ActivateOrder_WithCustomOrderTypeCode_Succeeds` — the exact Saša
+    flow: seed an order + item + process with a custom code, POST
+    `/activate`, GET back, assert 204 + Status=Active + code preserved.
+  - `GetOrderById_WithCustomOrderTypeCode_DoesNotCoerceToStandard` —
+    surgical Mapster regression guard.
+- `TestDataSeeder.SeedOrderTypeAsync` helper added for seeding a custom
+  OrderType beyond the 4 defaults; `SeedOrderAsync` /
+  `SeedOrderWithProcessesAsync` now take an optional `orderType` param.
+
+### Process lesson (durable rule, saved as memory)
+- The 20.06.2026 refactor was marked "done" on a build-clean +
+  tests-green check, but missed two DTOs in the same folder I was
+  editing. Build-clean ≠ done for refactors where Mapster /
+  serializers sit in the path. Saved
+  `feedback-self-audit-before-claiming-done.md` to grep all callers /
+  sibling DTOs / shared-types and trace one full runtime request
+  before claiming completion next time. The dropped "Testcontainers
+  quirk" test from yesterday was also a red flag I dismissed instead
+  of investigating — the 500 it threw was probably this bug
+  manifesting.
+
+---
+
 ## 2026-06-20 — OrderType: admins can create custom types beyond the original 4 (Saša)
 
 ### Fixed
