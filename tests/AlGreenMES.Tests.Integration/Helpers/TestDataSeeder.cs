@@ -138,7 +138,8 @@ public static class TestDataSeeder
         AlgreenWebApplicationFactory factory,
         Guid tenantId,
         Guid createdByUserId,
-        string? orderNumber = null)
+        string? orderNumber = null,
+        string orderType = "Standard")
     {
         using var scope = factory.Services.CreateScope();
         var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
@@ -149,13 +150,35 @@ public static class TestDataSeeder
             number,
             DateTime.UtcNow.AddDays(7),
             priority: 3,
-            "Standard",
+            orderType,
             createdByUserId,
             notes: null);
 
         ordersDb.Orders.Add(order);
         await ordersDb.SaveChangesAsync();
         return order.Id;
+    }
+
+    /// <summary>
+    /// Seeds an additional per-tenant OrderType row beyond the 4 defaults
+    /// (Standard/Repair/Complaint/Rework) that SeedTenantWithUserAsync
+    /// already creates. Used by tests that exercise the admin-created
+    /// custom-code path — Saša bug 23.06.2026: orders with a custom
+    /// OrderType code couldn't be activated because two response DTOs
+    /// still typed OrderType as the C# enum, so Mapster silently
+    /// coerced unknown codes to Standard.
+    /// </summary>
+    public static async Task SeedOrderTypeAsync(
+        AlgreenWebApplicationFactory factory,
+        Guid tenantId,
+        string code,
+        string? name = null)
+    {
+        using var scope = factory.Services.CreateScope();
+        var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
+        ordersDb.OrderTypes.Add(AlGreenMES.Modules.Orders.Domain.Entities.OrderTypes.OrderType.Create(
+            tenantId, code, name ?? code, allowsManualProcesses: false));
+        await ordersDb.SaveChangesAsync();
     }
 
     public static async Task<Guid> SeedProcessAsync(
@@ -292,7 +315,8 @@ public static class TestDataSeeder
         IReadOnlyList<Guid> processIds,
         IReadOnlyList<ProcessStatus> processStatuses,
         DateTime? deliveryDate = null,
-        DateTime? completedAtOverride = null)
+        DateTime? completedAtOverride = null,
+        string orderType = "Standard")
     {
         if (processIds.Count != processStatuses.Count)
             throw new ArgumentException("processIds and processStatuses must match length");
@@ -305,7 +329,7 @@ public static class TestDataSeeder
             $"ORD-{Guid.NewGuid():N}".Substring(0, 16),
             deliveryDate ?? DateTime.UtcNow.AddDays(7),
             priority: 3,
-            "Standard",
+            orderType,
             createdByUserId,
             notes: null);
         var item = order.AddItem(productCategoryId, productName: null, quantity: 1);
