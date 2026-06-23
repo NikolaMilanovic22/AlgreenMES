@@ -611,6 +611,81 @@ public static class TestDataSeeder
         return log.Id;
     }
 
+    /// <summary>
+    /// Bumps an existing order to a specific status via ExecuteUpdateAsync.
+    /// Many workflow tests need the parent order in Active state before the
+    /// process-level endpoint will accept the request; some need Cancelled
+    /// or Paused. This is the single helper for that, mirroring the pattern
+    /// used in StartProcessWorkTests.SetParentOrderActiveAsync.
+    /// </summary>
+    public static async Task SetOrderStatusAsync(
+        AlgreenWebApplicationFactory factory,
+        Guid orderId,
+        OrderStatus status)
+    {
+        using var scope = factory.Services.CreateScope();
+        var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
+        await ordersDb.Orders
+            .IgnoreQueryFilters()
+            .Where(o => o.Id == orderId)
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, status));
+    }
+
+    /// <summary>
+    /// Adds a SubProcess template to an existing production Process AND
+    /// adds a corresponding OrderItemSubProcess to an existing OIP. Returns
+    /// the OISP id. The OISP starts Pending; callers can start/complete it
+    /// via the API or call entity methods directly for setup.
+    ///
+    /// Implementation note: uses raw SQL INSERTs rather than the entity-
+    /// level AddSubProcess factories. Bojan tried 03.06.2026 to write
+    /// this seeder using the entity navigation pattern and hit
+    /// DbUpdateConcurrencyException every time — there's an EF 9 + Npgsql
+    /// quirk around adding to a child collection on a freshly-loaded
+    /// parent that pre-exists in another scope. Raw SQL sidesteps the
+    /// change-tracker entirely. Safe here because this is test-only
+    /// setup; production handlers go through the entity factories so the
+    /// domain invariants still apply where they matter.
+    /// </summary>
+    public static async Task<Guid> SeedOrderItemSubProcessAsync(
+        AlgreenWebApplicationFactory factory,
+        Guid orderItemProcessId,
+        Guid processId,
+        string? subProcessName = null)
+    {
+        using var scope = factory.Services.CreateScope();
+        var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
+        var productionDb = scope.ServiceProvider.GetRequiredService<ProductionDbContext>();
+
+        // Pull tenant_id from the existing Process row to keep the seeded
+        // children consistent with their parents.
+        var tenantId = await productionDb.Processes
+            .IgnoreQueryFilters()
+            .Where(p => p.Id == processId)
+            .Select(p => p.TenantId)
+            .SingleAsync();
+
+        var subProcessId = Guid.NewGuid();
+        var name = subProcessName ?? $"SP-{Guid.NewGuid():N}".Substring(0, 10);
+        var now = DateTime.UtcNow;
+
+        await productionDb.Database.ExecuteSqlRawAsync(
+            @"INSERT INTO production.sub_processes
+                (id, tenant_id, process_id, name, sequence_order, is_active, created_at, updated_at)
+              VALUES ({0}, {1}, {2}, {3}, {4}, true, {5}, {5})",
+            subProcessId, tenantId!, processId, name, 1, now);
+
+        var oispId = Guid.NewGuid();
+        await ordersDb.Database.ExecuteSqlRawAsync(
+            @"INSERT INTO orders.order_item_sub_processes
+                (id, tenant_id, order_item_process_id, sub_process_id, status,
+                 total_duration_minutes, is_withdrawn, created_at)
+              VALUES ({0}, {1}, {2}, {3}, 'Pending', 0, false, {4})",
+            oispId, tenantId!, orderItemProcessId, subProcessId, now);
+
+        return oispId;
+    }
+
     public static async Task<Guid> SeedNotificationAsync(
         AlgreenWebApplicationFactory factory,
         Guid tenantId,
