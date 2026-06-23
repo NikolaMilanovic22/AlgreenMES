@@ -133,6 +133,15 @@ public class OrderItemProcess : TenantEntity
 
     public void Complete()
     {
+        // Status guard added 23.06.2026 after NegativePathGuardTests
+        // discovered that a Pending or Completed process could be silently
+        // re-marked Completed (with TotalDurationMinutes=0 in the Pending
+        // case, corrupting reports + letting tablet workers fake work
+        // they never started). Only InProgress can transition to Completed
+        // — Blocked must Unblock first, Pending must Start first.
+        if (Status != ProcessStatus.InProgress)
+            throw new DomainException("INVALID_STATUS", "Can only complete in-progress processes.");
+
         if (_subProcesses.Any() && !_subProcesses.All(sp => sp.Status == SubProcessStatus.Completed || sp.Status == SubProcessStatus.Withdrawn))
             throw new DomainException("SUBPROCESSES_NOT_COMPLETE", "All sub-processes must be completed first.");
 
