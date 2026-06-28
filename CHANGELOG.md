@@ -8,6 +8,57 @@ Mirrored to `easy-mes-be` (skyhard) — keep both in sync when editing.
 
 ---
 
+## 2026-06-28 — Notification unread-count cap + Sentry pilot activation
+
+### Performance
+- **Unread-count endpoint capped at 100.** Sentry weekly report
+  27.06.2026 flagged `GET /api/Notifications/unread-count` p95 latency
+  climbing 82→259ms. Root cause: alblue staging accumulated 300+ unread
+  notifications per manager/coord because virtually nobody clicks the
+  bell to mark them read; the `COUNT(*)` query cost grows linearly
+  with the unread table. The FE `<Badge>` truncates display to "99+"
+  for any count > 99 anyway, so returning the exact 326 was wasted
+  work that just gets visually truncated. `NotificationRepository.
+  GetUnreadCountAsync` now adds `LIMIT 100` → constant-time response
+  regardless of how many unread sit in the table.
+
+### Observability
+- **Sentry activated on algreen pilot (`environment:algreen-pilot`).**
+  Original deploy-script comment said "dormant until Sprint 3 ships";
+  that gate is now met. Both environments now use the same DSN (sky-hard
+  org, mes-api project) — events distinguished by environment tag.
+  Pre-staged config in `/opt/algreen/api/appsettings.Production.json`
+  (no in-repo change — production-only); BE picked up after `systemctl
+  restart algreen-api`. Pipeline verified end-to-end (transactions
+  flowing, synthetic test event indexed, alert rule fired). Mile's
+  production environment now has the same error visibility as
+  Bojan/Sale's staging.
+
+### Security hygiene
+- **nginx scan-probe blocking** on both droplets. `/etc/nginx/snippets/
+  scan-block.conf` returns 444 for `.env`, `.git`, `.aws`, `.ssh`,
+  `wp-admin`, `wp-login.php`, `xmlrpc.php`, `phpmyadmin`,
+  `administrator/index.php`. Bots scanning for misconfig files
+  (`GET /api/.env` showed up 7×/week in Sentry transactions) no
+  longer reach the .NET app, don't pollute Sentry telemetry, and
+  don't fill access logs. Real `/api/orders` and other valid paths
+  unaffected.
+
+### Tests
+- `UnreadCount_CapsAt100_WhenUserHasMoreUnread` in
+  `NotificationSideEffectTests.cs` — seeds 150 unread, asserts
+  response is exactly 100. Locks the cap so a future refactor can't
+  silently drop it.
+
+### Related FE change (alblue-tracker-fe + algreen-tracker-fe)
+- Bell popover now auto-mark-all-read on open (after 800ms delay).
+  Treats the underlying cause of the cap fix above: nobody clicks
+  "Mark all read" manually, so unread accumulates indefinitely. The
+  delay lets the user briefly see the unread state before it clears;
+  a quick open/close cancels the timer.
+
+---
+
 ## 2026-06-23 — OrderType custom-code activate bug (follow-up to 20.06.2026 refactor)
 
 ### Fixed
