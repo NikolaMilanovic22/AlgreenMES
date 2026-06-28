@@ -31,8 +31,17 @@ public class NotificationRepository : INotificationRepository
 
     public async Task<int> GetUnreadCountAsync(Guid userId, CancellationToken cancellationToken = default)
     {
+        // Bell badge caps display at "99+" via antd <Badge> defaults, so counting
+        // beyond 100 is wasted work — and grows linearly per user as notifications
+        // accumulate (Sentry weekly report 27.06.2026 flagged unread-count latency
+        // climbing 82→259ms as the alblue staging tenant hit 300+ unread per
+        // manager/coord with virtually no one clicking the bell). LIMIT 100
+        // keeps the response constant-time regardless of how many unread sit
+        // in the table.
         return await _dbContext.Notifications
-            .CountAsync(n => n.UserId == userId && !n.IsRead, cancellationToken);
+            .Where(n => n.UserId == userId && !n.IsRead)
+            .Take(100)
+            .CountAsync(cancellationToken);
     }
 
     public async Task AddAsync(Notification notification, CancellationToken cancellationToken = default)
