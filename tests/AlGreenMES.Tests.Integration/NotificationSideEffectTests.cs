@@ -193,6 +193,37 @@ public class NotificationSideEffectTests : IntegrationTestBase
         recipientIds.Should().NotContain(workerId);
     }
 
+    [Fact]
+    public async Task UnreadCount_CapsAt100_WhenUserHasMoreUnread()
+    {
+        // GET /api/Notifications/unread-count is polled every 60s by every
+        // logged-in user. The handler counts unread rows; without a cap, the
+        // query cost grows linearly per user as notifications accumulate
+        // (Sentry weekly 27.06.2026 caught the trend — alblue staging
+        // tenant had 300+ unread per manager/coord).
+        //
+        // The FE bell badge (antd <Badge> default overflowCount=99) already
+        // truncates display to "99+" for any value > 99, so the BE never
+        // needs to return the true count past 100. This test pins the cap
+        // so a future refactor can't quietly drop it.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        // Seed 150 unread notifications for the admin. Use the existing
+        // helper one row at a time — it's the simplest path; 150 inserts
+        // are still well under a second.
+        for (int i = 0; i < 150; i++)
+        {
+            await TestDataSeeder.SeedNotificationAsync(Factory, t.TenantId, t.UserId, title: $"n-{i}");
+        }
+
+        var resp = await client.GetAsync("/api/Notifications/unread-count");
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await resp.Content.ReadAsStringAsync();
+        var count = int.Parse(body);
+        count.Should().Be(100, "cap is 100 — past that, every increment is wasted work because the FE only shows '99+'");
+    }
+
     // ---------------------------------------------------------------------
     // Shared helpers — keep test bodies focused on the assertion. Mirrors
     // the pattern in WorkflowTests.cs.
