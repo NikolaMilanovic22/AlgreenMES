@@ -82,17 +82,17 @@ public class OrderItemProcess : TenantEntity
     private readonly List<OrderItemProcessLog> _processLogs = new();
     public IReadOnlyCollection<OrderItemProcessLog> ProcessLogs => _processLogs.AsReadOnly();
 
-    private void EndOpenProcessLog()
+    private void EndOpenProcessLog(DateTime? occurredAt = null)
     {
         var open = _processLogs.FirstOrDefault(l => l.EndTime == null);
-        open?.End();
+        open?.End(occurredAt);
     }
 
-    private void StartProcessLog(Guid userId)
+    private void StartProcessLog(Guid userId, DateTime? occurredAt = null)
     {
         // Defensive: end any stray open log first (shouldn't normally happen).
-        EndOpenProcessLog();
-        _processLogs.Add(OrderItemProcessLog.Start(TenantIdRequired, Id, userId));
+        EndOpenProcessLog(occurredAt);
+        _processLogs.Add(OrderItemProcessLog.Start(TenantIdRequired, Id, userId, occurredAt));
     }
 
     private OrderItemProcess()
@@ -113,12 +113,12 @@ public class OrderItemProcess : TenantEntity
         };
     }
 
-    public void Start(Guid? startedByUserId = null)
+    public void Start(Guid? startedByUserId = null, DateTime? occurredAt = null)
     {
         if (Status != ProcessStatus.Pending)
             throw new DomainException("INVALID_STATUS", "Can only start pending processes.");
         Status = ProcessStatus.InProgress;
-        StartedAt = DateTime.UtcNow;
+        StartedAt = occurredAt ?? DateTime.UtcNow;
         StartedByUserId = startedByUserId;
         UpdatedAt = DateTime.UtcNow;
 
@@ -128,10 +128,10 @@ public class OrderItemProcess : TenantEntity
         // selecting the first sub-process and calling StartLog).
         var hasSubProcesses = _subProcesses.Any(sp => !sp.IsWithdrawn);
         if (!hasSubProcesses && startedByUserId.HasValue)
-            StartProcessLog(startedByUserId.Value);
+            StartProcessLog(startedByUserId.Value, occurredAt);
     }
 
-    public void Complete()
+    public void Complete(DateTime? occurredAt = null)
     {
         // Status guard added 23.06.2026 after NegativePathGuardTests
         // discovered that a Pending or Completed process could be silently
@@ -145,18 +145,21 @@ public class OrderItemProcess : TenantEntity
         if (_subProcesses.Any() && !_subProcesses.All(sp => sp.Status == SubProcessStatus.Completed || sp.Status == SubProcessStatus.Withdrawn))
             throw new DomainException("SUBPROCESSES_NOT_COMPLETE", "All sub-processes must be completed first.");
 
-        // Accumulate current session duration before completing
+        // Accumulate current session duration before completing. occurredAt is
+        // the real moment work finished (set when a tablet "complete" was taken
+        // offline and replayed later); null = now.
+        var completionTime = occurredAt ?? DateTime.UtcNow;
         if (!PausedAt.HasValue && (StartedAt.HasValue || ResumedAt.HasValue))
         {
-            var sessionStart = ResumedAt ?? StartedAt ?? DateTime.UtcNow;
-            var sessionSeconds = (int)(DateTime.UtcNow - sessionStart).TotalSeconds;
+            var sessionStart = ResumedAt ?? StartedAt ?? completionTime;
+            var sessionSeconds = (int)(completionTime - sessionStart).TotalSeconds;
             TotalDurationMinutes += sessionSeconds;
         }
 
         Status = ProcessStatus.Completed;
-        CompletedAt = DateTime.UtcNow;
+        CompletedAt = completionTime;
         UpdatedAt = DateTime.UtcNow;
-        EndOpenProcessLog();
+        EndOpenProcessLog(occurredAt);
     }
 
     public void Block(Guid userId, string reason)
@@ -245,21 +248,24 @@ public class OrderItemProcess : TenantEntity
         EndOpenProcessLog();
     }
 
-    public void Pause()
+    public void Pause(DateTime? occurredAt = null)
     {
         if (PausedAt.HasValue)
             throw new DomainException("ALREADY_PAUSED", "Process is already paused.");
 
-        // Accumulate current session duration in seconds
-        var sessionStart = ResumedAt ?? StartedAt ?? DateTime.UtcNow;
-        var sessionSeconds = (int)(DateTime.UtcNow - sessionStart).TotalSeconds;
+        // Accumulate current session duration in seconds. occurredAt is the
+        // real moment the worker paused (set when a tablet "stop" was taken
+        // offline and replayed later); null = now.
+        var pauseTime = occurredAt ?? DateTime.UtcNow;
+        var sessionStart = ResumedAt ?? StartedAt ?? pauseTime;
+        var sessionSeconds = (int)(pauseTime - sessionStart).TotalSeconds;
         TotalDurationMinutes += sessionSeconds;
 
-        PausedAt = DateTime.UtcNow;
+        PausedAt = pauseTime;
         PausedOnLogoutAt = null; // manual pause — not auto-resumable on next login
         ResumedAt = null;
         UpdatedAt = DateTime.UtcNow;
-        EndOpenProcessLog();
+        EndOpenProcessLog(occurredAt);
     }
 
     /// <summary>

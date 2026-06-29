@@ -53,6 +53,7 @@ public static class OrdersInfrastructureServiceRegistration
         services.AddScoped<INotificationRepository, NotificationRepository>();
         services.AddScoped<IPushSubscriptionRepository, PushSubscriptionRepository>();
         services.AddScoped<IOrderAttachmentRepository, OrderAttachmentRepository>();
+        services.AddScoped<IProcessedActionStore, ProcessedActionStore>();
 
         // File Storage
         services.Configure<FileStorageSettings>(configuration.GetSection("FileStorage"));

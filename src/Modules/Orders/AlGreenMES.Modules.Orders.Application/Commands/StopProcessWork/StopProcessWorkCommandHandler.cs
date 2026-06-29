@@ -10,13 +10,16 @@ public class StopProcessWorkCommandHandler : IRequestHandler<StopProcessWorkComm
 {
     private readonly IOrderItemProcessRepository _processRepository;
     private readonly IOrdersUnitOfWork _unitOfWork;
+    private readonly IProcessedActionStore _idempotency;
 
     public StopProcessWorkCommandHandler(
         IOrderItemProcessRepository processRepository,
-        IOrdersUnitOfWork unitOfWork)
+        IOrdersUnitOfWork unitOfWork,
+        IProcessedActionStore idempotency)
     {
         _processRepository = processRepository;
         _unitOfWork = unitOfWork;
+        _idempotency = idempotency;
     }
 
     public async Task<Unit> Handle(StopProcessWorkCommand request, CancellationToken cancellationToken)
@@ -24,6 +27,10 @@ public class StopProcessWorkCommandHandler : IRequestHandler<StopProcessWorkComm
         var process = await _processRepository.GetByIdWithFullDetailsAsync(request.OrderItemProcessId, cancellationToken);
         if (process == null)
             throw new NotFoundException("OrderItemProcess", request.OrderItemProcessId);
+
+        // Idempotency: a replayed stop is a no-op (the time was already booked).
+        if (request.ActionId.HasValue && await _idempotency.ExistsAsync(request.ActionId.Value, cancellationToken))
+            return Unit.Value;
 
         if (process.OrderItem.Order.Status != OrderStatus.Active)
             throw new DomainException("ORDER_NOT_ACTIVE", "Order must be active.");
@@ -43,7 +50,7 @@ public class StopProcessWorkCommandHandler : IRequestHandler<StopProcessWorkComm
                 var openLog = activeSubProcess.GetOpenLog();
                 if (openLog != null)
                 {
-                    openLog.End();
+                    openLog.End(request.OccurredAt);
                     if (openLog.DurationMinutes.HasValue)
                         activeSubProcess.AddDuration(openLog.DurationMinutes.Value);
                 }
@@ -51,8 +58,11 @@ public class StopProcessWorkCommandHandler : IRequestHandler<StopProcessWorkComm
         }
         else
         {
-            process.Pause();
+            process.Pause(request.OccurredAt);
         }
+
+        if (request.ActionId.HasValue)
+            _idempotency.Record(process.TenantIdRequired, request.ActionId.Value, "StopProcessWork");
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 

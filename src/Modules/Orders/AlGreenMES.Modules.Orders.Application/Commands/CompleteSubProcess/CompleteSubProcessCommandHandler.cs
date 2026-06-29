@@ -14,15 +14,18 @@ public class CompleteSubProcessCommandHandler : IRequestHandler<CompleteSubProce
     private readonly IOrderItemSubProcessRepository _subProcessRepository;
     private readonly IOrdersUnitOfWork _unitOfWork;
     private readonly IProductionEventService _eventService;
+    private readonly IProcessedActionStore _idempotency;
 
     public CompleteSubProcessCommandHandler(
         IOrderItemSubProcessRepository subProcessRepository,
         IOrdersUnitOfWork unitOfWork,
-        IProductionEventService eventService)
+        IProductionEventService eventService,
+        IProcessedActionStore idempotency)
     {
         _subProcessRepository = subProcessRepository;
         _unitOfWork = unitOfWork;
         _eventService = eventService;
+        _idempotency = idempotency;
     }
 
     public async Task<OrderItemSubProcessDto> Handle(CompleteSubProcessCommand request, CancellationToken cancellationToken)
@@ -30,6 +33,10 @@ public class CompleteSubProcessCommandHandler : IRequestHandler<CompleteSubProce
         var subProcess = await _subProcessRepository.GetByIdWithFullDetailsAsync(request.OrderItemSubProcessId, cancellationToken);
         if (subProcess == null)
             throw new NotFoundException("OrderItemSubProcess", request.OrderItemSubProcessId);
+
+        // Idempotency: a replayed sub-process complete returns current state.
+        if (request.ActionId.HasValue && await _idempotency.ExistsAsync(request.ActionId.Value, cancellationToken))
+            return subProcess.Adapt<OrderItemSubProcessDto>();
 
         var process = subProcess.OrderItemProcess;
 
@@ -43,7 +50,7 @@ public class CompleteSubProcessCommandHandler : IRequestHandler<CompleteSubProce
         var openLog = subProcess.GetOpenLog();
         if (openLog != null)
         {
-            openLog.End();
+            openLog.End(request.OccurredAt);
             if (openLog.DurationMinutes.HasValue)
                 subProcess.AddDuration(openLog.DurationMinutes.Value);
         }
@@ -68,6 +75,9 @@ public class CompleteSubProcessCommandHandler : IRequestHandler<CompleteSubProce
             process.Complete();
             parentCompleted = true;
         }
+
+        if (request.ActionId.HasValue)
+            _idempotency.Record(subProcess.TenantIdRequired, request.ActionId.Value, "CompleteSubProcess");
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 

@@ -22,14 +22,14 @@ public class SubProcessWorkflowController : ControllerBase
     [HttpPost("{id:guid}/start")]
     public async Task<IActionResult> StartSubProcess(Guid id, [FromBody] StartSubProcessRequest request, CancellationToken cancellationToken)
     {
-        var result = await _mediator.Send(new StartSubProcessCommand(id, request.UserId), cancellationToken);
+        var result = await _mediator.Send(new StartSubProcessCommand(id, request.UserId, request.OccurredAt, request.ActionId), cancellationToken);
         return Ok(result);
     }
 
     [HttpPost("{id:guid}/complete")]
     public async Task<IActionResult> CompleteSubProcess(Guid id, [FromBody] CompleteSubProcessRequest request, CancellationToken cancellationToken)
     {
-        var result = await _mediator.Send(new CompleteSubProcessCommand(id, request.UserId), cancellationToken);
+        var result = await _mediator.Send(new CompleteSubProcessCommand(id, request.UserId, request.OccurredAt, request.ActionId), cancellationToken);
         return Ok(result);
     }
 }

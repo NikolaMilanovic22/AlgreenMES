@@ -30,22 +30,24 @@ public class OrderItemProcessLog : TenantEntity
     {
     }
 
-    public static OrderItemProcessLog Start(Guid tenantId, Guid orderItemProcessId, Guid userId)
+    // occurredAt lets a caller stamp the real moment work started — used when
+    // a tablet action was taken offline and replayed later. Null = now.
+    public static OrderItemProcessLog Start(Guid tenantId, Guid orderItemProcessId, Guid userId, DateTime? occurredAt = null)
     {
         return new OrderItemProcessLog
         {
             TenantId = tenantId,
             OrderItemProcessId = orderItemProcessId,
             UserId = userId,
-            StartTime = DateTime.UtcNow
+            StartTime = occurredAt ?? DateTime.UtcNow
         };
     }
 
-    public void End()
+    public void End(DateTime? occurredAt = null)
     {
         if (EndTime.HasValue)
             throw new DomainException("ALREADY_ENDED", "Process log already ended.");
-        EndTime = DateTime.UtcNow;
+        EndTime = occurredAt ?? DateTime.UtcNow;
         DurationSeconds = (int)(EndTime.Value - StartTime).TotalSeconds;
     }
 }

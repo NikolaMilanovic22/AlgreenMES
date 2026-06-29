@@ -14,15 +14,18 @@ public class StartSubProcessCommandHandler : IRequestHandler<StartSubProcessComm
     private readonly IOrderItemSubProcessRepository _subProcessRepository;
     private readonly IProcessRepository _productionProcessRepository;
     private readonly IOrdersUnitOfWork _unitOfWork;
+    private readonly IProcessedActionStore _idempotency;
 
     public StartSubProcessCommandHandler(
         IOrderItemSubProcessRepository subProcessRepository,
         IProcessRepository productionProcessRepository,
-        IOrdersUnitOfWork unitOfWork)
+        IOrdersUnitOfWork unitOfWork,
+        IProcessedActionStore idempotency)
     {
         _subProcessRepository = subProcessRepository;
         _productionProcessRepository = productionProcessRepository;
         _unitOfWork = unitOfWork;
+        _idempotency = idempotency;
     }
 
     public async Task<OrderItemSubProcessDto> Handle(StartSubProcessCommand request, CancellationToken cancellationToken)
@@ -30,6 +33,10 @@ public class StartSubProcessCommandHandler : IRequestHandler<StartSubProcessComm
         var subProcess = await _subProcessRepository.GetByIdWithFullDetailsAsync(request.OrderItemSubProcessId, cancellationToken);
         if (subProcess == null)
             throw new NotFoundException("OrderItemSubProcess", request.OrderItemSubProcessId);
+
+        // Idempotency: a replayed sub-process start returns current state.
+        if (request.ActionId.HasValue && await _idempotency.ExistsAsync(request.ActionId.Value, cancellationToken))
+            return subProcess.Adapt<OrderItemSubProcessDto>();
 
         var process = subProcess.OrderItemProcess;
 
@@ -59,7 +66,10 @@ public class StartSubProcessCommandHandler : IRequestHandler<StartSubProcessComm
         }
 
         subProcess.Start();
-        subProcess.StartLog(request.UserId);
+        subProcess.StartLog(request.UserId, request.OccurredAt);
+
+        if (request.ActionId.HasValue)
+            _idempotency.Record(subProcess.TenantIdRequired, request.ActionId.Value, "StartSubProcess");
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 

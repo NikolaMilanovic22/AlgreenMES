@@ -18,6 +18,7 @@ public class CompleteProcessCommandHandler : IRequestHandler<CompleteProcessComm
     private readonly IOrderRepository _orderRepository;
     private readonly IOrderAttachmentRepository _attachmentRepository;
     private readonly IFileStorageService _fileStorageService;
+    private readonly IProcessedActionStore _idempotency;
     private readonly ILogger<CompleteProcessCommandHandler> _logger;
 
     public CompleteProcessCommandHandler(
@@ -28,6 +29,7 @@ public class CompleteProcessCommandHandler : IRequestHandler<CompleteProcessComm
         IOrderRepository orderRepository,
         IOrderAttachmentRepository attachmentRepository,
         IFileStorageService fileStorageService,
+        IProcessedActionStore idempotency,
         ILogger<CompleteProcessCommandHandler> logger)
     {
         _orderItemProcessRepository = orderItemProcessRepository;
@@ -37,6 +39,7 @@ public class CompleteProcessCommandHandler : IRequestHandler<CompleteProcessComm
         _orderRepository = orderRepository;
         _attachmentRepository = attachmentRepository;
         _fileStorageService = fileStorageService;
+        _idempotency = idempotency;
         _logger = logger;
     }
 
@@ -46,7 +49,14 @@ public class CompleteProcessCommandHandler : IRequestHandler<CompleteProcessComm
         if (process == null)
             throw new NotFoundException("OrderItemProcess", request.OrderItemProcessId);
 
-        process.Complete();
+        // Idempotency: a replayed complete is a no-op — re-running would throw
+        // "can only complete in-progress processes" since it is already done.
+        if (request.ActionId.HasValue && await _idempotency.ExistsAsync(request.ActionId.Value, cancellationToken))
+            return Unit.Value;
+
+        process.Complete(request.OccurredAt);
+        if (request.ActionId.HasValue)
+            _idempotency.Record(process.TenantIdRequired, request.ActionId.Value, "CompleteProcess");
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         var orderId = process.OrderItem.Order.Id;

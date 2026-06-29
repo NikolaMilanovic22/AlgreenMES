@@ -18,6 +18,7 @@ public class StartProcessWorkCommandHandler : IRequestHandler<StartProcessWorkCo
     private readonly IProductCategoryRepository _categoryRepository;
     private readonly IOrdersUnitOfWork _unitOfWork;
     private readonly IProductionEventService _eventService;
+    private readonly IProcessedActionStore _idempotency;
     private readonly ILogger<StartProcessWorkCommandHandler> _logger;
 
     public StartProcessWorkCommandHandler(
@@ -26,6 +27,7 @@ public class StartProcessWorkCommandHandler : IRequestHandler<StartProcessWorkCo
         IProductCategoryRepository categoryRepository,
         IOrdersUnitOfWork unitOfWork,
         IProductionEventService eventService,
+        IProcessedActionStore idempotency,
         ILogger<StartProcessWorkCommandHandler> logger)
     {
         _processRepository = processRepository;
@@ -33,6 +35,7 @@ public class StartProcessWorkCommandHandler : IRequestHandler<StartProcessWorkCo
         _categoryRepository = categoryRepository;
         _unitOfWork = unitOfWork;
         _eventService = eventService;
+        _idempotency = idempotency;
         _logger = logger;
     }
 
@@ -44,6 +47,12 @@ public class StartProcessWorkCommandHandler : IRequestHandler<StartProcessWorkCo
         var process = await _processRepository.GetByIdWithFullDetailsAsync(request.OrderItemProcessId, cancellationToken);
         if (process == null)
             throw new NotFoundException("OrderItemProcess", request.OrderItemProcessId);
+
+        // Idempotency: a replay of an already-applied start (lost response or
+        // offline queue) returns the current state instead of re-running the
+        // guards (which would throw "can only start pending processes").
+        if (request.ActionId.HasValue && await _idempotency.ExistsAsync(request.ActionId.Value, cancellationToken))
+            return process.Adapt<OrderItemProcessDto>();
 
         _logger.LogInformation("[StartProcess] Found process. Status={Status}, OrderStatus={OrderStatus}, SubProcessCount={SubCount}",
             process.Status, process.OrderItem.Order.Status, process.SubProcesses.Count);
@@ -74,7 +83,7 @@ public class StartProcessWorkCommandHandler : IRequestHandler<StartProcessWorkCo
             }
         }
 
-        process.Start(request.UserId);
+        process.Start(request.UserId, request.OccurredAt);
         _logger.LogInformation("[StartProcess] Process started. Starting first sub-process...");
 
         // Load production process to get SubProcess SequenceOrder for correct ordering
@@ -90,10 +99,13 @@ public class StartProcessWorkCommandHandler : IRequestHandler<StartProcessWorkCo
         if (firstSubProcess != null)
         {
             firstSubProcess.Start();
-            firstSubProcess.StartLog(request.UserId);
+            firstSubProcess.StartLog(request.UserId, request.OccurredAt);
             _logger.LogInformation("[StartProcess] SubProcess {SubId} started with log for user {UserId}",
                 firstSubProcess.Id, request.UserId);
         }
+
+        if (request.ActionId.HasValue)
+            _idempotency.Record(process.TenantIdRequired, request.ActionId.Value, "StartProcessWork");
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
         _logger.LogInformation("[StartProcess] Changes saved. Sending event...");

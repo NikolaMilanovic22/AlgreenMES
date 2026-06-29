@@ -14,6 +14,7 @@ using AlGreenMES.BuildingBlocks.Common.Interfaces;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using AlGreenMES.BuildingBlocks.Common.Authorization;
 
 namespace AlGreenMES.Modules.Orders.Api.Controllers;
@@ -48,9 +49,12 @@ public class ProcessWorkflowController : ControllerBase
     }
 
     [HttpPost("{id:guid}/complete")]
-    public async Task<IActionResult> CompleteProcess(Guid id, CancellationToken cancellationToken)
+    public async Task<IActionResult> CompleteProcess(
+        Guid id,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] CompleteProcessRequest? request,
+        CancellationToken cancellationToken)
     {
-        await _mediator.Send(new CompleteProcessCommand(id), cancellationToken);
+        await _mediator.Send(new CompleteProcessCommand(id, request?.OccurredAt, request?.ActionId), cancellationToken);
         return NoContent();
     }
 
@@ -73,14 +77,14 @@ public class ProcessWorkflowController : ControllerBase
     [HttpPost("{id:guid}/start")]
     public async Task<IActionResult> StartWork(Guid id, [FromBody] StartProcessWorkRequest request, CancellationToken cancellationToken)
     {
-        var result = await _mediator.Send(new StartProcessWorkCommand(id, request.UserId), cancellationToken);
+        var result = await _mediator.Send(new StartProcessWorkCommand(id, request.UserId, request.OccurredAt, request.ActionId), cancellationToken);
         return Ok(result);
     }
 
     [HttpPost("{id:guid}/stop")]
     public async Task<IActionResult> StopWork(Guid id, [FromBody] StopProcessWorkRequest request, CancellationToken cancellationToken)
     {
-        await _mediator.Send(new StopProcessWorkCommand(id, request.UserId), cancellationToken);
+        await _mediator.Send(new StopProcessWorkCommand(id, request.UserId, request.OccurredAt, request.ActionId), cancellationToken);
         return NoContent();
     }
 
