@@ -1062,7 +1062,7 @@ public class ReportingQueryService : IReportingQueryService
             .ToListAsync(cancellationToken);
 
         var isOvertimeRelogin = earlierAutoClosed.Count > 0;
-        var shiftMatchTime = TimeOnly.FromDateTime(
+        var shiftMatchTime = LocalTimeOfDay(
             isOvertimeRelogin ? earlierAutoClosed[0].CheckInTime : open.CheckInTime);
         var shift = shifts.FirstOrDefault(s => IsTimeInShift(shiftMatchTime, s.StartTime, s.EndTime));
 
@@ -1128,7 +1128,7 @@ public class ReportingQueryService : IReportingQueryService
             .Select(s => new { s.StartTime, s.EndTime, s.MaxOvertimeHours })
             .ToListAsync(cancellationToken);
 
-        var shiftMatchTime = TimeOnly.FromDateTime(earlierAutoClosed[0].CheckInTime);
+        var shiftMatchTime = LocalTimeOfDay(earlierAutoClosed[0].CheckInTime);
         var shift = shifts.FirstOrDefault(s => IsTimeInShift(shiftMatchTime, s.StartTime, s.EndTime));
         if (shift == null)
             return false; // defensive: can't compute a cap, don't block
@@ -1300,7 +1300,7 @@ public class ReportingQueryService : IReportingQueryService
         ShiftConfig? MatchShift(DateTime checkIn)
         {
             if (shiftConfigs.Count == 0) return null;
-            var tod = TimeOnly.FromDateTime(checkIn);
+            var tod = LocalTimeOfDay(checkIn);
             return shiftConfigs.FirstOrDefault(s => IsTimeInShift(tod, s.StartTime, s.EndTime));
         }
 
@@ -1413,6 +1413,23 @@ public class ReportingQueryService : IReportingQueryService
             return checkOut.Value > cap ? cap : checkOut.Value;
 
         return now >= cap ? cap : null;
+    }
+
+    // Shift StartTime/EndTime are stored as the *local* clock values the admin
+    // typed (e.g. 06:00), but CheckInTime is stored UTC (DateTime.UtcNow). To
+    // match a session to a shift we must compare same-zone times — otherwise a
+    // 06:54-local check-in (04:54 UTC) matches the 22:00–06:00 night shift and
+    // every shift-derived number (auto-logout cap, break, effective time,
+    // overtime, efficiency) is wrong. Convert UTC → tenant-local before taking
+    // the time-of-day. Hardcoded to Belgrade for now (all current tenants are
+    // Serbia); this should become a per-tenant setting for the white-label case.
+    private static readonly TimeZoneInfo TenantTimeZone =
+        TimeZoneInfo.FindSystemTimeZoneById("Europe/Belgrade");
+
+    private static TimeOnly LocalTimeOfDay(DateTime utc)
+    {
+        var asUtc = DateTime.SpecifyKind(utc, DateTimeKind.Utc);
+        return TimeOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(asUtc, TenantTimeZone));
     }
 
     private static bool IsTimeInShift(TimeOnly t, TimeOnly start, TimeOnly end)

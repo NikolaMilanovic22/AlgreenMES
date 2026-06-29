@@ -50,6 +50,42 @@ public class WorkerHoursReportTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task WorkerHours_matches_shift_by_local_time_not_utc()
+    {
+        // Regression for the pilot bug (Bojan 29.06.2026): CheckInTime is UTC
+        // but shift times are local. A day worker checks in 06:30 Belgrade
+        // (04:30 UTC, summer) and works 8h. The 06:00–14:00 shift has a 30-min
+        // break, so effective must be 480−30 = 450. Pre-fix, the UTC time-of-day
+        // (04:30) matched no day shift, so no break was subtracted (effective
+        // stayed 480) and regular/overtime were mis-split.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Department);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        await TestDataSeeder.SeedShiftAsync(
+            Factory, t.TenantId, name: "Dnevna",
+            startTime: new TimeOnly(6, 0),
+            endTime: new TimeOnly(14, 0),
+            breakMinutes: 30);
+
+        // 2026-06-15 is summer (CEST = UTC+2): 04:30 UTC == 06:30 local.
+        var checkIn = new DateTime(2026, 6, 15, 4, 30, 0, DateTimeKind.Utc);
+        await TestDataSeeder.SeedWorkSessionAsync(
+            Factory, t.TenantId, t.UserId, checkIn, checkIn.AddHours(8)); // 8h worked
+
+        var resp = await client.GetAsync(
+            "/api/reports/worker-hours?from=2026-06-15&to=2026-06-15");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+
+        var worker = doc.RootElement.GetProperty("workers").EnumerateArray()
+            .Single(w => w.GetProperty("userId").GetGuid() == t.UserId);
+
+        worker.GetProperty("totalWorkedMinutes").GetInt32().Should().Be(480);
+        // Break applied → proves the shift matched on LOCAL time (06:30), not UTC (04:30).
+        worker.GetProperty("effectiveMinutes").GetInt32().Should().Be(450);
+    }
+
+    [Fact]
     public async Task WorkerHours_returns_correct_total_for_legit_session()
     {
         var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Department);
