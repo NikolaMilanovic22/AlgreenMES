@@ -46,7 +46,13 @@ public class GetTabletIncomingQueryHandler : IRequestHandler<GetTabletIncomingQu
         var specialRequestTypes = await _specialRequestTypeRepository.GetByTenantIdAsync(request.TenantId, cancellationToken);
         var srLookup = specialRequestTypes.ToDictionary(s => s.Id, s => s.Name);
 
-        // Batch-load attachment counts once (same N+1 avoidance as the queue).
+        // Batch-load processes + categories + attachment counts once, instead of
+        // per-iteration N+1 queries (same fix already applied to queue/active).
+        var prodProcessLookup = (await _processRepository.GetByIdsAsync(userProcessIds, cancellationToken))
+            .ToDictionary(p => p.Id);
+        var categoryIds = orders.SelectMany(o => o.Items).Select(i => i.ProductCategoryId).Distinct().ToList();
+        var categoryLookup = (await _categoryRepository.GetByIdsWithDetailsAsync(categoryIds, cancellationToken))
+            .ToDictionary(c => c.Id);
         var attachmentCounts = AttachmentCountLookup.Build(
             await _attachmentRepository.GetRefsByOrderIdsAsync(
                 orders.Select(o => o.Id).ToList(), cancellationToken));
@@ -55,8 +61,7 @@ public class GetTabletIncomingQueryHandler : IRequestHandler<GetTabletIncomingQu
 
         foreach (var processId in userProcessIds)
         {
-            var prodProcess = await _processRepository.GetByIdAsync(processId, cancellationToken);
-            if (prodProcess == null) continue;
+            if (!prodProcessLookup.TryGetValue(processId, out var prodProcess)) continue;
 
             var items = new List<TabletIncomingDto>();
 
@@ -70,7 +75,7 @@ public class GetTabletIncomingQueryHandler : IRequestHandler<GetTabletIncomingQu
 
                 foreach (var item in order.Items)
                 {
-                    var category = await _categoryRepository.GetByIdWithDetailsAsync(item.ProductCategoryId, cancellationToken);
+                    categoryLookup.TryGetValue(item.ProductCategoryId, out var category);
 
                     var specialRequestNames = item.SpecialRequests
                         .Select(sr => srLookup.GetValueOrDefault(sr.SpecialRequestTypeId, ""))
