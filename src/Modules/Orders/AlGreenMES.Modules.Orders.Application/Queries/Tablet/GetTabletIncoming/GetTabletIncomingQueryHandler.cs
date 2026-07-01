@@ -15,19 +15,22 @@ public class GetTabletIncomingQueryHandler : IRequestHandler<GetTabletIncomingQu
     private readonly ISpecialRequestTypeRepository _specialRequestTypeRepository;
     private readonly IUserRepository _userRepository;
     private readonly IProcessRepository _processRepository;
+    private readonly IOrderAttachmentRepository _attachmentRepository;
 
     public GetTabletIncomingQueryHandler(
         IOrderRepository orderRepository,
         IProductCategoryRepository categoryRepository,
         ISpecialRequestTypeRepository specialRequestTypeRepository,
         IUserRepository userRepository,
-        IProcessRepository processRepository)
+        IProcessRepository processRepository,
+        IOrderAttachmentRepository attachmentRepository)
     {
         _orderRepository = orderRepository;
         _categoryRepository = categoryRepository;
         _specialRequestTypeRepository = specialRequestTypeRepository;
         _userRepository = userRepository;
         _processRepository = processRepository;
+        _attachmentRepository = attachmentRepository;
     }
 
     public async Task<IReadOnlyList<ProcessGroupDto<TabletIncomingDto>>> Handle(GetTabletIncomingQuery request, CancellationToken cancellationToken)
@@ -42,6 +45,11 @@ public class GetTabletIncomingQueryHandler : IRequestHandler<GetTabletIncomingQu
 
         var specialRequestTypes = await _specialRequestTypeRepository.GetByTenantIdAsync(request.TenantId, cancellationToken);
         var srLookup = specialRequestTypes.ToDictionary(s => s.Id, s => s.Name);
+
+        // Batch-load attachment counts once (same N+1 avoidance as the queue).
+        var attachmentCounts = AttachmentCountLookup.Build(
+            await _attachmentRepository.GetRefsByOrderIdsAsync(
+                orders.Select(o => o.Id).ToList(), cancellationToken));
 
         var result = new List<ProcessGroupDto<TabletIncomingDto>>();
 
@@ -110,7 +118,8 @@ public class GetTabletIncomingQueryHandler : IRequestHandler<GetTabletIncomingQu
                             SpecialRequestNames = specialRequestNames,
                             CompletedProcessCount = completedCount,
                             TotalProcessCount = totalCount,
-                            BlockingProcesses = blockingProcesses
+                            BlockingProcesses = blockingProcesses,
+                            AttachmentCount = attachmentCounts.CountFor(order.Id, item.Id)
                         };
                         items.Add(dto);
                     }

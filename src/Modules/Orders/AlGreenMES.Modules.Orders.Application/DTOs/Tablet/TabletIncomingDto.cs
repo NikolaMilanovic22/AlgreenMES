@@ -20,7 +20,8 @@ public record TabletIncomingDto(
     int TotalProcessCount,
     List<BlockingProcessDto> BlockingProcesses,
     string? OrderNotes,
-    string? ItemNotes);
+    string? ItemNotes,
+    int AttachmentCount = 0);
 
 public record BlockingProcessDto(
     Guid OrderItemProcessId,
