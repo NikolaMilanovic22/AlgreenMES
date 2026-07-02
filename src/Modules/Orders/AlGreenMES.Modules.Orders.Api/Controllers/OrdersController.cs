@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Net.Http.Headers;
 using AlGreenMES.Modules.Orders.Api.Requests;
 using AlGreenMES.Modules.Orders.Application.Commands.ActivateOrder;
 using AlGreenMES.Modules.Orders.Application.Commands.AddOrderItem;
@@ -321,10 +322,16 @@ public class OrdersController : ControllerBase
         if (stream == null)
             return NotFound();
 
-        // For PDFs, serve inline so browsers/apps can display them directly
+        // For PDFs, serve inline so browsers/apps can display them directly.
         if (attachment.ContentType == "application/pdf")
         {
-            Response.Headers["Content-Disposition"] = $"inline; filename=\"{attachment.OriginalFileName}\"";
+            // Build via ContentDispositionHeaderValue so non-ASCII filenames
+            // (Serbian š/č/ć/ž/đ) get RFC 5987-encoded. A raw filename in the
+            // header throws "Invalid non-ASCII character in header" (0x0161 = š)
+            // — the exact 500 workers hit downloading a PDF with such a name.
+            var contentDisposition = new ContentDispositionHeaderValue("inline");
+            contentDisposition.SetHttpFileName(attachment.OriginalFileName);
+            Response.Headers[HeaderNames.ContentDisposition] = contentDisposition.ToString();
             return File(stream, attachment.ContentType);
         }
         return File(stream, attachment.ContentType, attachment.OriginalFileName);
