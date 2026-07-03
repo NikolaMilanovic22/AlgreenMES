@@ -26,6 +26,13 @@ public class ImportMaterialsCommandHandler : IRequestHandler<ImportMaterialsComm
         var seenInBatch = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var created = 0;
 
+        // Preload existing codes once instead of one EXISTS query per row (N+1 on
+        // bulk import). Ordinal (case-sensitive) to match ExistsByKodAsync's
+        // `m.Code == trimmed` exact comparison.
+        var existingCodes = new HashSet<string>(
+            (await _repo.GetByTenantIdAsync(request.TenantId, cancellationToken)).Select(m => m.Code),
+            StringComparer.Ordinal);
+
         for (var i = 0; i < request.Items.Count; i++)
         {
             var item = request.Items[i];
@@ -44,7 +51,7 @@ public class ImportMaterialsCommandHandler : IRequestHandler<ImportMaterialsComm
                 continue;
             }
 
-            if (await _repo.ExistsByKodAsync(trimmedCode, request.TenantId, excludingId: null, cancellationToken))
+            if (existingCodes.Contains(trimmedCode))
             {
                 errors.Add(new ImportMaterialError(rowIndex, trimmedCode, "Materijal sa istim kodom već postoji."));
                 continue;

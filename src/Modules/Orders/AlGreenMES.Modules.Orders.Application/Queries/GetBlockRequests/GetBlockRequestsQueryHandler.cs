@@ -32,12 +32,8 @@ public class GetBlockRequestsQueryHandler : IRequestHandler<GetBlockRequestsQuer
             .Select(b => b.OrderItemProcess!.ProcessId)
             .Distinct()
             .ToList();
-        var processNames = new Dictionary<Guid, string>();
-        foreach (var pid in processIds)
-        {
-            var proc = await _processRepository.GetByIdAsync(pid, cancellationToken);
-            if (proc != null) processNames[pid] = proc.Name;
-        }
+        var processNames = (await _processRepository.GetByIdsAsync(processIds, cancellationToken))
+            .ToDictionary(p => p.Id, p => p.Name);
 
         return result.MapItems(b =>
         {

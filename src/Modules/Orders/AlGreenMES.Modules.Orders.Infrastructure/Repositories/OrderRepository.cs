@@ -77,6 +77,7 @@ public class OrderRepository : IOrderRepository
         // splitting the JOIN cardinality blows up across SubProcesses × Logs
         // × SpecialRequests.
         return await _dbContext.Orders
+            .AsNoTracking() // pure read → skip change-tracker snapshots (hot tablet-poll path)
             .AsSplitQuery()
             .Include(o => o.Items)
                 .ThenInclude(i => i.Processes)
@@ -149,6 +150,7 @@ public class OrderRepository : IOrderRepository
         // the MultipleCollectionIncludeWarning seen in startup logs and the
         // main reason GET /api/orders/master-view averaged ~1.96s.
         var query = _dbContext.Orders
+            .AsNoTracking() // pure read (master-view) → skip change-tracker snapshots
             .AsSplitQuery()
             .Include(o => o.Items)
                 .ThenInclude(i => i.Processes)
