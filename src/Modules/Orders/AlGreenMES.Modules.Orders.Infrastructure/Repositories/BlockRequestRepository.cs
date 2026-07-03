@@ -85,6 +85,9 @@ public class BlockRequestRepository : IBlockRequestRepository
             case "updatedat":
                 sorted = isDescending ? query.OrderByDescending(br => br.UpdatedAt) : query.OrderBy(br => br.UpdatedAt);
                 break;
+            case "handledat":
+                sorted = isDescending ? query.OrderByDescending(br => br.HandledAt) : query.OrderBy(br => br.HandledAt);
+                break;
             default: // createdAt desc
                 sorted = isDescending ? query.OrderByDescending(br => br.CreatedAt) : query.OrderBy(br => br.CreatedAt);
                 break;
