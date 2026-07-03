@@ -11,8 +11,9 @@ Mirrored to `easy-mes-be` (skyhard) — keep both in sync when editing.
 ## 2026-07-03 — Code audit fixes
 
 Multi-agent audit of BE + FE; findings verified against code before acting.
-All shipped to **alblue staging**; the timezone fix below is isolated in its
-own commit for a clean pilot cherry-pick (still pending pilot deploy).
+All shipped to **alblue staging**; the timezone fix below was also cherry-picked
+to **master + deployed to the algreen pilot** (03.07, after hours; integration
+suite green 267/0/3 first). The perf/FE items stay on the mirror wave.
 
 ### Fixed
 - **4th shift-match site converted to tenant-local.** `ComputeEffectiveSessionEnd`
