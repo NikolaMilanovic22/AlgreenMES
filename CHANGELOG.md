@@ -8,6 +8,123 @@ Mirrored to `easy-mes-be` (skyhard) — keep both in sync when editing.
 
 ---
 
+## 2026-07-03 — Code audit fixes
+
+Multi-agent audit of BE + FE; findings verified against code before acting.
+All shipped to **alblue staging**; the timezone fix below is isolated in its
+own commit for a clean pilot cherry-pick (still pending pilot deploy).
+
+### Fixed
+- **4th shift-match site converted to tenant-local.** `ComputeEffectiveSessionEnd`
+  (the auto-logout-cap / effective-end calc, live for every "Sati radnika" row)
+  still took the time-of-day of a **UTC** check-in vs local shift windows — the
+  same class fixed at 3 sites on 29.06 but missed here. Morning check-ins failed
+  to match their shift → session not capped → inflated hours. One-line
+  `LocalTimeOfDay(checkIn)` swap.
+- **"Handled At" column sorts/displays `handledAt`, not `updatedAt`** (Change &
+  Block Requests). A merely-touched request bumped `updatedAt`, so the grid
+  showed a handled date for never-handled requests and disagreed with the export.
+  Added a `handledat` sort case to `ChangeRequestRepository` + `BlockRequestRepository`.
+
+### Performance
+- **`AsNoTracking`** on `GetActiveOrdersWithProcessesAsync` +
+  `GetPagedWithProcessesAsync` — pure-read graph loads on the tablet-poll +
+  master-view hot paths (verified no mutation callers).
+- **N+1 removed** in `GetBlockRequests` (batch process names via `GetByIdsAsync`)
+  and `ImportMaterials` (preload existing codes into a HashSet instead of one
+  `EXISTS` per imported row).
+
+### Frontend (no dedicated FE changelog — recorded here)
+- **Blob-URL leak** in pending-attachment thumbnails: 4 inline
+  `URL.createObjectURL(file)` calls in render leaked a blob every re-render
+  (drawers re-render on a 10s tick). New `PendingFileThumbnail` mints once +
+  revokes on unmount.
+- **Tablet stale process names**: `ProcessDefinitionUpdated` invalidated
+  `['processes-batch']` (matched nothing); now invalidates the real keys so an
+  admin's process rename/reorder reaches workers.
+- **Admin process lookups** fetched only `pageSize: 100` (Users /
+  SpecialRequestTypes / ProductCategories) → processes past 100 rendered as
+  `? — ?`; bumped to the repo's fetch-all convention.
+
+### Verified NOT bugs (audit)
+- Timestamps: columns are `timestamptz` → Npgsql `Kind=Utc` → `Z`-suffixed JSON
+  → FE parses UTC correctly.
+- `TotalDurationMinutes` / `DurationMinutes` actually hold **seconds** (systemic
+  misnomer); FE treats them as seconds, so no 60× bug. `AddDuration(int minutes)`
+  is a landmine (param named minutes, receives seconds) — do not "fix" by ×60.
+
+## 2026-07-02 — Attachment download: non-ASCII filename fix (pilot)
+
+### Fixed
+- **`GET /api/Orders/{id}/attachments/{id}/download` returned 500 for filenames
+  with Serbian letters** (`0x0161` = š, also č/ć/ž/đ). The inline-PDF branch
+  hand-built `Content-Disposition` with the raw filename, which ASP.NET rejects.
+  Now built via `ContentDispositionHeaderValue.SetHttpFileName` (RFC 5987),
+  matching the non-PDF `File(...)` path. Sentry **MES-API-F**, `algreen-pilot`.
+  Shipped **staging + pilot**.
+
+## 2026-07-01 — Tablet N+1 elimination + FE observability + order-type data
+
+### Performance
+- **Tablet queue/incoming/active N+1 removed.** Each order card fetched its own
+  `/attachments` just for a count badge; the count now rides in the queue/
+  incoming/active response (batched `GetRefsByOrderIdsAsync` +
+  `AttachmentCountLookup`, mirroring the FE indicator's filter). Also removes the
+  per-card fetch when offline. (staging)
+
+### Observability
+- **FE source maps uploaded to Sentry on deploy** (`@sentry/vite-plugin`, gated
+  on `SENTRY_AUTH_TOKEN` in `~/.zshrc` / passed by `deploy.sh`) → FE error stack
+  traces are readable instead of minified.
+- **Client-noise filter on the Serilog Sentry sink** (`Program.IsClientNoise`):
+  drops request cancellations (incl. wrapped in an EF connection error) +
+  client `BadHttpRequestException`, which were paging as errors. Genuine failures
+  still reach Sentry. (staging)
+- Sentry MCP connected for triage (org `sky-hard`, project `mes-api`, `de` region);
+  4 stale benign issues resolved.
+
+### Data
+- **Order-type code casing normalized** on both tenant DBs (legacy PascalCase
+  `Standard`/`Complaint`/`Repair`/`Rework` → uppercase config `Code`), so the
+  "Vremena po procesu" order-type filter matches. No new drift — the create-flow
+  has validated against the config + stored the uppercase code since 20.06.
+
+## 2026-06-29 — Shift-matching timezone fix + pilot cleanup
+
+### Fixed
+- **Shift matching now converts the UTC check-in → tenant-local (Europe/Belgrade)
+  before matching against local shift `StartTime`/`EndTime`.** `CheckInTime` is
+  stored UTC but shift times are the local clock values the admin typed; matching
+  by time-of-day without conversion mis-assigned shifts (a 06:54-local / 04:54-UTC
+  check-in matched the 22:00–06:00 night shift), which broke auto-logout, break
+  subtraction, effective time, overtime split and efficiency — reported by Bojan
+  on the pilot. `ReportingQueryService.LocalTimeOfDay()` applied at 3 match sites
+  (active-session/auto-logout, overtime quota, worker-hours). Regression test
+  `WorkerHours_matches_shift_by_local_time_not_utc`. **Belgrade is hardcoded —
+  must become per-tenant for the white-label case.** Shipped staging + pilot.
+
+### Data / config (pilot)
+- Capped stale never-closed `work_sessions` (worker forgot to log out → 45h
+  "overtime") to a sane bound; backup taken first.
+- Removed phantom seed shifts (Jutarnja/Popodnevna/Noćna, created 18.03) that were
+  active in the DB but hidden from the UI and interfering with matching — leaving
+  only "I smena" + "II smena" per Bojan.
+
+### Frontend (staging-only)
+- **Self-heal work session** (`useEnsureWorkSession`, tablet): creates a session
+  for an authenticated worker who has none (the "logged-in but no prijava" limbo),
+  strictly complementary to `AutoLogoutBanner`.
+
+## ~late 2026-06 — Tablet offline writes (staging-only, flag-gated)
+
+### Added
+- **Offline-first tablet writes** behind `VITE_OFFLINE_WRITES` (default **off**):
+  workflow actions queue locally and replay on reconnect with optimistic UI, so
+  workers keep going when factory wifi drops. BE dedupes replays via a
+  `ProcessedAction` entity (unique `action_id`) + `occurredAt` on 5 workflow
+  commands (migration `AddProcessedActions`). On **alblue staging only** —
+  `master`/pilot has neither the flag nor the migration. Removable via the flag.
+
 ## 2026-06-28 — Notification unread-count cap + Sentry pilot activation
 
 ### Performance
