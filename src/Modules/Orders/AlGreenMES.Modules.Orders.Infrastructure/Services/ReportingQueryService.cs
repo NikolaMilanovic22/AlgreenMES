@@ -1402,7 +1402,11 @@ public class ReportingQueryService : IReportingQueryService
     {
         if (shifts.Count == 0) return checkOut;
 
-        var checkInTime = TimeOnly.FromDateTime(checkIn);
+        // Convert UTC check-in → tenant-local before matching against local shift
+        // windows (same fix as the other match sites; this 4th one was missed in
+        // the original timezone fix, so the cap/effective-end used UTC time-of-day
+        // and matched the wrong shift for early-morning check-ins).
+        var checkInTime = LocalTimeOfDay(checkIn);
         var shift = shifts.FirstOrDefault(s => IsTimeInShift(checkInTime, s.StartTime, s.EndTime));
         if (shift == null) return checkOut;
 
