@@ -8,7 +8,7 @@ Mirrored to `easy-mes-be` (skyhard) — keep both in sync when editing.
 
 ---
 
-## 2026-07-10 — Report tweaks (Saša) + notifications auto-mark
+## 2026-07-09 — Report tweaks (Saša) + notifications auto-mark
 
 Shipped to alblue staging.
 
