@@ -264,8 +264,10 @@ public class ReportingQueryService : IReportingQueryService
 
                 var totalEffective = g.Sum(x => x.EffectiveMinutes);
                 var totalActive = g.Sum(x => x.ActiveMinutes);
+                // Cap efficiency at 100%: active can exceed effective for a short
+                // no-break session, but >100% isn't meaningful to show (Saša 08.07.2026).
                 var efficiency = totalEffective > 0
-                    ? Math.Round(100.0 * totalActive / totalEffective, 1)
+                    ? Math.Min(Math.Round(100.0 * totalActive / totalEffective, 1), 100.0)
                     : 0.0;
 
                 // Per-worker overtime excludes per-day overtimes ≤ 30 min — these
@@ -965,8 +967,10 @@ public class ReportingQueryService : IReportingQueryService
             {
                 var totalEffective = g.Sum(x => x.EffectiveMinutes);
                 var totalActive = g.Sum(x => x.ActiveMinutes);
+                // Cap efficiency at 100%: active can exceed effective for a short
+                // no-break session, but >100% isn't meaningful to show (Saša 08.07.2026).
                 var efficiency = totalEffective > 0
-                    ? Math.Round(100.0 * totalActive / totalEffective, 1)
+                    ? Math.Min(Math.Round(100.0 * totalActive / totalEffective, 1), 100.0)
                     : 0.0;
                 return new WorkEfficiencyRowDto(
                     g.Key.UserId,
