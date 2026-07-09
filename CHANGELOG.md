@@ -8,6 +8,37 @@ Mirrored to `easy-mes-be` (skyhard) — keep both in sync when editing.
 
 ---
 
+## 2026-07-10 — Report tweaks (Saša) + notifications auto-mark
+
+Shipped to alblue staging.
+
+### Fixed
+- **Operator efficiency capped at 100%.** A short session with no break could yield
+  active > effective → efficiency >100%, which Saša flagged as illogical (08.07).
+  `Math.Min(…, 100.0)` at both calc sites (daily detail + per-worker aggregate) in
+  `ReportingQueryService`. FE just renders the BE value.
+
+### Changed
+- **"Trajanje izrade proizvoda po narudžbini" table moved to the bottom** of the
+  Vremena procesa → Trajanje izrade proizvoda tab (below the aggregate + chart),
+  per Saša. Its export button + a bottom margin on the chart card moved with it.
+- **Tablet notifications page auto-marks-all-read** ~800ms after a worker opens it
+  (fires ONCE per visit, ref-guarded; nothing is deleted). Same rationale as the
+  dashboard bell — workers never tap "mark all", so the unread badge grew
+  meaningless.
+- **Dashboard bell auto-mark no longer restarts its timer** when a notification
+  arrives while the popover is open (audit finding — a trickle could defer the
+  mark indefinitely).
+
+### Config (pilot, by Bojan/Saša)
+- Early-arrival gap (workers clocking in before 07:00 → no shift → no auto-logout,
+  ~37% of morning check-ins) resolved by **adding III smena 23:00–07:00** on the
+  Algreen tenant — its cross-midnight window catches pre-07:00 check-ins, and its
+  break/cap match I smena so hours compute the same. **Caveat:** III crosses UTC
+  midnight, so the deferred night-shift date-bucketing audit findings become
+  relevant *if* genuine night-shift work happens (they don't affect early-morning
+  arrivals). Confirm with the client whether a real night shift will run.
+
 ## 2026-07-03 — Code audit fixes
 
 Multi-agent audit of BE + FE; findings verified against code before acting.
