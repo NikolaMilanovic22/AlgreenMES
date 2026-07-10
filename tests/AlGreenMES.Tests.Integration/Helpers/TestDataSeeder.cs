@@ -139,7 +139,8 @@ public static class TestDataSeeder
         Guid tenantId,
         Guid createdByUserId,
         string? orderNumber = null,
-        string orderType = "Standard")
+        string orderType = "Standard",
+        DateTime? deliveryDate = null)
     {
         using var scope = factory.Services.CreateScope();
         var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
@@ -148,7 +149,7 @@ public static class TestDataSeeder
         var order = Order.Create(
             tenantId,
             number,
-            DateTime.UtcNow.AddDays(7),
+            deliveryDate ?? DateTime.UtcNow.AddDays(7),
             priority: 3,
             orderType,
             createdByUserId,

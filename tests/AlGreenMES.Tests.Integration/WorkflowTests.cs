@@ -335,6 +335,132 @@ public class WorkflowTests : IntegrationTestBase
     }
 
     // ---------------------------------------------------------------------
+    // Regression guards flagged by the 09.07.2026 coverage audit — state
+    // transitions whose NEGATIVE / side-effect branches were unpinned.
+    // ---------------------------------------------------------------------
+
+    [Fact]
+    public async Task RestartProcess_ResetTimeFalse_PreservesAccumulatedDuration()
+    {
+        // Re-opening a finished process to add rework must NOT wipe already
+        // recorded time (resetTime=true zeroes it — tested above; resetTime=false
+        // keeps it). Payroll/report impact if this regresses.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var processId = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId);
+        var categoryId = await TestDataSeeder.SeedProductCategoryAsync(Factory, t.TenantId);
+        var oipId = await TestDataSeeder.SeedOrderItemProcessAsync(
+            Factory, t.TenantId, t.UserId, processId, categoryId,
+            ProcessStatus.Completed, totalDurationSeconds: 600);
+        var orderId = await GetParentOrderIdAsync(oipId);
+        await TestDataSeeder.SetOrderStatusAsync(Factory, orderId, OrderStatus.Active);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        var resp = await client.PostAsJsonAsync(
+            $"/api/order-item-processes/{oipId}/restart",
+            new { resetTime = false });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        var oip = await GetOipAsync(oipId);
+        oip.Status.Should().Be(ProcessStatus.InProgress);
+        oip.CompletedAt.Should().BeNull("restart clears the completion stamp");
+        oip.TotalDurationMinutes.Should().Be(600, "resetTime=false must preserve accumulated time");
+    }
+
+    [Fact]
+    public async Task ApproveBlockRequest_AutoApprovesSiblingPendingRequestsOnSameProcess()
+    {
+        // Two workers filing block requests on the same process is common; the
+        // handler auto-approves the other pending request(s) when one is
+        // approved. If this regresses, the second request lingers Pending and a
+        // coordinator chases a phantom.
+        var (t, oipId) = await SeedActiveOrderWithProcessAsync(ProcessStatus.InProgress);
+        var br1 = await TestDataSeeder.SeedBlockRequestAsync(Factory, t.TenantId, oipId, t.UserId);
+        var br2 = await TestDataSeeder.SeedBlockRequestAsync(Factory, t.TenantId, oipId, t.UserId);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        var approve = await client.PostAsJsonAsync(
+            $"/api/block-requests/{br1}/approve",
+            new { handledByUserId = t.UserId, note = "approved by coord" });
+        approve.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var statuses = await GetBlockRequestStatusesAsync(new[] { br1, br2 });
+        statuses.Should().OnlyContain(s => s == RequestStatus.Approved,
+            "approving one block request auto-approves the sibling pending request(s) for the same process");
+        var oip = await GetOipAsync(oipId);
+        oip.Status.Should().Be(ProcessStatus.Blocked);
+    }
+
+    [Fact]
+    public async Task CompleteProcess_WithInProgressSubProcess_IsRejected()
+    {
+        // A parent OIP with sub-processes can only complete when all subs are
+        // done. Completing while a sub timer runs would mark it Completed with
+        // mis-attributed/zero sub time.
+        var (t, oipId, processId) = await SeedActiveOrderWithProcessReturningProcessIdAsync(ProcessStatus.InProgress);
+        var oispId = await TestDataSeeder.SeedOrderItemSubProcessAsync(Factory, oipId, processId);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        // Start the sub-process → InProgress (not complete).
+        (await client.PostAsJsonAsync($"/api/order-item-sub-processes/{oispId}/start",
+            new { userId = t.UserId })).EnsureSuccessStatusCode();
+
+        var resp = await client.PostAsync($"/api/order-item-processes/{oipId}/complete", content: null);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var err = await resp.Content.ReadFromJsonAsync<WfErrorBody>();
+        err!.Error.Code.Should().Be("SUBPROCESSES_NOT_COMPLETE");
+        var oip = await GetOipAsync(oipId);
+        oip.Status.Should().Be(ProcessStatus.InProgress, "completion was rejected — parent stays InProgress");
+        oip.CompletedAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task StartProcessWork_WhenDependencyNotMet_IsRejected()
+    {
+        // Core factory sequencing: a process can't start while a category
+        // dependency predecessor is not yet Completed/Withdrawn.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var p1 = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId);
+        var p2 = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId);
+        var categoryId = await TestDataSeeder.SeedProductCategoryAsync(Factory, t.TenantId);
+        await TestDataSeeder.SeedCategoryProcessesAndDepsAsync(
+            Factory, categoryId,
+            new[] { p1, p2 },
+            dependencies: new[] { (p2, p1) }); // p2 depends on p1
+
+        var (orderId, _, oipIds) = await TestDataSeeder.SeedOrderWithProcessesAsync(
+            Factory, t.TenantId, t.UserId, categoryId,
+            processIds: new[] { p1, p2 },
+            processStatuses: new[] { ProcessStatus.Pending, ProcessStatus.Pending });
+        await TestDataSeeder.SetOrderStatusAsync(Factory, orderId, OrderStatus.Active);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        // Start p2 while its predecessor p1 is still Pending → rejected.
+        var resp = await client.PostAsJsonAsync(
+            $"/api/order-item-processes/{oipIds[1]}/start",
+            new { userId = t.UserId });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var err = await resp.Content.ReadFromJsonAsync<WfErrorBody>();
+        err!.Error.Code.Should().Be("DEPENDENCY_NOT_MET");
+    }
+
+    private async Task<List<RequestStatus>> GetBlockRequestStatusesAsync(IEnumerable<Guid> ids)
+    {
+        var idList = ids.ToList();
+        using var scope = Factory.Services.CreateScope();
+        var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
+        return await ordersDb.BlockRequests
+            .IgnoreQueryFilters()
+            .Where(b => idList.Contains(b.Id))
+            .Select(b => b.Status)
+            .ToListAsync();
+    }
+
+    private sealed record WfErrorBody(WfErrorPayload Error);
+    private sealed record WfErrorPayload(string Code, string Message);
+
+    // ---------------------------------------------------------------------
     // Shared setup helpers — keep the per-test bodies focused on the API
     // request + assertion, not the seeding ceremony.
     // ---------------------------------------------------------------------

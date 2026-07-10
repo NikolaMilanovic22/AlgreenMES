@@ -1,8 +1,12 @@
 using System.Net;
 using System.Text.Json;
 using AlGreenMES.Modules.Identity.Domain.Entities;
+using AlGreenMES.Modules.Orders.Domain.Enums;
+using AlGreenMES.Modules.Orders.Infrastructure.Persistence;
 using AlGreenMES.Tests.Integration.Helpers;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace AlGreenMES.Tests.Integration;
@@ -198,5 +202,70 @@ public class WorkEfficiencyReportTests : IntegrationTestBase
         row.GetProperty("effectiveMinutes").GetInt32().Should().Be(960); // shift break = 0
         row.TryGetProperty("uncoveredMinutes", out _).Should().BeTrue();
         row.TryGetProperty("efficiencyPercent", out _).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task WorkEfficiency_caps_efficiency_percent_at_100()
+    {
+        // Saša 08.07.2026 — the Efikasnost report is Aktivno/Efektivno × 100.
+        // Aktivno is raw session-active time; Efektivno subtracts the shift
+        // break. A worker active for the whole session therefore has
+        // active > effective and the raw ratio exceeds 100%, which isn't
+        // meaningful to show. The per-worker row must cap at 100%.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Department);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        await TestDataSeeder.SeedShiftAsync(
+            Factory, t.TenantId,
+            startTime: new TimeOnly(6, 0),
+            endTime: new TimeOnly(14, 0),
+            breakMinutes: 30,        // effective = worked − 30
+            maxOvertimeHours: 6);
+
+        var day = DateTime.UtcNow.Date.AddDays(-1).AddHours(6);
+        // 8h30m session: worked = 510, effective = 480.
+        await TestDataSeeder.SeedWorkSessionAsync(
+            Factory, t.TenantId, t.UserId, day, day.AddMinutes(510));
+
+        // Process log covering the FULL session → active = 510 > effective = 480,
+        // so the raw ratio would be 106.25%.
+        var processId = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId);
+        var categoryId = await TestDataSeeder.SeedProductCategoryAsync(Factory, t.TenantId);
+        var oipId = await TestDataSeeder.SeedOrderItemProcessAsync(
+            Factory, t.TenantId, t.UserId, processId, categoryId, ProcessStatus.InProgress);
+        await SeedProcessLogAsync(t.TenantId, oipId, t.UserId, day, day.AddMinutes(510));
+
+        var from = DateOnly.FromDateTime(day).AddDays(-1);
+        var to = DateOnly.FromDateTime(day).AddDays(1);
+        var resp = await client.GetAsync(
+            $"/api/reports/work-efficiency?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+
+        var row = doc.RootElement.GetProperty("rows").EnumerateArray()
+            .Single(r => r.GetProperty("userId").GetGuid() == t.UserId);
+
+        // Sanity: genuinely the active>effective case.
+        row.GetProperty("activeOnProcessesMinutes").GetInt32().Should().Be(510);
+        row.GetProperty("effectiveMinutes").GetInt32().Should().Be(480);
+        // Efficiency capped — raw would be 106.25%.
+        row.GetProperty("efficiencyPercent").GetDouble().Should().Be(100.0);
+    }
+
+    /// <summary>Helper: seed an OrderItemProcessLog with explicit timestamps
+    /// (mirrors the WorkerHoursReportTests helper — attributes active process
+    /// time to a worker within a session).</summary>
+    private async Task SeedProcessLogAsync(Guid tenantId, Guid oipId, Guid userId, DateTime start, DateTime? end)
+    {
+        using var scope = Factory.Services.CreateScope();
+        var ordersDb = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
+        await ordersDb.Database.ExecuteSqlInterpolatedAsync($@"
+            INSERT INTO orders.order_item_process_logs
+                (id, order_item_process_id, user_id, tenant_id, start_time, end_time, duration_seconds, created_at)
+            VALUES
+                ({Guid.NewGuid()}, {oipId}, {userId}, {tenantId},
+                 {start}, {end},
+                 {(end.HasValue ? (int?)(end.Value - start).TotalSeconds : null)},
+                 NOW())");
     }
 }

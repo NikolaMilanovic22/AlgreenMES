@@ -508,6 +508,179 @@ public class AuthSecurityTests : IntegrationTestBase
         entries!.Should().BeEmpty("a newly-seeded user never had their role mutated");
     }
 
+    // ──────────────────────────────────────────────────────────────────────
+    // Account-active + refresh-token lifecycle (deactivation, rotation, expiry)
+    // ──────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Login_DeactivatedUser_IsRejectedWithUserInactive()
+    {
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        await DeactivateUserAsync(t.UserId);
+
+        var resp = await Client.PostAsJsonAsync("/api/auth/login", new
+        {
+            Email = t.Email,
+            Password = t.Password,
+            TenantCode = t.TenantCode
+        });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var err = await resp.Content.ReadFromJsonAsync<ErrorBody>();
+        err!.Error.Code.Should().Be("USER_INACTIVE");
+    }
+
+    [Fact]
+    public async Task Refresh_AfterUserDeactivated_IsRejected()
+    {
+        // A refresh token belonging to a now-inactive user must not keep minting
+        // access tokens for the rest of the 7-day refresh TTL after the account
+        // is disabled.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var login = await Client.PostAsJsonAsync("/api/auth/login", new
+        {
+            Email = t.Email,
+            Password = t.Password,
+            TenantCode = t.TenantCode
+        });
+        login.EnsureSuccessStatusCode();
+        var tokens = await login.Content.ReadFromJsonAsync<LoginBody>();
+
+        await DeactivateUserAsync(t.UserId);
+
+        var refresh = await Client.PostAsJsonAsync("/api/auth/refresh", new { RefreshToken = tokens!.RefreshToken });
+        refresh.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var err = await refresh.Content.ReadFromJsonAsync<ErrorBody>();
+        err!.Error.Code.Should().Be("USER_INACTIVE");
+    }
+
+    [Fact]
+    public async Task Refresh_RotatesToken_OriginalCannotBeReplayed()
+    {
+        // Rotation is the defense against stolen-refresh-token replay: a
+        // successful refresh revokes the old token and issues a new pair.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var login = await Client.PostAsJsonAsync("/api/auth/login", new
+        {
+            Email = t.Email,
+            Password = t.Password,
+            TenantCode = t.TenantCode
+        });
+        login.EnsureSuccessStatusCode();
+        var first = await login.Content.ReadFromJsonAsync<LoginBody>();
+
+        var r1 = await Client.PostAsJsonAsync("/api/auth/refresh", new { RefreshToken = first!.RefreshToken });
+        r1.EnsureSuccessStatusCode();
+        var second = await r1.Content.ReadFromJsonAsync<LoginBody>();
+
+        // Replaying the ORIGINAL token is rejected (revoked on rotation)…
+        var replay = await Client.PostAsJsonAsync("/api/auth/refresh", new { RefreshToken = first.RefreshToken });
+        replay.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        // …but the newly-issued token still works.
+        var r2 = await Client.PostAsJsonAsync("/api/auth/refresh", new { RefreshToken = second!.RefreshToken });
+        r2.EnsureSuccessStatusCode();
+    }
+
+    [Fact]
+    public async Task Refresh_ExpiredToken_IsRejected()
+    {
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var token = "expired-" + Guid.NewGuid().ToString("N");
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+            db.RefreshTokens.Add(AlGreenMES.Modules.Identity.Domain.Entities.RefreshToken.Create(
+                t.TenantId, t.UserId, token, DateTime.UtcNow.AddDays(-1)));
+            await db.SaveChangesAsync();
+        }
+
+        var refresh = await Client.PostAsJsonAsync("/api/auth/refresh", new { RefreshToken = token });
+        refresh.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var err = await refresh.Content.ReadFromJsonAsync<ErrorBody>();
+        err!.Error.Code.Should().Be("INVALID_REFRESH_TOKEN");
+    }
+
+    [Fact]
+    public async Task Refresh_TokenWithMismatchedTenant_IsRejected()
+    {
+        // Defense-in-depth: for a non-SA user, a refresh token whose TenantId
+        // differs from the user's home tenant is rejected.
+        var (a, b) = await TestDataSeeder.SeedTwoTenantsAsync(Factory);
+        var token = "xtenant-" + Guid.NewGuid().ToString("N");
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+            // Token is for user A but carries tenant B's id.
+            db.RefreshTokens.Add(AlGreenMES.Modules.Identity.Domain.Entities.RefreshToken.Create(
+                b.TenantId, a.UserId, token, DateTime.UtcNow.AddDays(7)));
+            await db.SaveChangesAsync();
+        }
+
+        var refresh = await Client.PostAsJsonAsync("/api/auth/refresh", new { RefreshToken = token });
+        refresh.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task ChangePassword_SuperAdminTargetingAnotherUser_IsForbidden()
+    {
+        // Milos 16.06.2026 — change-password is self-only for EVERY role,
+        // including SuperAdmin (the SA back door was removed). The endpoint
+        // carries [AllowSuperAdminWrite] so the SA request reaches the handler;
+        // the handler's self-only guard is the only thing stopping it.
+        var sa = await TestDataSeeder.SeedTenantWithUserAsync(
+            Factory, role: AlGreenMES.Modules.Identity.Domain.Entities.UserRole.SuperAdmin);
+        var otherId = await TestDataSeeder.SeedAdditionalUserAsync(
+            Factory, sa.TenantId, AlGreenMES.Modules.Identity.Domain.Entities.UserRole.Department);
+
+        var token = await TestDataSeeder.LoginAndGetTokenAsync(Client, sa.Email, sa.Password, sa.TenantCode);
+        Client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        var resp = await Client.PostAsJsonAsync($"/api/users/{otherId}/change-password", new
+        {
+            CurrentPassword = "irrelevant",
+            NewPassword = "NewPass456!"
+        });
+        Client.DefaultRequestHeaders.Authorization = null;
+
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        var err = await resp.Content.ReadFromJsonAsync<ErrorBody>();
+        err!.Error.Code.Should().Be("CHANGE_PASSWORD_NOT_SELF");
+    }
+
+    [Theory]
+    [InlineData("12345678")]  // digit-only → no letter
+    [InlineData("password")]  // letter-only → no digit
+    [InlineData("Ab1")]       // too short (<8)
+    public async Task ChangePassword_WeakNewPassword_IsRejected(string weak)
+    {
+        // BE PasswordRule must actually reject weak passwords on the write path
+        // (the FE claims lockstep, but nothing pinned the server side).
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var token = await TestDataSeeder.LoginAndGetTokenAsync(Client, t.Email, t.Password, t.TenantCode);
+        Client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+        var resp = await Client.PostAsJsonAsync($"/api/users/{t.UserId}/change-password", new
+        {
+            CurrentPassword = t.Password, // correct, so we reach NewPassword validation
+            NewPassword = weak
+        });
+        Client.DefaultRequestHeaders.Authorization = null;
+
+        // FluentValidation failures surface as 422 (domain errors are 400).
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+    }
+
+    private async Task DeactivateUserAsync(Guid userId)
+    {
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+        await db.Users.IgnoreQueryFilters()
+            .Where(u => u.Id == userId)
+            .ExecuteUpdateAsync(s => s.SetProperty(u => u.IsActive, false));
+    }
+
     private sealed record LoginBody(string Token, string RefreshToken);
     private sealed record ErrorBody(ErrorPayload Error);
     private sealed record ErrorPayload(string Code, string Message);

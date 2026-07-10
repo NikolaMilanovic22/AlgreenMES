@@ -67,10 +67,12 @@ public class WebPushService : IWebPushService
         await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task UnsubscribeAsync(string endpoint, CancellationToken cancellationToken = default)
+    public async Task UnsubscribeAsync(Guid userId, string endpoint, CancellationToken cancellationToken = default)
     {
         var subscription = await _subscriptionRepository.FindByEndpointActiveAsync(endpoint, cancellationToken);
-        if (subscription != null)
+        // Only the OWNER may deactivate a subscription — otherwise a caller who
+        // learns another user's endpoint could silently kill their push.
+        if (subscription != null && subscription.UserId == userId)
         {
             subscription.Deactivate();
             await _unitOfWork.SaveChangesAsync(cancellationToken);

@@ -8,6 +8,57 @@ Mirrored to `easy-mes-be` (skyhard) — keep both in sync when editing.
 
 ---
 
+## 2026-07-10 — Test-gap hardening sweep (3 real bug fixes + ~50 tests)
+
+A codebase-wide test-coverage audit (6 module areas) turned up several
+unpinned behaviors + real defects. Fixes and regression tests below; full
+suite now 319 integration + 15 unit, 0 failing.
+
+### Fixed
+- **Efficiency % still showed >100% in the per-DAY rows.** The 08.07 cap fix
+  covered the per-worker summary + the work-efficiency report but MISSED the
+  daily breakdown row (`ReportingQueryService` ~1339). Now `Math.Min(…,100)`
+  at all **three** sites. Pinned by tests on all three.
+- **Security — push subscription user-id hijack.** `PushController.Subscribe`
+  trusted a client-supplied `UserId`, so any authenticated user could register
+  their browser endpoint under another user's id and receive that user's push
+  payloads (order/block content). Now derived from the JWT
+  (`ICurrentUserService`); the DTO field is ignored.
+- **Security — push unsubscribe had no ownership check.** `WebPush.Unsubscribe`
+  deactivated any subscription matching an endpoint regardless of owner. Now
+  scoped to the authenticated caller.
+- **Hardening — `StartProcessWork` dependency guard was dead code.** It reads
+  `orderItem.Processes` to enforce category dependencies, but the repo query
+  never loaded that collection (lazy loading is off), so `DEPENDENCY_NOT_MET`
+  could never fire. Restored via `.Include(oi => oi.Processes)`. **Low impact**:
+  the tablet queue already enforces dependency ordering by visibility
+  (`GetTabletQueueQueryHandler` `allDepsCompleted`), so normal factory flow is
+  unaffected — this only restores the API-level backstop.
+
+### Tests (regression guards, ~50 new methods)
+- auth/security: deactivated login/refresh, refresh rotation + expiry +
+  cross-tenant, SuperAdmin self-only password, user-management role-gate matrix,
+  cross-tenant user-create, password strength.
+- workflow: dependency gate, subprocess-not-complete guard, block-request
+  sibling auto-approve, restart-preserve-duration.
+- reporting: efficiency cap ×3 sites, auto-logout cap timezone (4th UTC→local
+  site), sub-process duration override, complexity tie-breaks, active-log union
+  overlap, no-shift fallback, cross-midnight working-minutes, delivery bucketing.
+- CRUD/warehouse: Serbian-filename attachment download (MES-API-F), cross-tenant
+  delete, OrderType + ProductCategory CRUD, multi-line Izlaz atomicity, low-stock
+  boundary, material threshold validation.
+- dashboard/tenancy: `DashboardController` (previously **zero** tests), bulk +
+  single notification user-scope isolation, billing 14-day boundary + multi-admin,
+  tenant logo size limit, push subscribe/unsubscribe security.
+
+### Related FE change (alblue-tracker-fe)
+- Auto-mark logic extracted into `useAutoMarkAllReadOnOpen` / `useAutoMarkAllReadOnce`
+  hooks; **vitest infra added to `packages/api-client` + `packages/auth`** (had
+  none); ~63 new FE tests incl. the 401 refresh-retry interceptor, auth store,
+  JWT utils, route guards.
+
+---
+
 ## 2026-07-09 — Report tweaks (Saša) + notifications auto-mark
 
 Shipped to alblue staging.

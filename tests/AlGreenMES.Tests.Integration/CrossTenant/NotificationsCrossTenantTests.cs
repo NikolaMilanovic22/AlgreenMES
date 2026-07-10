@@ -1,4 +1,8 @@
 using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
+using AlGreenMES.Modules.Identity.Domain.Entities;
 using AlGreenMES.Tests.Integration.Helpers;
 using FluentAssertions;
 using Xunit;
@@ -8,6 +12,68 @@ namespace AlGreenMES.Tests.Integration.CrossTenant;
 public class NotificationsCrossTenantTests : IntegrationTestBase
 {
     public NotificationsCrossTenantTests(AlgreenWebApplicationFactory factory) : base(factory) { }
+
+    private sealed record NotifRow(Guid Id, bool IsRead);
+    private sealed record NotifPage(IReadOnlyList<NotifRow> Items, int TotalCount);
+
+    private async Task<HttpClient> ClientForUserAsync(string email, string password, string tenantCode)
+    {
+        var client = Factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Bearer", await TestDataSeeder.LoginAndGetTokenAsync(client, email, password, tenantCode));
+        return client;
+    }
+
+    [Fact]
+    public async Task BulkMarkRead_and_DeleteAll_are_scoped_to_the_calling_user()
+    {
+        // One tenant, two users. A1's read-all + delete-all must not touch A2's
+        // rows (NotificationRepository scopes both by userId).
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var (a2Id, a2Email, a2Pw) = await TestDataSeeder.SeedAdditionalUserWithCredsAsync(Factory, t.TenantId);
+
+        await TestDataSeeder.SeedNotificationAsync(Factory, t.TenantId, t.UserId, "A1-1");
+        await TestDataSeeder.SeedNotificationAsync(Factory, t.TenantId, t.UserId, "A1-2");
+        await TestDataSeeder.SeedNotificationAsync(Factory, t.TenantId, a2Id, "A2-1");
+        await TestDataSeeder.SeedNotificationAsync(Factory, t.TenantId, a2Id, "A2-2");
+
+        var clientA1 = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+        (await clientA1.PostAsync("/api/notifications/read-all", null)).StatusCode.Should().Be(HttpStatusCode.NoContent);
+        (await clientA1.DeleteAsync("/api/notifications")).StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        // A1's list is now empty.
+        var a1Page = (await clientA1.GetFromJsonAsync<NotifPage>("/api/notifications?pageSize=50"))!;
+        a1Page.Items.Should().BeEmpty();
+
+        // A2 still has both rows, both unread.
+        var clientA2 = await ClientForUserAsync(a2Email, a2Pw, t.TenantCode);
+        var a2Page = (await clientA2.GetFromJsonAsync<NotifPage>("/api/notifications?pageSize=50"))!;
+        a2Page.Items.Should().HaveCount(2);
+        a2Page.Items.Should().OnlyContain(n => !n.IsRead, "A1's bulk actions must not affect A2");
+    }
+
+    [Fact]
+    public async Task SingleMarkRead_and_Delete_of_another_users_notification_returns_404_and_leaves_it_intact()
+    {
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var (a2Id, a2Email, a2Pw) = await TestDataSeeder.SeedAdditionalUserWithCredsAsync(Factory, t.TenantId);
+        var a2NotifId = await TestDataSeeder.SeedNotificationAsync(Factory, t.TenantId, a2Id, "A2-ONLY");
+
+        var clientA1 = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        // A1 cannot mark A2's notification read (handler 404s on user mismatch).
+        (await clientA1.PostAsync($"/api/notifications/{a2NotifId}/read", null))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+        // Nor delete it.
+        (await clientA1.DeleteAsync($"/api/notifications/{a2NotifId}"))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        // A2's row is untouched: present and still unread.
+        var clientA2 = await ClientForUserAsync(a2Email, a2Pw, t.TenantCode);
+        var a2Page = (await clientA2.GetFromJsonAsync<NotifPage>("/api/notifications?pageSize=50"))!;
+        var row = a2Page.Items.Single(n => n.Id == a2NotifId);
+        row.IsRead.Should().BeFalse();
+    }
 
     // After Sprint 2.4c, NotificationsController derives userId from the JWT sub claim
     // and ignores any client-supplied ?userId=. Defense in depth is layered:

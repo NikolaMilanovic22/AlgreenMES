@@ -46,6 +46,12 @@ public class OrderItemProcessRepository : IOrderItemProcessRepository
             .Include(p => p.ProcessLogs)
             .Include(p => p.OrderItem)
                 .ThenInclude(oi => oi.Order)
+            // Sibling processes are needed by StartProcessWork's dependency
+            // gate (it reads orderItem.Processes). Without this Include (lazy
+            // loading is off) that collection is empty and DEPENDENCY_NOT_MET
+            // never fires — the category-dependency sequencing guard is dead.
+            .Include(p => p.OrderItem)
+                .ThenInclude(oi => oi.Processes)
             .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
     }
 

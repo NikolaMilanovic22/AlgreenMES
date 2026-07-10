@@ -123,11 +123,80 @@ public class BillingReminderServiceTests : IntegrationTestBase
         (await NotificationsForUserAsync(admin.Id)).Should().ContainSingle();
     }
 
+    [Fact]
+    public async Task RunOnce_TenantExactlyAtFourteenDayBoundary_Notifies()
+    {
+        // ExpiringThresholdDays = 14; the guard is `paidThrough > thresholdEnd`,
+        // so paidThrough == today+14 is INSIDE the window → notify.
+        var (tenant, admin, _) = await SeedTenantWithAdminAndOtherRolesAsync();
+        await SeedPaymentAsync(tenant.Id, daysFromNowToPeriodEnd: 14);
+
+        var service = Factory.Services.GetRequiredService<BillingReminderService>();
+        await service.RunOnceAsync(CancellationToken.None);
+
+        var notifications = await NotificationsForUserAsync(admin.Id);
+        notifications.Should().ContainSingle();
+        notifications[0].Type.Should().Be(NotificationType.SubscriptionExpiring);
+    }
+
+    [Fact]
+    public async Task RunOnce_TenantOneDayPastBoundary_DoesNotNotify()
+    {
+        // today+15 is one day beyond the 14-day window → silent.
+        var (tenant, admin, _) = await SeedTenantWithAdminAndOtherRolesAsync();
+        await SeedPaymentAsync(tenant.Id, daysFromNowToPeriodEnd: 15);
+
+        var service = Factory.Services.GetRequiredService<BillingReminderService>();
+        await service.RunOnceAsync(CancellationToken.None);
+
+        (await NotificationsForUserAsync(admin.Id)).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task RunOnce_TenantWithTwoAdmins_NotifiesBoth_AndIsIdempotent()
+    {
+        var (tenant, admin1, admin2) = await SeedTenantWithTwoAdminsAsync();
+        await SeedPaymentAsync(tenant.Id, daysFromNowToPeriodEnd: 7);
+
+        var service = Factory.Services.GetRequiredService<BillingReminderService>();
+        await service.RunOnceAsync(CancellationToken.None);
+        // Re-run same day must not double up (per-user/day idempotency).
+        await service.RunOnceAsync(CancellationToken.None);
+
+        var n1 = await NotificationsForUserAsync(admin1.Id);
+        var n2 = await NotificationsForUserAsync(admin2.Id);
+        n1.Should().ContainSingle();
+        n1[0].Type.Should().Be(NotificationType.SubscriptionExpiring);
+        n2.Should().ContainSingle();
+        n2[0].Type.Should().Be(NotificationType.SubscriptionExpiring);
+    }
+
     // ──────────────────────────────────────────────────────────────────
     // Fixture helpers — write the DB directly so we can pin periodStart /
     // periodEnd around "today" without arguing with the future-paidAt
     // guard on the public POST /tenants/{id}/payments endpoint.
     // ──────────────────────────────────────────────────────────────────
+
+    private async Task<(Tenant tenant, User admin1, User admin2)> SeedTenantWithTwoAdminsAsync()
+    {
+        using var scope = Factory.Services.CreateScope();
+        var tenancyDb = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var identityDb = scope.ServiceProvider.GetRequiredService<AlGreenMES.Modules.Identity.Infrastructure.Persistence.IdentityDbContext>();
+        var passwordHasher = scope.ServiceProvider.GetRequiredService<AlGreenMES.Modules.Identity.Application.Services.IPasswordHasher>();
+
+        var code = "BR2" + Guid.NewGuid().ToString("N")[..6].ToUpperInvariant();
+        var tenant = Tenant.Create($"Tenant {code}", code);
+        tenancyDb.Tenants.Add(tenant);
+        await tenancyDb.SaveChangesAsync();
+
+        var hash = passwordHasher.HashPassword("Pass123!");
+        var admin1 = User.Create(tenant.Id, $"admin1-{Guid.NewGuid():N}@test.local", hash, "Test", "AdminOne", UserRole.Admin);
+        var admin2 = User.Create(tenant.Id, $"admin2-{Guid.NewGuid():N}@test.local", hash, "Test", "AdminTwo", UserRole.Admin);
+        identityDb.Users.AddRange(admin1, admin2);
+        await identityDb.SaveChangesAsync();
+
+        return (tenant, admin1, admin2);
+    }
 
     private async Task<(Tenant tenant, User admin, IReadOnlyList<Guid> nonAdminUserIds)> SeedTenantWithAdminAndOtherRolesAsync()
     {
