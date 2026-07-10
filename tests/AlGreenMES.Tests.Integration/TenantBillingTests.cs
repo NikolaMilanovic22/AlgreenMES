@@ -75,6 +75,40 @@ public class TenantBillingTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task BlockedTenant_LocksOutRegularUser_ButSuperAdminCanStillLogIn()
+    {
+        // The SA-bypass in LoginCommandHandler (`user.Role != SuperAdmin`): a
+        // blocked tenant locks out its regular users, but a SuperAdmin MUST
+        // still be able to log in — otherwise nobody could ever unblock a
+        // tenant that was blocked (a support lockout). Regular-user rejection
+        // is covered above; this pins the bypass half.
+        var sa = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.SuperAdmin);
+        var target = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var saClient = await TestDataSeeder.AuthenticatedClientAsync(Factory, sa);
+
+        await saClient.PostAsJsonAsync($"/api/tenants/{target.TenantId}/block", new { Reason = "non-payment" });
+
+        // Contrast: the blocked tenant's own Admin is rejected…
+        var userResp = await Client.PostAsJsonAsync("/api/auth/login", new
+        {
+            Email = target.Email,
+            Password = TestDataSeeder.DefaultPassword,
+            TenantCode = target.TenantCode,
+        });
+        userResp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        // …but a SuperAdmin, even using the BLOCKED tenant's code, still gets in
+        // so they can reach the platform to unblock it.
+        var saLoginResp = await Client.PostAsJsonAsync("/api/auth/login", new
+        {
+            Email = sa.Email,
+            Password = TestDataSeeder.DefaultPassword,
+            TenantCode = target.TenantCode,
+        });
+        saLoginResp.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
     public async Task AddPayment_RoundTripsAndAppearsInList()
     {
         var sa = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.SuperAdmin);
