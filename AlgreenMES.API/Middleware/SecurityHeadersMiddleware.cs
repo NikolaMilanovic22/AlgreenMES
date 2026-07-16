@@ -59,7 +59,7 @@ public class SecurityHeadersMiddleware
             // 1 year, include subdomains. preload omitted on purpose —
             // opting into the browser preload list is a deployment-level
             // commitment that requires HTTPS on every subdomain we'd ever
-            // serve from algreen.rs / duckdns.org / easy-mes domains.
+            // serve from algreen.rs / duckdns.org domains.
             headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
         }
 

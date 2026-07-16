@@ -1,18 +1,19 @@
 # CLAUDE_ONBOARDING.md — Cold-start context for a fresh Claude session
 
-If you are a new Claude session opened on any of these repos: **read this first.** It is the canonical handoff doc covering everything across the 5 repos that share this codebase tree. Existing memory files in `~/.claude/projects/.../memory/` may also be relevant but they assume context you don't have yet — start here.
+If you are a new Claude session opened on any of these repos: **read this first.** It is the canonical handoff doc covering everything across the repos that share this codebase tree. Existing memory files in `~/.claude/projects/.../memory/` may also be relevant but they assume context you don't have yet — start here.
+
+> **Note (2026-07-16):** this doc is Sprint-3-era and stale in places (e.g. it still calls the algreen pilot "FROZEN" — it went live ~24.06.2026, and now takes mirror waves from alblue after QA) and is due a fuller refresh.
 
 ---
 
 ## 1. The product map (who uses what)
 
-Three products, two backends, one shared developer (Milos) + one BE collaborator (Nikola):
+Two environments, one backend, one shared developer (Milos) + one BE collaborator (Nikola):
 
-| Product | Audience | Repo (BE) | Repo (FE) | Status |
+| Environment | Audience | Repo (BE) | Repo (FE) | Status |
 |---|---|---|---|---|
-| **algreen** pilot | Mile's company (real production, paying user) | `algreen-tracker-be` (master branch) | `algreen-tracker-fe` (main) | **FROZEN.** Do not deploy without explicit thaw. See `audit/06_pilot_unfreeze_runbook.md`. |
-| **alblue** staging | Bojan + Sale test before Mile gets it | `algreen-tracker-be` (staging branch) | `alblue-tracker-fe` (main) | Active, all Sprint 3 work landed |
-| **easy-mes** side business | Milos's red-black client, isolated from skysoft (Mile/Nikola/Sale/Bojan workstream) | `easy-mes-be` (main) | `easy-mes-fe` (main) | Active, mirror of alblue + custom branding |
+| **algreen** pilot | Mile's company (real production, paying user) | `algreen-tracker-be` (master branch) | `algreen-tracker-fe` (main) | Live (thawed ~24.06.2026). Deploy only after Sale/Bojan QA + after factory hours. |
+| **alblue** staging | Bojan + Sale test before Mile gets it | `algreen-tracker-be` (staging branch) | `alblue-tracker-fe` (main) | Active source for new work |
 
 Key rule: **algreen pilot is Mile's production.** Never deploy to it casually. Bojan/Sale test alblue first; when satisfied, the same code goes to algreen pilot — but only when Milos explicitly thaws.
 
@@ -21,16 +22,14 @@ Key rule: **algreen pilot is Mile's production.** Never deploy to it casually. B
 ## 2. Repo layout (absolute paths on Milos's Mac)
 
 ```
-/Users/milosmitrovic/Projects/skysoft/algreen-tracker/algreen-tracker-be    ← BE source (alblue + algreen)
-/Users/milosmitrovic/Projects/skysoft/algreen-tracker/algreen-tracker-fe    ← FE pilot (algreen)
-/Users/milosmitrovic/Projects/skysoft/alblue-tracker/alblue-tracker-fe      ← FE staging (alblue)
-/Users/milosmitrovic/Projects/skyhard/easy-mes-be                            ← BE side-business mirror
-/Users/milosmitrovic/Projects/skyhard/easy-mes-fe                            ← FE side-business
+/Users/milosmitrovic/Projects/skysoft/algreen/algreen-mes/algreen-tracker-be   ← BE source (alblue + algreen)
+/Users/milosmitrovic/Projects/skysoft/algreen/algreen-mes/algreen-tracker-fe   ← FE pilot (algreen)
+/Users/milosmitrovic/Projects/skysoft/algreen/alblue-mes/alblue-tracker-fe     ← FE staging (alblue)
 ```
 
-**BE single source of truth:** `algreen-tracker-be`. `easy-mes-be` is a mirror — every BE change lands in both. Files there are safe to `cp` between (BE has no per-product branding divergence).
+**BE single source of truth:** `algreen-tracker-be` (one repo, `staging`→alblue / `master`→algreen).
 
-**FE three separate repos** with diverged branding (logos, theme colors, titles, localStorage keys, workspace import names: `@algreen/*`, `@alblue/*`, `@easymes/*`). **Never `cp` between FE repos.** Use line-by-line `Edit` only. The mirroring rule has burned past Claude sessions twice already (see `gotchas.md`).
+**FE two separate repos** with diverged branding (logos, theme colors, titles, localStorage keys, workspace import names: `@algreen/*`, `@alblue/*`). **Never `cp` between FE repos.** Use line-by-line `Edit` (or rsync for full mirror waves). The mirroring rule has burned past Claude sessions twice already (see `gotchas.md`).
 
 ---
 
@@ -41,12 +40,10 @@ Key rule: **algreen pilot is Mile's production.** Never deploy to it casually. B
 | Droplet IP | Role | Hosts |
 |---|---|---|
 | `46.101.166.137` (Frankfurt, Ubuntu 24.04, 2GB) | skysoft | Both alblue + algreen pilot (separate `/opt/*` paths, separate systemd services, separate Postgres DBs in same container) |
-| `46.101.125.31` (Frankfurt) | skyhard / easy-mes | Just easy-mes |
 
 ### Postgres containers
 
 - skysoft droplet: `algreen-postgres-1` (one container, two DBs: `algreen_tracker`, `alblue_tracker`)
-- easy-mes droplet: `easy-mes-postgres` (DB: `easy_mes`)
 
 ### Domain map
 
@@ -58,14 +55,10 @@ Key rule: **algreen pilot is Mile's production.** Never deploy to it casually. B
 | alblue dashboard | `https://alblue.duckdns.org` |
 | alblue tablet | `https://alblue-tablet.duckdns.org` |
 | alblue API | `https://alblue.duckdns.org/api/*` (same domain, nginx routes `/api/*`) |
-| easy-mes dashboard | `https://easy-mes.duckdns.org` |
-| easy-mes tablet | `https://easy-mes-tablet.duckdns.org` |
-| easy-mes API | `https://easy-mes.duckdns.org/api/*` |
 
 ### SSH
 
 `ssh root@46.101.166.137` — skysoft droplet. Key already in Milos's `~/.ssh/`.
-`ssh root@46.101.125.31` — easy-mes droplet. Same.
 
 ### Deploy commands
 
@@ -75,12 +68,7 @@ Key rule: **algreen pilot is Mile's production.** Never deploy to it casually. B
 ./deploy.sh pilot          # → algreen (branch=master,  /opt/algreen/api/, algreen-api service)
 ```
 
-**BE (`easy-mes-be`):**
-```bash
-./deploy.sh easymes        # → easy-mes (branch=main, /opt/easy-mes/api/, easy-mes-api service)
-```
-
-Each `deploy.sh staging/pilot/easymes`:
+Each `deploy.sh staging/pilot`:
 1. Refuses to run on a dirty working tree
 2. Checks out the target branch, pulls
 3. `dotnet publish`
@@ -88,7 +76,7 @@ Each `deploy.sh staging/pilot/easymes`:
 5. Runs `dotnet AlgreenMES.API.dll --migrate` against the deployed binary (migrations as an explicit step, not on startup — Sprint 3.4)
 6. Restarts the systemd service
 
-**FE deploys** are simpler: `./deploy.sh dashboard|tablet|all` in each FE repo. `algreen-tracker-fe` is pilot-only (no flag — only deploys to `/opt/algreen/`). `alblue-tracker-fe` deploys to `/opt/alblue/`. `easy-mes-fe` deploys to its own droplet.
+**FE deploys** are simpler: `./deploy.sh dashboard|tablet|all` in each FE repo. `algreen-tracker-fe` is pilot-only (no flag — only deploys to `/opt/algreen/`). `alblue-tracker-fe` deploys to `/opt/alblue/`.
 
 ---
 
@@ -119,7 +107,7 @@ Each `deploy.sh staging/pilot/easymes`:
 - Anything else → 500
 
 **Observability stack** (Sprint 3.1-3.6):
-- Sentry SDK on BE + FE. Single project `mes-api` (team `#sky-hard`). Distinguished by `environment` tag: `alblue-staging`, `easy-mes-prod`, `algreen-pilot`. DSN: `https://315954545e637502fd5497b3090b5c9c@o4511398917177344.ingest.de.sentry.io/4511398994313296`. Lives in `appsettings.Production.json` on each droplet (gitignored) and in each FE's `deploy.sh` (public-by-design — embedded in JS bundle anyway).
+- Sentry SDK on BE + FE. Single project `mes-api` (team `#sky-hard`). Distinguished by `environment` tag: `alblue-staging`, `algreen-pilot`. DSN: `https://315954545e637502fd5497b3090b5c9c@o4511398917177344.ingest.de.sentry.io/4511398994313296`. Lives in `appsettings.Production.json` on each droplet (gitignored) and in each FE's `deploy.sh` (public-by-design — embedded in JS bundle anyway).
 - Sentry filter drops `DomainException`/`ForbiddenException` (business rules, not bugs).
 - Serilog structured JSON to `/var/log/<target>/api-YYYYMMDD.log` (30-day rolling). Enriched with `TenantId`/`UserId`/`CorrelationId`/`RequestId`.
 - Health endpoints: `GET /api/health/live` (self), `GET /api/health/ready` (self + Npgsql ping). Anonymous.
@@ -127,7 +115,7 @@ Each `deploy.sh staging/pilot/easymes`:
 **FE stack:**
 - Dashboard apps: React + TypeScript + Vite + **antd** (Ant Design) + TanStack Query + Zustand
 - Tablet apps: React + TypeScript + Vite + **Tailwind** (no antd) + vite-plugin-pwa
-- Shared packages per repo: `@<brand>/shared-types`, `@<brand>/api-client`, `@<brand>/auth`, `@<brand>/signalr-client`, `@<brand>/i18n` (`<brand>` = algreen, alblue, easymes)
+- Shared packages per repo: `@<brand>/shared-types`, `@<brand>/api-client`, `@<brand>/auth`, `@<brand>/signalr-client`, `@<brand>/i18n` (`<brand>` = algreen, alblue)
 
 **FE 403 fallback:** `setOnForbidden(code => message.error(...))` wired in `dashboard/src/main.tsx`. Specific error codes get specific Serbian messages, generic fallback for unknown codes. Tablet has no toaster — Department workers rarely hit 403.
 
@@ -135,15 +123,12 @@ Each `deploy.sh staging/pilot/easymes`:
 
 ## 5. Workflow rules (the "if you forget these you will break something" list)
 
-1. **NO `cp` between FE repos.** Use `Edit` line-by-line. Branding (logos, theme tokens, titles, `@<brand>/*` imports, localStorage keys) diverges per FE repo. Whole-file copies have broken alblue branding twice. (`gotchas.md` line 51)
-2. **`cp` between BE repos is OK.** The BE code is identical between `algreen-tracker-be` and `easy-mes-be`. Mirror via `cp`.
-3. **Algreen pilot is FROZEN.** Never `./deploy.sh pilot` without explicit Milos go-ahead. Read-only DB queries are fine for forensics.
-4. **Mirror every BE security/code fix to BOTH BE repos.** Skipping one creates security drift.
-5. **Mirror dashboard FE fixes to all 3 FE repos** when they apply (most do). Commit to algreen-tracker-fe but don't deploy (pilot freeze) — code stays in lockstep, deploy waits.
-6. **Build before commit.** `dotnet build` BE, `pnpm build` FE. Catches the compile-time half of mistakes.
-7. **Don't modify production data unprompted.** If the DB state is unexpected (a user has weird role, a config looks wrong), report it — don't fix it. The client may have intentionally set it that way. easy-mes is more lax (Milos's own infra) but algreen pilot is Mile's data and is strictly off-limits.
-8. **Commit messages.** Conventional commits style: `feat(scope): ...`, `fix(scope): ...`, `chore(scope): ...`. Multi-paragraph for non-trivial changes. The repo uses `Co-Authored-By: Claude` co-author footer.
-9. **Mirroring across BE repos is one commit per repo, not one mega-commit.** Each repo gets its own commit message referencing the other.
+1. **NO `cp` between FE repos.** Use `Edit` line-by-line (or `rsync` for full mirror waves). Branding (logos, theme tokens, titles, `@<brand>/*` imports, localStorage keys) diverges per FE repo. Whole-file copies have broken alblue branding twice. (`gotchas.md` line 51)
+2. **Algreen pilot is Mile's production.** Never `./deploy.sh pilot` (BE) or deploy the algreen FE without explicit Milos go-ahead, and only after factory hours. Read-only DB queries are fine for forensics.
+3. **Mirror FE fixes alblue → algreen only when told** ("deploy to pilot"), as a batch, after Sale/Bojan QA — not incrementally during active dev.
+4. **Build before commit.** `dotnet build` BE, `pnpm build` FE. Catches the compile-time half of mistakes.
+5. **Don't modify production data unprompted.** If the DB state is unexpected (a user has weird role, a config looks wrong), report it — don't fix it. The client may have intentionally set it that way. algreen pilot is Mile's data and is strictly off-limits.
+6. **Commit messages.** Conventional commits style: `feat(scope): ...`, `fix(scope): ...`, `chore(scope): ...`. Multi-paragraph for non-trivial changes. The repo uses `Co-Authored-By: Claude` co-author footer.
 
 ---
 
@@ -151,13 +136,13 @@ Each `deploy.sh staging/pilot/easymes`:
 
 Read `audit/01_forensics.md` through `audit/06_pilot_unfreeze_runbook.md` for the full story. Quick map:
 
-- **3.0 Multi-tenant audit + role guards.** 13 findings, 5 fixes shipped (F-1 last-Admin block, F-2 DeleteUser guards, F-3 refresh-token revocation on role change, F-7 only-SuperAdmin-changes-roles, F-11 ChangePassword self-only). 5 more deferred (F-8 to F-13) in `03_backlog.md`. Restore SQL for easy-mes (`tenant code='DEMO'`) in `scripts/2026-05-restore-easy-mes-roles.sql`.
+- **3.0 Multi-tenant audit + role guards.** 13 findings, 5 fixes shipped (F-1 last-Admin block, F-2 DeleteUser guards, F-3 refresh-token revocation on role change, F-7 only-SuperAdmin-changes-roles, F-11 ChangePassword self-only). 5 more deferred (F-8 to F-13) in `03_backlog.md`.
 - **3.1 Sentry BE** — see "Observability" above.
 - **3.2 Serilog** — structured JSON logs with enrichment.
 - **3.3 Health endpoints** — `/api/health/live`, `/api/health/ready`.
 - **3.4 Migrations** — extracted from startup to `--migrate` CLI flag.
 - **3.5 Audit interceptor** — `AuditableEntityInterceptor` auto-populates audit columns.
-- **3.6 Sentry FE** — `@sentry/react` in dashboard + tablet across 3 FE repos.
+- **3.6 Sentry FE** — `@sentry/react` in dashboard + tablet across the FE repos.
 
 Plus performance fixes during this work: N+1 query fixes on `/api/tablet/active`, `/api/tablet/queue`, `/api/orders/master-view` + `.AsSplitQuery()` on the order paged + active-orders queries. Tablet login/logout sub-process auto-resume bug fixed via new `paused_by_station_at` column.
 
@@ -167,9 +152,8 @@ Plus performance fixes during this work: N+1 query fixes on `/api/tablet/active`
 
 ## 7. Backlog and pending decisions
 
-- **algreen pilot unfreeze.** Has zero SuperAdmin users — verified 2026-05-17. Must add one before Sprint 3.0 deploys to pilot (F-7 would otherwise lock the tenant out of role management). Suggested: `skyhard@algreen.rs` mirroring easy-mes's `skyhard@easymes.app` pattern, NOT Mile's account. Runbook at `audit/06_pilot_unfreeze_runbook.md`.
+- **algreen pilot unfreeze.** Has zero SuperAdmin users — verified 2026-05-17. Must add one before Sprint 3.0 deploys to pilot (F-7 would otherwise lock the tenant out of role management). Suggested: a dedicated `skyhard@algreen.rs` account, NOT Mile's. Runbook at `audit/06_pilot_unfreeze_runbook.md`.
 - **Sprint 4.** Not yet defined. Waiting on Nikola.
-- **easy-mes rebranding** (red-black client). Discussion ongoing as of 2026-05-18. Likely path: heavy antd theming + custom CSS layer, NOT a UI library swap. Caveat: brand red ≠ status red (status red is reserved for critical processes; pick a darker burgundy/wine for brand to avoid alarm-signal confusion).
 - **Integration test infrastructure fix.** macOS + arm64 + Docker Desktop + Testcontainers lifecycle bug — `_postgres.GetConnectionString()` returns default `localhost:5432` instead of the dynamic port. Affects ALL existing tests, not just new ones. Likely fix: untangle `IClassFixture` + `ICollectionFixture` double-registration in `AlgreenWebApplicationFactory`. Sprint 4 housekeeping candidate.
 - **UptimeRobot monitors** against `/api/health/ready` for both droplets — not yet added.
 
@@ -180,7 +164,6 @@ Plus performance fixes during this work: N+1 query fixes on `/api/tablet/active`
 - **Brief responses.** No essays, no padding. State the thing, move on.
 - **No multiple-choice questions.** Decide the best-practice path yourself. Ask only when truly stuck.
 - **Don't underestimate Claude's speed.** If you can do something in 5 minutes, don't say "30 minutes". Don't say "let me finish for now and continue tomorrow." Just do it.
-- **Mirror everything.** Anything that lands on alblue should also land on easy-mes (with caveats for FE divergence). Same for BE security fixes.
 - **Confirm before destructive ops.** Reset/force-push/drop/delete — ask first. Reversible local edits — just do.
 - **Sentry filtering is correct, not broken.** `DomainException` / `ForbiddenException` don't email — they're 4xx business rules, not 500-class bugs. Don't be surprised by silence.
 
@@ -193,7 +176,6 @@ Read `~/.claude/projects/-Users-milosmitrovic-Projects-skysoft-algreen-tracker-a
 - **NO `cp` between FE repos.** Branding diverges. Use `Edit`. (See rule 1 above.)
 - **`User.Update()` does not call `SetUpdated()`.** Pre-Sprint-3.5 this meant role changes left no audit trail. Post-3.5 the interceptor compensates. Don't try to forensic an older audit gap via `updated_by_user_id` — for pre-3.5 events it's `NULL` regardless of who did the change.
 - **Integration tests don't run locally on Apple Silicon Mac.** Testcontainers Postgres setup fails to start; `GetConnectionString()` returns default `localhost:5432`. All existing tests fail the same way. CI on Linux works. Do NOT add `dotnet test` as a gate in deploy.sh until fixed.
-- **easy-mes tenant code is `'DEMO'`, NOT `'easy-mes'` or any other slug.** The droplet/environment name and the in-DB tenant identifier are different. Restore scripts must look up by `code = 'DEMO'`.
 - **Sprint 2.4a `HasQueryFilter` was applied to `TenancyDbContext`** and silently filtered TenantSettings by SuperAdmin's home tenant. Fixed by dropping the filter from `TenancyDbContext` only (Tenancy is SuperAdmin-cross-tenant by design). Don't reintroduce.
 - **Empty product name is valid.** `OrderItem.ProductName` is nullable. FormData with `undefined` will stringify to literal `"undefined"` — send empty string instead. (Bit us once.)
 - **`MarkCompleted()` + `UndoComplete()` are a pair.** Don't break it.
@@ -207,50 +189,17 @@ Read `~/.claude/projects/-Users-milosmitrovic-Projects-skysoft-algreen-tracker-a
 Memory location for sessions launched from `algreen-tracker-fe`:
 `~/.claude/projects/-Users-milosmitrovic-Projects-skysoft-algreen-tracker-algreen-tracker-fe/memory/`
 
-Files there are scoped to that working directory's sessions. Sessions launched from `easy-mes-fe` or `easy-mes-be` get their OWN memory folder, separate from this one. **A new Claude session in easy-mes-fe will not see this memory by default.**
-
-If you want to share memory across project boundaries (e.g. easy-mes Claude should know skysoft context), either:
-- Launch Claude from a parent directory that covers both, OR
-- Use this `CLAUDE_ONBOARDING.md` as the canonical bootstrap and have each session read it explicitly at start
+Files there are scoped to that working directory's sessions. Use this `CLAUDE_ONBOARDING.md` as the canonical bootstrap and have each session read it explicitly at start.
 
 Auto-memory pattern (this codebase): use it heavily, but never write code patterns / file paths / git history into memory (re-derivable). Use it for: who is the user, what feedback they've given, project state that isn't in code, references to external systems.
 
 ---
 
-## 11. If you are an easy-mes-specific Claude session
-
-You probably don't need:
-- Sections about algreen pilot (frozen, not your concern unless mirroring code FROM alblue)
-- skysoft-side deployment commands
-
-You DO need to understand:
-- That `alblue-tracker-fe` is upstream — code mirrors come FROM alblue TO easy-mes, never the other way
-- That BE work is mirrored across both BE repos (easy-mes-be IS in scope for you on BE changes that originate from main session)
-- The mirroring tax: easy-mes is meant to diverge visually but stay structurally similar to alblue so mirroring stays cheap. If you change easy-mes structure (component tree, navigation, routes), mirror cost from alblue jumps significantly.
-- Red-black brand has a status-color conflict — use wine/burgundy for brand red, keep the bright status red separate.
-
----
-
-## 12. If you are a main-skysoft Claude session
-
-Your scope is alblue + algreen. You touch easy-mes-be only when BE security/code fixes need mirroring to it. You touch easy-mes-fe rarely or never — that's the dedicated easy-mes Claude's job.
-
-When you need to mirror a security fix to easy-mes-be:
-1. `cp` the relevant files from `algreen-tracker-be/src/Modules/...` to `easy-mes-be/src/Modules/...`
-2. `cd /Users/milosmitrovic/Projects/skyhard/easy-mes-be && dotnet build`
-3. Commit with a message referencing the alblue commit hash
-4. `./deploy.sh easymes`
-
----
-
-## 13. Active threads (as of 2026-05-18)
+## 11. Active threads (as of 2026-05-18 — Sprint-3-era, likely stale)
 
 - Nikola back from break, Sprint 4 not yet defined. Pending his return.
 - Bojan signed off on alblue Sprint 3 (2026-05-16).
-- easy-mes red-black rebrand pending logo from client.
-- Decision pending tonight (2026-05-18) on rebranding strategy: heavy theming vs structural divergence vs UI library swap.
-- Possible split into a dedicated easy-mes Claude session after rebrand begins.
-- algreen pilot remains frozen until SuperAdmin is provisioned and Bojan/Sale sign-off on alblue is solid.
+- algreen pilot was frozen at the time; it has since gone live (~24.06.2026).
 
 ---
 

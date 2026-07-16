@@ -4,8 +4,6 @@ All notable changes to the Algreen MES backend. Format: roughly
 [keep-a-changelog](https://keepachangelog.com/) — grouped by date, with
 short user-facing summaries and links to the deepest relevant doc/code.
 
-Mirrored to `easy-mes-be` (skyhard) — keep both in sync when editing.
-
 ---
 
 ## 2026-07-10 — Test-gap hardening sweep (3 real bug fixes + ~50 tests)
@@ -663,7 +661,7 @@ suite green 267/0/3 first). The perf/FE items stay on the mirror wave.
   (`GetByIdWithOrderDetailsAsync`, `GetByIdWithFullDetailsAsync`,
   `GetInProgressByProcessIdAsync`) now `.Include(p => p.ProcessLogs)`
   so `EndOpenProcessLog()` actually closes them. Local cleanup SQL ran
-  for 16 dangling rows; staging + easy-mes already clean.
+  for 16 dangling rows; staging already clean.
 - **`OrderItemProcessLog.Id` `ValueGeneratedNever()`** — without it EF
   treated Id as DB-generated and threw `DbUpdateConcurrencyException`
   at `StartProcessWork`.
