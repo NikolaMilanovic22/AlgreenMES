@@ -1,6 +1,6 @@
 # AlGreen MES Backend
 
-> **New Claude session: read `docs/CLAUDE_ONBOARDING.md` first.** Covers the full picture across all 5 repos (algreen pilot + alblue staging + easy-mes side-business; 2 BE + 3 FE), infrastructure, deploy commands, Sprint 3 outcomes, workflow rules, gotchas, and Milos's working preferences. This file is per-repo coding conventions only.
+> **New Claude session: read `docs/CLAUDE_ONBOARDING.md` first.** Covers the full picture across the repos (algreen pilot + alblue staging; 1 BE + 2 FE), infrastructure, deploy commands, Sprint 3 outcomes, workflow rules, gotchas, and Milos's working preferences. This file is per-repo coding conventions only.
 
 ## Overview
 .NET 9 Web API, modular monolith, PostgreSQL, JWT auth, SignalR real-time.

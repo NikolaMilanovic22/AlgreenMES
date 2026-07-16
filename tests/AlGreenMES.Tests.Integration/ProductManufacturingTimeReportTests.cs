@@ -164,6 +164,103 @@ public class ProductManufacturingTimeReportTests : IntegrationTestBase
         order.GetProperty("complexityShare").GetString().Should().Be("50% / 50% / 0%");
     }
 
+    [Theory]
+    [InlineData(ComplexityType.S, ComplexityType.L, "L")] // S/L tie → L
+    [InlineData(ComplexityType.T, ComplexityType.L, "L")] // T/L tie → L
+    public async Task ProductManufacturingTime_top_complexity_two_way_tie_favours_L(
+        ComplexityType first, ComplexityType second, string expected)
+    {
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+        var procA = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId, t.UserId);
+        var procB = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId, t.UserId);
+        var categoryId = await TestDataSeeder.SeedProductCategoryAsync(Factory, t.TenantId, t.UserId);
+        await TestDataSeeder.SeedCategoryProcessesAndDepsAsync(Factory, categoryId, new[] { procA, procB });
+
+        var seeded = await TestDataSeeder.SeedOrderWithProcessesAsync(
+            Factory, t.TenantId, t.UserId, categoryId,
+            new[] { procA, procB }, new[] { ProcessStatus.Completed, ProcessStatus.Completed });
+
+        var now = DateTime.UtcNow;
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
+            await db.OrderItemProcesses.IgnoreQueryFilters()
+                .Where(p => p.Id == seeded.OipIds[0])
+                .ExecuteUpdateAsync(set => set
+                    .SetProperty(p => p.Complexity, (ComplexityType?)first)
+                    .SetProperty(p => p.StartedAt, now.AddHours(-2))
+                    .SetProperty(p => p.CompletedAt, now.AddHours(-1)));
+            await db.OrderItemProcesses.IgnoreQueryFilters()
+                .Where(p => p.Id == seeded.OipIds[1])
+                .ExecuteUpdateAsync(set => set
+                    .SetProperty(p => p.Complexity, (ComplexityType?)second)
+                    .SetProperty(p => p.StartedAt, now.AddMinutes(-30))
+                    .SetProperty(p => p.CompletedAt, now));
+            await db.Orders.IgnoreQueryFilters()
+                .Where(o => o.Id == seeded.OrderId)
+                .ExecuteUpdateAsync(set => set
+                    .SetProperty(o => o.Status, OrderStatus.Completed)
+                    .SetProperty(o => o.CompletedAt, now));
+        }
+
+        var resp = await client.GetAsync("/api/reports/product-manufacturing-time");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+
+        var order = doc.RootElement.GetProperty("orders").EnumerateArray()
+            .Single(o => o.GetProperty("orderId").GetGuid() == seeded.OrderId);
+        order.GetProperty("topComplexity").GetString().Should().Be(expected);
+    }
+
+    [Fact]
+    public async Task ProductManufacturingTime_top_complexity_three_way_tie_is_L()
+    {
+        // 1×T + 1×S + 1×L, all counts equal → Bojan's all-tied rule → "L".
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+        var procA = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId, t.UserId);
+        var procB = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId, t.UserId);
+        var procC = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId, t.UserId);
+        var categoryId = await TestDataSeeder.SeedProductCategoryAsync(Factory, t.TenantId, t.UserId);
+        await TestDataSeeder.SeedCategoryProcessesAndDepsAsync(Factory, categoryId, new[] { procA, procB, procC });
+
+        var seeded = await TestDataSeeder.SeedOrderWithProcessesAsync(
+            Factory, t.TenantId, t.UserId, categoryId,
+            new[] { procA, procB, procC },
+            new[] { ProcessStatus.Completed, ProcessStatus.Completed, ProcessStatus.Completed });
+
+        var now = DateTime.UtcNow;
+        var complexities = new[] { ComplexityType.T, ComplexityType.S, ComplexityType.L };
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
+            for (var i = 0; i < 3; i++)
+            {
+                var cx = complexities[i];
+                await db.OrderItemProcesses.IgnoreQueryFilters()
+                    .Where(p => p.Id == seeded.OipIds[i])
+                    .ExecuteUpdateAsync(set => set
+                        .SetProperty(p => p.Complexity, (ComplexityType?)cx)
+                        .SetProperty(p => p.StartedAt, now.AddHours(-3).AddMinutes(i))
+                        .SetProperty(p => p.CompletedAt, now.AddHours(-2).AddMinutes(i)));
+            }
+            await db.Orders.IgnoreQueryFilters()
+                .Where(o => o.Id == seeded.OrderId)
+                .ExecuteUpdateAsync(set => set
+                    .SetProperty(o => o.Status, OrderStatus.Completed)
+                    .SetProperty(o => o.CompletedAt, now));
+        }
+
+        var resp = await client.GetAsync("/api/reports/product-manufacturing-time");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+
+        var order = doc.RootElement.GetProperty("orders").EnumerateArray()
+            .Single(o => o.GetProperty("orderId").GetGuid() == seeded.OrderId);
+        order.GetProperty("topComplexity").GetString().Should().Be("L");
+    }
+
     [Fact]
     public async Task ProductManufacturingTime_emits_one_row_per_item_for_multi_item_order()
     {

@@ -4,9 +4,207 @@ All notable changes to the Algreen MES backend. Format: roughly
 [keep-a-changelog](https://keepachangelog.com/) — grouped by date, with
 short user-facing summaries and links to the deepest relevant doc/code.
 
-Mirrored to `easy-mes-be` (skyhard) — keep both in sync when editing.
+---
+
+## 2026-07-10 — Test-gap hardening sweep (3 real bug fixes + ~50 tests)
+
+A codebase-wide test-coverage audit (6 module areas) turned up several
+unpinned behaviors + real defects. Fixes and regression tests below; full
+suite now 319 integration + 15 unit, 0 failing.
+
+### Fixed
+- **Efficiency % still showed >100% in the per-DAY rows.** The 08.07 cap fix
+  covered the per-worker summary + the work-efficiency report but MISSED the
+  daily breakdown row (`ReportingQueryService` ~1339). Now `Math.Min(…,100)`
+  at all **three** sites. Pinned by tests on all three.
+- **Security — push subscription user-id hijack.** `PushController.Subscribe`
+  trusted a client-supplied `UserId`, so any authenticated user could register
+  their browser endpoint under another user's id and receive that user's push
+  payloads (order/block content). Now derived from the JWT
+  (`ICurrentUserService`); the DTO field is ignored.
+- **Security — push unsubscribe had no ownership check.** `WebPush.Unsubscribe`
+  deactivated any subscription matching an endpoint regardless of owner. Now
+  scoped to the authenticated caller.
+- **Hardening — `StartProcessWork` dependency guard was dead code.** It reads
+  `orderItem.Processes` to enforce category dependencies, but the repo query
+  never loaded that collection (lazy loading is off), so `DEPENDENCY_NOT_MET`
+  could never fire. Restored via `.Include(oi => oi.Processes)`. **Low impact**:
+  the tablet queue already enforces dependency ordering by visibility
+  (`GetTabletQueueQueryHandler` `allDepsCompleted`), so normal factory flow is
+  unaffected — this only restores the API-level backstop.
+
+### Tests (regression guards, ~50 new methods)
+- auth/security: deactivated login/refresh, refresh rotation + expiry +
+  cross-tenant, SuperAdmin self-only password, user-management role-gate matrix,
+  cross-tenant user-create, password strength.
+- workflow: dependency gate, subprocess-not-complete guard, block-request
+  sibling auto-approve, restart-preserve-duration.
+- reporting: efficiency cap ×3 sites, auto-logout cap timezone (4th UTC→local
+  site), sub-process duration override, complexity tie-breaks, active-log union
+  overlap, no-shift fallback, cross-midnight working-minutes, delivery bucketing.
+- CRUD/warehouse: Serbian-filename attachment download (MES-API-F), cross-tenant
+  delete, OrderType + ProductCategory CRUD, multi-line Izlaz atomicity, low-stock
+  boundary, material threshold validation.
+- dashboard/tenancy: `DashboardController` (previously **zero** tests), bulk +
+  single notification user-scope isolation, billing 14-day boundary + multi-admin,
+  tenant logo size limit, push subscribe/unsubscribe security.
+
+### Related FE change (alblue-tracker-fe)
+- Auto-mark logic extracted into `useAutoMarkAllReadOnOpen` / `useAutoMarkAllReadOnce`
+  hooks; **vitest infra added to `packages/api-client` + `packages/auth`** (had
+  none); ~63 new FE tests incl. the 401 refresh-retry interceptor, auth store,
+  JWT utils, route guards.
 
 ---
+
+## 2026-07-09 — Report tweaks (Saša) + notifications auto-mark
+
+Shipped to alblue staging.
+
+### Fixed
+- **Operator efficiency capped at 100%.** A short session with no break could yield
+  active > effective → efficiency >100%, which Saša flagged as illogical (08.07).
+  `Math.Min(…, 100.0)` at both calc sites (daily detail + per-worker aggregate) in
+  `ReportingQueryService`. FE just renders the BE value.
+
+### Changed
+- **"Trajanje izrade proizvoda po narudžbini" table moved to the bottom** of the
+  Vremena procesa → Trajanje izrade proizvoda tab (below the aggregate + chart),
+  per Saša. Its export button + a bottom margin on the chart card moved with it.
+- **Tablet notifications page auto-marks-all-read** ~800ms after a worker opens it
+  (fires ONCE per visit, ref-guarded; nothing is deleted). Same rationale as the
+  dashboard bell — workers never tap "mark all", so the unread badge grew
+  meaningless.
+- **Dashboard bell auto-mark no longer restarts its timer** when a notification
+  arrives while the popover is open (audit finding — a trickle could defer the
+  mark indefinitely).
+
+### Config (pilot, by Bojan/Saša)
+- Early-arrival gap (workers clocking in before 07:00 → no shift → no auto-logout,
+  ~37% of morning check-ins) resolved by **adding III smena 23:00–07:00** on the
+  Algreen tenant — its cross-midnight window catches pre-07:00 check-ins, and its
+  break/cap match I smena so hours compute the same. **Caveat:** III crosses UTC
+  midnight, so the deferred night-shift date-bucketing audit findings become
+  relevant *if* genuine night-shift work happens (they don't affect early-morning
+  arrivals). Confirm with the client whether a real night shift will run.
+
+## 2026-07-03 — Code audit fixes
+
+Multi-agent audit of BE + FE; findings verified against code before acting.
+All shipped to **alblue staging**; the timezone fix below was also cherry-picked
+to **master + deployed to the algreen pilot** (03.07, after hours; integration
+suite green 267/0/3 first). The perf/FE items stay on the mirror wave.
+
+### Fixed
+- **4th shift-match site converted to tenant-local.** `ComputeEffectiveSessionEnd`
+  (the auto-logout-cap / effective-end calc, live for every "Sati radnika" row)
+  still took the time-of-day of a **UTC** check-in vs local shift windows — the
+  same class fixed at 3 sites on 29.06 but missed here. Morning check-ins failed
+  to match their shift → session not capped → inflated hours. One-line
+  `LocalTimeOfDay(checkIn)` swap.
+- **"Handled At" column sorts/displays `handledAt`, not `updatedAt`** (Change &
+  Block Requests). A merely-touched request bumped `updatedAt`, so the grid
+  showed a handled date for never-handled requests and disagreed with the export.
+  Added a `handledat` sort case to `ChangeRequestRepository` + `BlockRequestRepository`.
+
+### Performance
+- **`AsNoTracking`** on `GetActiveOrdersWithProcessesAsync` +
+  `GetPagedWithProcessesAsync` — pure-read graph loads on the tablet-poll +
+  master-view hot paths (verified no mutation callers).
+- **N+1 removed** in `GetBlockRequests` (batch process names via `GetByIdsAsync`)
+  and `ImportMaterials` (preload existing codes into a HashSet instead of one
+  `EXISTS` per imported row).
+
+### Frontend (no dedicated FE changelog — recorded here)
+- **Blob-URL leak** in pending-attachment thumbnails: 4 inline
+  `URL.createObjectURL(file)` calls in render leaked a blob every re-render
+  (drawers re-render on a 10s tick). New `PendingFileThumbnail` mints once +
+  revokes on unmount.
+- **Tablet stale process names**: `ProcessDefinitionUpdated` invalidated
+  `['processes-batch']` (matched nothing); now invalidates the real keys so an
+  admin's process rename/reorder reaches workers.
+- **Admin process lookups** fetched only `pageSize: 100` (Users /
+  SpecialRequestTypes / ProductCategories) → processes past 100 rendered as
+  `? — ?`; bumped to the repo's fetch-all convention.
+
+### Verified NOT bugs (audit)
+- Timestamps: columns are `timestamptz` → Npgsql `Kind=Utc` → `Z`-suffixed JSON
+  → FE parses UTC correctly.
+- `TotalDurationMinutes` / `DurationMinutes` actually hold **seconds** (systemic
+  misnomer); FE treats them as seconds, so no 60× bug. `AddDuration(int minutes)`
+  is a landmine (param named minutes, receives seconds) — do not "fix" by ×60.
+
+## 2026-07-02 — Attachment download: non-ASCII filename fix (pilot)
+
+### Fixed
+- **`GET /api/Orders/{id}/attachments/{id}/download` returned 500 for filenames
+  with Serbian letters** (`0x0161` = š, also č/ć/ž/đ). The inline-PDF branch
+  hand-built `Content-Disposition` with the raw filename, which ASP.NET rejects.
+  Now built via `ContentDispositionHeaderValue.SetHttpFileName` (RFC 5987),
+  matching the non-PDF `File(...)` path. Sentry **MES-API-F**, `algreen-pilot`.
+  Shipped **staging + pilot**.
+
+## 2026-07-01 — Tablet N+1 elimination + FE observability + order-type data
+
+### Performance
+- **Tablet queue/incoming/active N+1 removed.** Each order card fetched its own
+  `/attachments` just for a count badge; the count now rides in the queue/
+  incoming/active response (batched `GetRefsByOrderIdsAsync` +
+  `AttachmentCountLookup`, mirroring the FE indicator's filter). Also removes the
+  per-card fetch when offline. (staging)
+
+### Observability
+- **FE source maps uploaded to Sentry on deploy** (`@sentry/vite-plugin`, gated
+  on `SENTRY_AUTH_TOKEN` in `~/.zshrc` / passed by `deploy.sh`) → FE error stack
+  traces are readable instead of minified.
+- **Client-noise filter on the Serilog Sentry sink** (`Program.IsClientNoise`):
+  drops request cancellations (incl. wrapped in an EF connection error) +
+  client `BadHttpRequestException`, which were paging as errors. Genuine failures
+  still reach Sentry. (staging)
+- Sentry MCP connected for triage (org `sky-hard`, project `mes-api`, `de` region);
+  4 stale benign issues resolved.
+
+### Data
+- **Order-type code casing normalized** on both tenant DBs (legacy PascalCase
+  `Standard`/`Complaint`/`Repair`/`Rework` → uppercase config `Code`), so the
+  "Vremena po procesu" order-type filter matches. No new drift — the create-flow
+  has validated against the config + stored the uppercase code since 20.06.
+
+## 2026-06-29 — Shift-matching timezone fix + pilot cleanup
+
+### Fixed
+- **Shift matching now converts the UTC check-in → tenant-local (Europe/Belgrade)
+  before matching against local shift `StartTime`/`EndTime`.** `CheckInTime` is
+  stored UTC but shift times are the local clock values the admin typed; matching
+  by time-of-day without conversion mis-assigned shifts (a 06:54-local / 04:54-UTC
+  check-in matched the 22:00–06:00 night shift), which broke auto-logout, break
+  subtraction, effective time, overtime split and efficiency — reported by Bojan
+  on the pilot. `ReportingQueryService.LocalTimeOfDay()` applied at 3 match sites
+  (active-session/auto-logout, overtime quota, worker-hours). Regression test
+  `WorkerHours_matches_shift_by_local_time_not_utc`. **Belgrade is hardcoded —
+  must become per-tenant for the white-label case.** Shipped staging + pilot.
+
+### Data / config (pilot)
+- Capped stale never-closed `work_sessions` (worker forgot to log out → 45h
+  "overtime") to a sane bound; backup taken first.
+- Removed phantom seed shifts (Jutarnja/Popodnevna/Noćna, created 18.03) that were
+  active in the DB but hidden from the UI and interfering with matching — leaving
+  only "I smena" + "II smena" per Bojan.
+
+### Frontend (staging-only)
+- **Self-heal work session** (`useEnsureWorkSession`, tablet): creates a session
+  for an authenticated worker who has none (the "logged-in but no prijava" limbo),
+  strictly complementary to `AutoLogoutBanner`.
+
+## ~late 2026-06 — Tablet offline writes (staging-only, flag-gated)
+
+### Added
+- **Offline-first tablet writes** behind `VITE_OFFLINE_WRITES` (default **off**):
+  workflow actions queue locally and replay on reconnect with optimistic UI, so
+  workers keep going when factory wifi drops. BE dedupes replays via a
+  `ProcessedAction` entity (unique `action_id`) + `occurredAt` on 5 workflow
+  commands (migration `AddProcessedActions`). On **alblue staging only** —
+  `master`/pilot has neither the flag nor the migration. Removable via the flag.
 
 ## 2026-06-28 — Notification unread-count cap + Sentry pilot activation
 
@@ -463,7 +661,7 @@ Mirrored to `easy-mes-be` (skyhard) — keep both in sync when editing.
   (`GetByIdWithOrderDetailsAsync`, `GetByIdWithFullDetailsAsync`,
   `GetInProgressByProcessIdAsync`) now `.Include(p => p.ProcessLogs)`
   so `EndOpenProcessLog()` actually closes them. Local cleanup SQL ran
-  for 16 dangling rows; staging + easy-mes already clean.
+  for 16 dangling rows; staging already clean.
 - **`OrderItemProcessLog.Id` `ValueGeneratedNever()`** — without it EF
   treated Id as DB-generated and threw `DbUpdateConcurrencyException`
   at `StartProcessWork`.

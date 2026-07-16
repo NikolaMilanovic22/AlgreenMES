@@ -108,8 +108,13 @@ public class Program
                     // downstream, but UseSerilogRequestLogging sits INSIDE that
                     // handler and has already logged at Error by the time we
                     // swallow — so Sentry still gets paged. Filter here.
+                    // IsClientNoise walks the inner-exception chain (the OCE is
+                    // often wrapped by an EF Core ConnectionError, as above) and
+                    // also drops BadHttpRequestException (client aborted /
+                    // malformed request). Neither is an actionable server bug;
+                    // genuine DB failures (no inner OCE) still page.
                     configuration.WriteTo.Logger(l => l
-                        .Filter.ByExcluding(e => e.Exception is OperationCanceledException)
+                        .Filter.ByExcluding(e => IsClientNoise(e.Exception))
                         .WriteTo.Sentry(o =>
                         {
                             o.Dsn = sentryDsn;
@@ -613,5 +618,22 @@ public class Program
             // Log dir creation must never crash boot — fall back to console-only.
             Log.Warning(ex, "Could not create log directory for {LogPath}", logPath);
         }
+    }
+
+    // Client-side noise that must not page (kept in console/file for local
+    // debugging, dropped from the Sentry sink). Walks the inner-exception chain
+    // because a request cancellation frequently surfaces wrapped by another
+    // exception (e.g. an EF Core connection error with the OperationCanceledException
+    // attached as InnerException). BadHttpRequestException (Kestrel or Http
+    // namespace) means the client aborted or sent a malformed request. A genuine
+    // DB/connection failure has no inner OCE, so it still reaches Sentry.
+    private static bool IsClientNoise(Exception? ex)
+    {
+        for (var e = ex; e is not null; e = e.InnerException)
+        {
+            if (e is OperationCanceledException) return true;
+            if (e.GetType().Name == "BadHttpRequestException") return true;
+        }
+        return false;
     }
 }

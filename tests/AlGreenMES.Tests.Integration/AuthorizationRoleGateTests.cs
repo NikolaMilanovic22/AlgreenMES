@@ -31,6 +31,85 @@ public class AuthorizationRoleGateTests : IntegrationTestBase
 {
     public AuthorizationRoleGateTests(AlgreenWebApplicationFactory factory) : base(factory) { }
 
+    // ──────────────────────────────────────────────────────────────────────
+    // User-management endpoints — role gate matrix (UsersController)
+    // POST/PUT/DELETE users + reset-password require AdminUp; GET users
+    // requires ManagerUp. A dropped/mistyped [Authorize(Roles=...)] would
+    // silently let a Manager mutate users or a worker enumerate them.
+    // ──────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task CreateUser_AsManager_Returns403()
+    {
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, role: UserRole.Manager);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        var resp = await client.PostAsJsonAsync("/api/users", new
+        {
+            Email = $"new-{Guid.NewGuid():N}@test.local",
+            Password = "NewPass123!",
+            FirstName = "New",
+            LastName = "User",
+            Role = "Department",
+        });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task GetUsers_AsDepartment_Returns403()
+    {
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, role: UserRole.Department);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        var resp = await client.GetAsync("/api/users");
+
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task ResetPassword_AsManager_Returns403()
+    {
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, role: UserRole.Manager);
+        var targetId = await TestDataSeeder.SeedAdditionalUserAsync(Factory, t.TenantId, UserRole.Department);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        var resp = await client.PostAsJsonAsync($"/api/users/{targetId}/reset-password", new
+        {
+            NewPassword = "NewPass123!",
+        });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task CreateUser_NonSuperAdminOverridingTenant_IsForbidden()
+    {
+        // Only a SuperAdmin may pass request.TenantId to create a user in
+        // another tenant; a tenant Admin doing so must be rejected (otherwise
+        // an Admin could inject a user row into a foreign tenant). `a` is Admin,
+        // so it clears the AdminUp gate and reaches the handler's override guard.
+        var (a, b) = await TestDataSeeder.SeedTwoTenantsAsync(Factory, roleForA: UserRole.Admin);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, a);
+
+        var resp = await client.PostAsJsonAsync("/api/users", new
+        {
+            Email = $"inject-{Guid.NewGuid():N}@test.local",
+            Password = "NewPass123!",
+            FirstName = "Injected",
+            LastName = "User",
+            Role = "Department",
+            TenantId = b.TenantId, // foreign tenant
+        });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        var err = await resp.Content.ReadFromJsonAsync<RoleGateErrorBody>();
+        err!.Error.Code.Should().Be("FORBIDDEN_TENANT_OVERRIDE");
+    }
+
+    private sealed record RoleGateErrorBody(RoleGateErrorPayload Error);
+    private sealed record RoleGateErrorPayload(string Code, string Message);
+
     [Fact]
     public async Task UnblockProcess_AsDepartmentRole_Returns403()
     {

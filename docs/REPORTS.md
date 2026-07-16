@@ -305,9 +305,3 @@ Run locally with the existing macOS Testcontainers setup:
 ```
 DOCKER_HOST=unix:///var/run/docker.sock dotnet test
 ```
-
-## Mirrored to easy-mes-be
-
-The full reports stack (BE code + tests + this doc) lives byte-identical in
-`easy-mes-be` at `/Users/milosmitrovic/Projects/skyhard/easy-mes-be`. Any
-change here must be mirrored. Use `diff -rq src/ tests/` to verify drift.

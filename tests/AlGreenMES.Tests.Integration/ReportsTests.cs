@@ -395,6 +395,106 @@ public class ReportsTests : IntegrationTestBase
         totalLate.Should().Be(1);
     }
 
+    [Fact]
+    public async Task DeliveryCompliance_week_buckets_start_on_monday_including_sunday_completions()
+    {
+        // BucketStart (ReportingQueryService ~347) uses ISO weeks: Monday=0,
+        // Sunday=6. A Sunday completion must land in the Monday-start bucket of
+        // its own week (Sunday − 6 days), not roll into the next week. Two
+        // completions in different ISO weeks → two Monday-anchored buckets.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+        var processId = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId, t.UserId);
+        var categoryId = await TestDataSeeder.SeedProductCategoryAsync(Factory, t.TenantId, t.UserId);
+        await TestDataSeeder.SeedCategoryProcessesAndDepsAsync(Factory, categoryId, new[] { processId });
+
+        // Pick a real Sunday, and a Wednesday of the previous ISO week.
+        var sunday = new DateTime(2026, 5, 3, 12, 0, 0, DateTimeKind.Utc);
+        while (sunday.DayOfWeek != DayOfWeek.Sunday) sunday = sunday.AddDays(1);
+        var prevWednesday = sunday.AddDays(-11); // Wed of the prior ISO week
+
+        // Order.Create rejects past delivery dates, so seed with a future
+        // delivery date; the CompletedAt (which drives bucketing) is set via
+        // completedAtOverride to the specific historical week.
+        var futureDelivery = DateTime.UtcNow.Date.AddDays(30);
+        await TestDataSeeder.SeedOrderWithProcessesAsync(
+            Factory, t.TenantId, t.UserId, categoryId,
+            new[] { processId }, new[] { ProcessStatus.Completed },
+            deliveryDate: futureDelivery, completedAtOverride: sunday);
+        await TestDataSeeder.SeedOrderWithProcessesAsync(
+            Factory, t.TenantId, t.UserId, categoryId,
+            new[] { processId }, new[] { ProcessStatus.Completed },
+            deliveryDate: futureDelivery, completedAtOverride: prevWednesday);
+        // Mark both orders Completed with the same CompletedAt used for bucketing.
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
+            await db.Orders.IgnoreQueryFilters()
+                .Where(o => o.TenantId == t.TenantId && o.Status != OrderStatus.Completed)
+                .ExecuteUpdateAsync(set => set.SetProperty(o => o.Status, OrderStatus.Completed));
+        }
+
+        var resp = await client.GetAsync(
+            $"/api/reports/delivery-compliance?granularity=Week" +
+            $"&from={prevWednesday.Date.AddDays(-7):yyyy-MM-dd}" +
+            $"&to={sunday.Date.AddDays(7):yyyy-MM-dd}");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        var buckets = doc.RootElement.GetProperty("buckets").EnumerateArray().ToList();
+
+        buckets.Should().HaveCount(2, "two completions in two distinct ISO weeks");
+        buckets.Select(b => b.GetProperty("bucketStart").GetDateTime().DayOfWeek)
+            .Should().OnlyContain(d => d == DayOfWeek.Monday, "week buckets anchor on Monday");
+        // The Sunday completion's bucket = the Monday six days earlier.
+        var sundayBucketStart = sunday.Date.AddDays(-6);
+        buckets.Select(b => b.GetProperty("bucketStart").GetDateTime().Date)
+            .Should().Contain(sundayBucketStart);
+    }
+
+    [Fact]
+    public async Task DeliveryCompliance_month_granularity_buckets_on_first_of_month()
+    {
+        // granularity=Month (BucketStart ~349) anchors on the 1st of the month.
+        // Two completions in different calendar months → two month-start buckets.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+        var processId = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId, t.UserId);
+        var categoryId = await TestDataSeeder.SeedProductCategoryAsync(Factory, t.TenantId, t.UserId);
+        await TestDataSeeder.SeedCategoryProcessesAndDepsAsync(Factory, categoryId, new[] { processId });
+
+        var march = new DateTime(2026, 3, 15, 10, 0, 0, DateTimeKind.Utc);
+        var april = new DateTime(2026, 4, 20, 10, 0, 0, DateTimeKind.Utc);
+        var futureDelivery = DateTime.UtcNow.Date.AddDays(30);
+
+        await TestDataSeeder.SeedOrderWithProcessesAsync(
+            Factory, t.TenantId, t.UserId, categoryId,
+            new[] { processId }, new[] { ProcessStatus.Completed },
+            deliveryDate: futureDelivery, completedAtOverride: march);
+        await TestDataSeeder.SeedOrderWithProcessesAsync(
+            Factory, t.TenantId, t.UserId, categoryId,
+            new[] { processId }, new[] { ProcessStatus.Completed },
+            deliveryDate: futureDelivery, completedAtOverride: april);
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<OrdersDbContext>();
+            await db.Orders.IgnoreQueryFilters()
+                .Where(o => o.TenantId == t.TenantId && o.Status != OrderStatus.Completed)
+                .ExecuteUpdateAsync(set => set.SetProperty(o => o.Status, OrderStatus.Completed));
+        }
+
+        var resp = await client.GetAsync(
+            "/api/reports/delivery-compliance?granularity=Month&from=2026-01-01&to=2026-06-30");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        var buckets = doc.RootElement.GetProperty("buckets").EnumerateArray()
+            .Select(b => b.GetProperty("bucketStart").GetDateTime().Date).ToList();
+
+        buckets.Should().HaveCount(2);
+        buckets.Should().OnlyContain(d => d.Day == 1, "month buckets anchor on the 1st");
+        buckets.Should().Contain(new DateTime(2026, 3, 1));
+        buckets.Should().Contain(new DateTime(2026, 4, 1));
+    }
+
     // ─── Cross-tenant isolation for the chart endpoints ────
 
     [Fact]

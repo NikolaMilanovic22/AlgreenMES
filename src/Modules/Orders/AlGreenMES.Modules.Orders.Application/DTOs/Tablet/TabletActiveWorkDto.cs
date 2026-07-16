@@ -24,7 +24,8 @@ public record TabletActiveWorkDto(
     int TotalProcessCount,
     List<TabletSubProcessDto> SubProcesses,
     string? OrderNotes,
-    string? ItemNotes);
+    string? ItemNotes,
+    int AttachmentCount = 0);
 
 public record TabletSubProcessDto(
     Guid Id,

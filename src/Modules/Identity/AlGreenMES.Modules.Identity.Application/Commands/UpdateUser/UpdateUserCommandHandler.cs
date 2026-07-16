@@ -73,7 +73,7 @@ public class UpdateUserCommandHandler : IRequestHandler<UpdateUserCommand, UserD
             throw new ForbiddenException("FORBIDDEN_ROLE_ASSIGNMENT", "The SuperAdmin role can only be granted or revoked directly in the database.");
 
         // Sprint 3.0 F-1 — refuse to demote the last active Admin in a tenant.
-        // Tenant lockout is the exact scenario that bit easy-mes (see
+        // Tenant lockout is the exact scenario the Sprint 3.0 audit flagged (see
         // audit/01_forensics.md). The SuperAdmin platform role is not counted
         // per tenant, so it doesn't help here — Admin is the tenant-level
         // governance role.

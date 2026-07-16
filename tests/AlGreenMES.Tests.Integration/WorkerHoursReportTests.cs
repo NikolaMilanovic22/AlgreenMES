@@ -363,6 +363,68 @@ public class WorkerHoursReportTests : IntegrationTestBase
         daily.GetProperty("activeMinutes").GetInt32().Should().Be(480);
     }
 
+    [Fact]
+    public async Task WorkerHours_noShiftConfigured_uses8hRegularCap_andDoesNotClampTotal()
+    {
+        // Fallback branch (no shift for the tenant): the report must still be
+        // sane — regular caps at the 8h default, overtime is the remainder, and
+        // the raw worked total is NOT clamped by an absurd auto-logout cap.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Department);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+        // Deliberately NO SeedShiftAsync.
+
+        var day = DateTime.UtcNow.Date.AddDays(-1).AddHours(6);
+        await TestDataSeeder.SeedWorkSessionAsync(Factory, t.TenantId, t.UserId, day, day.AddHours(10));
+
+        var from = DateOnly.FromDateTime(day).AddDays(-1);
+        var to = DateOnly.FromDateTime(day).AddDays(1);
+        var resp = await client.GetAsync($"/api/reports/worker-hours?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+
+        var worker = doc.RootElement.GetProperty("workers").EnumerateArray()
+            .Single(w => w.GetProperty("userId").GetGuid() == t.UserId);
+        worker.GetProperty("totalWorkedMinutes").GetInt32().Should().Be(600, "no shift → raw 10h total is not clamped");
+        worker.GetProperty("regularMinutes").GetInt32().Should().Be(480, "no shift → 8h default regular cap");
+        worker.GetProperty("overtimeMinutes").GetInt32().Should().Be(120);
+    }
+
+    [Fact]
+    public async Task WorkerHours_active_unionsOverlappingLogs_doesNotDoubleCount()
+    {
+        // Two parallel active logs (worker running two timers at once) must be
+        // UNIONED, not summed — otherwise Aktivno inflates and Nepokriveno
+        // understates. Only the non-overlapping case was covered before.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Department);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+        await TestDataSeeder.SeedShiftAsync(
+            Factory, t.TenantId,
+            startTime: new TimeOnly(6, 0), endTime: new TimeOnly(14, 0),
+            maxOvertimeHours: 6);
+
+        var day = DateTime.UtcNow.Date.AddDays(-1).AddHours(6);
+        await TestDataSeeder.SeedWorkSessionAsync(Factory, t.TenantId, t.UserId, day, day.AddHours(8));
+
+        var processId = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId);
+        var categoryId = await TestDataSeeder.SeedProductCategoryAsync(Factory, t.TenantId);
+        var oipId = await TestDataSeeder.SeedOrderItemProcessAsync(
+            Factory, t.TenantId, t.UserId, processId, categoryId, ProcessStatus.InProgress);
+        // Overlapping logs: [day → day+4h] and [day+2h → day+6h] → union = 6h.
+        await SeedProcessLogAsync(t.TenantId, oipId, t.UserId, day, day.AddHours(4));
+        await SeedProcessLogAsync(t.TenantId, oipId, t.UserId, day.AddHours(2), day.AddHours(6));
+
+        var from = DateOnly.FromDateTime(day).AddDays(-1);
+        var to = DateOnly.FromDateTime(day).AddDays(1);
+        var resp = await client.GetAsync($"/api/reports/worker-hours?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+
+        var worker = doc.RootElement.GetProperty("workers").EnumerateArray()
+            .Single(w => w.GetProperty("userId").GetGuid() == t.UserId);
+        var daily = worker.GetProperty("dailyBreakdown").EnumerateArray().Single();
+        daily.GetProperty("activeMinutes").GetInt32().Should().Be(360, "6h union of overlapping logs, not the 8h naive sum");
+    }
+
     /// <summary>Helper: seed an OrderItemProcessLog with explicit timestamps.</summary>
     private async Task SeedProcessLogAsync(Guid tenantId, Guid oipId, Guid userId, DateTime start, DateTime? end)
     {
@@ -524,5 +586,96 @@ public class WorkerHoursReportTests : IntegrationTestBase
         daily.GetProperty("activeMinutes").GetInt32().Should().Be(480);
         // Uncovered = totalWorked (540) − active (480) = 60 min — i.e. the gap.
         daily.GetProperty("uncoveredMinutes").GetInt32().Should().Be(60);
+    }
+
+    [Fact]
+    public async Task WorkerHours_autoLogout_cap_matches_shift_by_LOCAL_time_not_utc()
+    {
+        // Regression for the auto-logout CAP path (ComputeEffectiveSessionEnd —
+        // the "4th timezone site"): the cap = checkIn + matchedShiftDuration +
+        // maxOvertime, and the shift is matched on tenant-LOCAL time-of-day, not
+        // UTC. Two shifts of DIFFERENT duration so the choice is observable:
+        //   night 22:00–06:00 (8h) and day 06:00–16:00 (10h), maxOvertime 6h.
+        // Check-in 2026-06-15 04:30 UTC = 06:30 CEST (summer, UTC+2) → the DAY
+        // shift (10h) → cap = 16h = 960 min. A UTC regression would match 04:30
+        // to the NIGHT shift (8h) → cap 14h = 840, so 960 proves local matching.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Department);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        await TestDataSeeder.SeedShiftAsync(
+            Factory, t.TenantId, name: "Noćna",
+            startTime: new TimeOnly(22, 0), endTime: new TimeOnly(6, 0),
+            maxOvertimeHours: 6);
+        await TestDataSeeder.SeedShiftAsync(
+            Factory, t.TenantId, name: "Dnevna",
+            startTime: new TimeOnly(6, 0), endTime: new TimeOnly(16, 0),
+            maxOvertimeHours: 6);
+
+        // 04:30 UTC = 06:30 local (CEST); absurd 20h checkout so the cap clamps.
+        var checkIn = new DateTime(2026, 6, 15, 4, 30, 0, DateTimeKind.Utc);
+        await TestDataSeeder.SeedWorkSessionAsync(
+            Factory, t.TenantId, t.UserId, checkIn, checkIn.AddHours(20));
+
+        var resp = await client.GetAsync("/api/reports/worker-hours?from=2026-06-15&to=2026-06-15");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+
+        var worker = doc.RootElement.GetProperty("workers").EnumerateArray()
+            .Single(w => w.GetProperty("userId").GetGuid() == t.UserId);
+        // Day shift (10h) + 6h OT = 16h = 960. UTC regression → night (8h)+6h = 840.
+        worker.GetProperty("totalWorkedMinutes").GetInt32().Should().Be(960);
+    }
+
+    [Fact]
+    public async Task WorkerHours_efficiency_capped_at_100_when_active_exceeds_effective()
+    {
+        // Saša 08.07.2026 — Efikasnost = Aktivno / Efektivno × 100. Aktivno is
+        // raw session-active time; Efektivno subtracts the shift break. So a
+        // worker active for the whole session has active > effective and the
+        // ratio exceeds 100%, which isn't meaningful to show. Both the per-DAY
+        // row (ReportingQueryService l.1339) and the per-worker summary (l.270)
+        // must cap at 100%.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Department);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        await TestDataSeeder.SeedShiftAsync(
+            Factory, t.TenantId,
+            startTime: new TimeOnly(6, 0),
+            endTime: new TimeOnly(14, 0),
+            breakMinutes: 30,        // effective = worked − 30
+            maxOvertimeHours: 6);
+
+        var day = DateTime.UtcNow.Date.AddDays(-1).AddHours(6);
+        // 8h30m session: worked = 510, effective = 480.
+        await TestDataSeeder.SeedWorkSessionAsync(
+            Factory, t.TenantId, t.UserId, day, day.AddMinutes(510));
+
+        // Process log covering the FULL session → active = 510 > effective = 480,
+        // so the raw ratio would be 106.25%.
+        var processId = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId);
+        var categoryId = await TestDataSeeder.SeedProductCategoryAsync(Factory, t.TenantId);
+        var oipId = await TestDataSeeder.SeedOrderItemProcessAsync(
+            Factory, t.TenantId, t.UserId, processId, categoryId, ProcessStatus.InProgress);
+        await SeedProcessLogAsync(t.TenantId, oipId, t.UserId, day, day.AddMinutes(510));
+
+        var from = DateOnly.FromDateTime(day).AddDays(-1);
+        var to = DateOnly.FromDateTime(day).AddDays(1);
+        var resp = await client.GetAsync(
+            $"/api/reports/worker-hours?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+
+        var worker = doc.RootElement.GetProperty("workers").EnumerateArray()
+            .Single(w => w.GetProperty("userId").GetGuid() == t.UserId);
+
+        // Sanity: this genuinely is the active>effective case (raw = 106.25%).
+        var daily = worker.GetProperty("dailyBreakdown").EnumerateArray().Single();
+        daily.GetProperty("activeMinutes").GetInt32().Should().Be(510);
+        daily.GetProperty("effectiveMinutes").GetInt32().Should().Be(480);
+
+        // Per-DAY efficiency capped (the site the original fix missed).
+        daily.GetProperty("efficiencyPercent").GetDouble().Should().Be(100.0);
+        // Per-worker summary efficiency capped.
+        worker.GetProperty("efficiencyPercent").GetDouble().Should().Be(100.0);
     }
 }

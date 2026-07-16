@@ -88,6 +88,9 @@ public class ChangeRequestRepository : IChangeRequestRepository
             case "updatedat":
                 sorted = isDescending ? query.OrderByDescending(cr => cr.UpdatedAt) : query.OrderBy(cr => cr.UpdatedAt);
                 break;
+            case "handledat":
+                sorted = isDescending ? query.OrderByDescending(cr => cr.HandledAt) : query.OrderBy(cr => cr.HandledAt);
+                break;
             default: // createdAt desc
                 sorted = isDescending ? query.OrderByDescending(cr => cr.CreatedAt) : query.OrderBy(cr => cr.CreatedAt);
                 break;

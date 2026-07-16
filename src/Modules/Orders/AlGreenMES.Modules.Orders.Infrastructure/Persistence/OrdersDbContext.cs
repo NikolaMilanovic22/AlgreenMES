@@ -27,6 +27,7 @@ public class OrdersDbContext : DbContext, IOrdersUnitOfWork
     public DbSet<OrderAttachment> OrderAttachments => Set<OrderAttachment>();
     public DbSet<OrderManualProcess> OrderManualProcesses => Set<OrderManualProcess>();
     public DbSet<OrderManualProcessDependency> OrderManualProcessDependencies => Set<OrderManualProcessDependency>();
+    public DbSet<ProcessedAction> ProcessedActions => Set<ProcessedAction>();
 
     public OrdersDbContext(DbContextOptions<OrdersDbContext> options, ICurrentUserService currentUser)
         : base(options)

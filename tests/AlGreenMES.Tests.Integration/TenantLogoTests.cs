@@ -199,6 +199,24 @@ public class TenantLogoTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task UploadMyLogo_OverTwoMegabytes_Returns400_LOGO_TOO_LARGE()
+    {
+        // MaxFileSizeBytes = 2 MB (LocalTenantLogoStorage); the [RequestSizeLimit]
+        // is a looser 5 MB, so a 3 MB upload passes the MVC gate and trips the
+        // handler's own size check (TenantsController ~194) → LOGO_TOO_LARGE.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        var tooBig = new byte[3 * 1024 * 1024]; // 3 MB > 2 MB cap
+        var resp = await client.PostAsync("/api/tenants/me/logo",
+            BuildLogoForm(tooBig, "logo.png", "image/png"));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var err = await resp.Content.ReadFromJsonAsync<ErrorBody>();
+        err!.Error.Code.Should().Be("LOGO_TOO_LARGE");
+    }
+
+    [Fact]
     public async Task UploadMyLogo_AsCoordinator_Returns403()
     {
         // Coordinator / Manager / Magacioner don't run the company's brand —

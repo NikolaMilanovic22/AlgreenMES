@@ -15,19 +15,22 @@ public class GetTabletIncomingQueryHandler : IRequestHandler<GetTabletIncomingQu
     private readonly ISpecialRequestTypeRepository _specialRequestTypeRepository;
     private readonly IUserRepository _userRepository;
     private readonly IProcessRepository _processRepository;
+    private readonly IOrderAttachmentRepository _attachmentRepository;
 
     public GetTabletIncomingQueryHandler(
         IOrderRepository orderRepository,
         IProductCategoryRepository categoryRepository,
         ISpecialRequestTypeRepository specialRequestTypeRepository,
         IUserRepository userRepository,
-        IProcessRepository processRepository)
+        IProcessRepository processRepository,
+        IOrderAttachmentRepository attachmentRepository)
     {
         _orderRepository = orderRepository;
         _categoryRepository = categoryRepository;
         _specialRequestTypeRepository = specialRequestTypeRepository;
         _userRepository = userRepository;
         _processRepository = processRepository;
+        _attachmentRepository = attachmentRepository;
     }
 
     public async Task<IReadOnlyList<ProcessGroupDto<TabletIncomingDto>>> Handle(GetTabletIncomingQuery request, CancellationToken cancellationToken)
@@ -43,12 +46,22 @@ public class GetTabletIncomingQueryHandler : IRequestHandler<GetTabletIncomingQu
         var specialRequestTypes = await _specialRequestTypeRepository.GetByTenantIdAsync(request.TenantId, cancellationToken);
         var srLookup = specialRequestTypes.ToDictionary(s => s.Id, s => s.Name);
 
+        // Batch-load processes + categories + attachment counts once, instead of
+        // per-iteration N+1 queries (same fix already applied to queue/active).
+        var prodProcessLookup = (await _processRepository.GetByIdsAsync(userProcessIds, cancellationToken))
+            .ToDictionary(p => p.Id);
+        var categoryIds = orders.SelectMany(o => o.Items).Select(i => i.ProductCategoryId).Distinct().ToList();
+        var categoryLookup = (await _categoryRepository.GetByIdsWithDetailsAsync(categoryIds, cancellationToken))
+            .ToDictionary(c => c.Id);
+        var attachmentCounts = AttachmentCountLookup.Build(
+            await _attachmentRepository.GetRefsByOrderIdsAsync(
+                orders.Select(o => o.Id).ToList(), cancellationToken));
+
         var result = new List<ProcessGroupDto<TabletIncomingDto>>();
 
         foreach (var processId in userProcessIds)
         {
-            var prodProcess = await _processRepository.GetByIdAsync(processId, cancellationToken);
-            if (prodProcess == null) continue;
+            if (!prodProcessLookup.TryGetValue(processId, out var prodProcess)) continue;
 
             var items = new List<TabletIncomingDto>();
 
@@ -62,7 +75,7 @@ public class GetTabletIncomingQueryHandler : IRequestHandler<GetTabletIncomingQu
 
                 foreach (var item in order.Items)
                 {
-                    var category = await _categoryRepository.GetByIdWithDetailsAsync(item.ProductCategoryId, cancellationToken);
+                    categoryLookup.TryGetValue(item.ProductCategoryId, out var category);
 
                     var specialRequestNames = item.SpecialRequests
                         .Select(sr => srLookup.GetValueOrDefault(sr.SpecialRequestTypeId, ""))
@@ -110,7 +123,8 @@ public class GetTabletIncomingQueryHandler : IRequestHandler<GetTabletIncomingQu
                             SpecialRequestNames = specialRequestNames,
                             CompletedProcessCount = completedCount,
                             TotalProcessCount = totalCount,
-                            BlockingProcesses = blockingProcesses
+                            BlockingProcesses = blockingProcesses,
+                            AttachmentCount = attachmentCounts.CountFor(order.Id, item.Id)
                         };
                         items.Add(dto);
                     }

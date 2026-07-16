@@ -3,4 +3,4 @@ using MediatR;
 
 namespace AlGreenMES.Modules.Orders.Application.Commands.StartSubProcess;
 
-public record StartSubProcessCommand(Guid OrderItemSubProcessId, Guid UserId) : IRequest<OrderItemSubProcessDto>;
+public record StartSubProcessCommand(Guid OrderItemSubProcessId, Guid UserId, DateTime? OccurredAt = null, Guid? ActionId = null) : IRequest<OrderItemSubProcessDto>;

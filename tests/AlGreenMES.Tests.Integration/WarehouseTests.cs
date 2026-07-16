@@ -218,6 +218,121 @@ public class WarehouseTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task Outflow_multiline_same_material_over_stock_is_rejected_atomically()
+    {
+        // CreateStockEntryCommandHandler groups Outflow lines by material and
+        // sums them BEFORE any save (~51-72). Stock 5; a single Outflow with two
+        // 3-unit lines of the SAME material totals 6 > 5 → STOCK_INSUFFICIENT.
+        // Nothing must persist: stock stays 5 and no history rows are written.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        var materialId = await SeedMaterialAsync(client, "M-ATOM", min: 0, max: 100);
+        await client.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Inflow", documentReference = "U/A", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 5m, unitPrice = (decimal?)10m, notes = (string?)null } }
+        });
+
+        var resp = await client.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Outflow", documentReference = "ORD-ATOM", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[]
+            {
+                new { materialId, quantity = 3m, unitPrice = (decimal?)null, notes = (string?)null },
+                new { materialId, quantity = 3m, unitPrice = (decimal?)null, notes = (string?)null },
+            }
+        });
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("STOCK_INSUFFICIENT");
+
+        // Stock unchanged (still the 5 from the Inflow).
+        var stanje = (await (await client.GetAsync("/api/warehouse/stock")).Content.ReadFromJsonAsync<List<StanjeResp>>())!;
+        stanje.Single(s => s.MaterialId == materialId).Quantity.Should().Be(5m);
+
+        // Zero Outflow history rows for this material — the reject was atomic.
+        var page = (await (await client.GetAsync($"/api/warehouse/history?materialId={materialId}&type=Outflow")).Content.ReadFromJsonAsync<HistoryPageResp>())!;
+        page.Items.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task MaterialLowStock_does_not_fire_when_outflow_lands_exactly_on_min()
+    {
+        // Boundary (CreateStockEntryCommandHandler ~131): the notification fires
+        // only when before >= min AND after < min. min=5, stock 10, take 5 →
+        // after = 5, which is NOT below min → silent. Take 1 more → after = 4 <
+        // min → exactly one notification.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var adminClient = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+        var (_, coordEmail, coordPw) = await TestDataSeeder.SeedAdditionalUserWithCredsAsync(Factory, t.TenantId, UserRole.Coordinator);
+        var coordClient = Factory.CreateClient();
+        coordClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer", await TestDataSeeder.LoginAndGetTokenAsync(coordClient, coordEmail, coordPw, t.TenantCode));
+
+        var materialId = await SeedMaterialAsync(adminClient, "M-EXACT", min: 5, max: 100);
+        await adminClient.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Inflow", documentReference = "U/E", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 10m, unitPrice = (decimal?)5m, notes = (string?)null } }
+        });
+
+        // Take 5 → on-hand exactly 5 (== min, not below) → NO notification.
+        await adminClient.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Outflow", documentReference = "ORD-E1", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 5m, unitPrice = (decimal?)null, notes = (string?)null } }
+        });
+
+        async Task<int> LowCountAsync()
+        {
+            var p = (await (await coordClient.GetAsync("/api/notifications?pageSize=50")).Content.ReadFromJsonAsync<NotificationPageResp>())!;
+            return p.Items.Count(n => n.Type == "MaterialLowStock" && n.ReferenceId == materialId);
+        }
+
+        (await LowCountAsync()).Should().Be(0, "on-hand landed exactly on min, not below it");
+
+        // Take 1 more → on-hand 4 < min → exactly one notification.
+        await adminClient.PostAsJsonAsync("/api/warehouse/entries", new
+        {
+            type = "Outflow", documentReference = "ORD-E2", movementDate = DateTime.UtcNow, notes = (string?)null,
+            lines = new[] { new { materialId, quantity = 1m, unitPrice = (decimal?)null, notes = (string?)null } }
+        });
+
+        (await LowCountAsync()).Should().Be(1, "crossing from at-min to below-min fires exactly once");
+    }
+
+    [Fact]
+    public async Task Material_Update_with_min_greater_than_max_is_rejected()
+    {
+        // Material.ValidateThresholds (~112-118): min > max (when max > 0) →
+        // MATERIAL_MIN_GT_MAX; negative min → MATERIAL_MIN_NEGATIVE. Domain
+        // errors surface as 400.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Admin);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+        var materialId = await SeedMaterialAsync(client, "M-THRESH", min: 5, max: 50);
+
+        var minGtMax = await client.PutAsJsonAsync($"/api/materials/{materialId}", new
+        {
+            name = "Test", unit = "kom", category = "Test",
+            minQuantity = 100, maxQuantity = 10,
+            dimensionX = (decimal?)null, dimensionY = (decimal?)null, dimensionZ = (decimal?)null,
+            location = (string?)null, notes = (string?)null,
+        });
+        minGtMax.StatusCode.Should().BeOneOf(HttpStatusCode.BadRequest, HttpStatusCode.UnprocessableEntity);
+        (await minGtMax.Content.ReadAsStringAsync()).Should().Contain("MATERIAL_MIN_GT_MAX");
+
+        var negativeMin = await client.PutAsJsonAsync($"/api/materials/{materialId}", new
+        {
+            name = "Test", unit = "kom", category = "Test",
+            minQuantity = -1, maxQuantity = 50,
+            dimensionX = (decimal?)null, dimensionY = (decimal?)null, dimensionZ = (decimal?)null,
+            location = (string?)null, notes = (string?)null,
+        });
+        negativeMin.StatusCode.Should().BeOneOf(HttpStatusCode.BadRequest, HttpStatusCode.UnprocessableEntity);
+        (await negativeMin.Content.ReadAsStringAsync()).Should().Contain("MATERIAL_MIN_NEGATIVE");
+    }
+
+    [Fact]
     public async Task History_returns_MaterialCode_and_MaterialName_in_English_DTO_fields()
     {
         // Regression guard: StockMovementDto.MaterialCode / MaterialName used

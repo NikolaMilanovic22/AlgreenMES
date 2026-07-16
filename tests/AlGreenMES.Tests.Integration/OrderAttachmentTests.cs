@@ -110,9 +110,110 @@ public class OrderAttachmentTests : IntegrationTestBase
         resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
+    [Fact]
+    public async Task DownloadAttachment_PdfWithSerbianFilename_Returns200_WithRfc5987ContentDisposition()
+    {
+        // MES-API-F fix (OrdersController ~325): a PDF whose original filename
+        // contains Serbian diacritics (š/č/ž) must be served via
+        // ContentDispositionHeaderValue.SetHttpFileName so the header is
+        // RFC 5987 encoded (filename*=UTF-8''…). A raw non-ASCII byte in the
+        // header throws "Invalid non-ASCII character in header" → 500.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Manager);
+        var orderId = await TestDataSeeder.SeedOrderAsync(Factory, t.TenantId, t.UserId);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        const string serbianName = "Račun-š-č-ž.pdf";
+        using var form = BuildMultipart(BuildTinyPdfBytes(), serbianName, "application/pdf");
+        var uploadResp = await client.PostAsync($"/api/orders/{orderId}/attachments", form);
+        uploadResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var uploadDoc = JsonDocument.Parse(await uploadResp.Content.ReadAsStringAsync());
+        var attachmentId = uploadDoc.RootElement.GetProperty("id").GetGuid();
+
+        var resp = await client.GetAsync($"/api/orders/{orderId}/attachments/{attachmentId}/download");
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var contentDisposition = ReadContentDisposition(resp);
+        contentDisposition.Should().NotBeNull();
+        contentDisposition!.Should().Contain("filename*=UTF-8''",
+            "non-ASCII filenames must be RFC 5987 encoded");
+        contentDisposition.Should().NotContain("š", "the raw diacritic must not appear in the header");
+    }
+
+    [Fact]
+    public async Task DownloadAttachment_PngWithSerbianFilename_Returns200_WithRfc5987ContentDisposition()
+    {
+        // The non-PDF path uses File(stream, contentType, originalFileName),
+        // which ASP.NET also RFC 5987-encodes. Guard both branches.
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory, UserRole.Manager);
+        var orderId = await TestDataSeeder.SeedOrderAsync(Factory, t.TenantId, t.UserId);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+
+        using var form = BuildMultipart(BuildTinyPngBytes(), "Nacrt-šćž.png", "image/png");
+        var uploadResp = await client.PostAsync($"/api/orders/{orderId}/attachments", form);
+        uploadResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var uploadDoc = JsonDocument.Parse(await uploadResp.Content.ReadAsStringAsync());
+        var attachmentId = uploadDoc.RootElement.GetProperty("id").GetGuid();
+
+        var resp = await client.GetAsync($"/api/orders/{orderId}/attachments/{attachmentId}/download");
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var contentDisposition = ReadContentDisposition(resp);
+        contentDisposition.Should().NotBeNull();
+        contentDisposition!.Should().Contain("filename*=UTF-8''");
+        contentDisposition.Should().NotContain("š");
+    }
+
+    private static string? ReadContentDisposition(HttpResponseMessage resp)
+    {
+        if (resp.Content.Headers.ContentDisposition is { } cd)
+            return cd.ToString();
+        return resp.Content.Headers.TryGetValues("Content-Disposition", out var v)
+            ? string.Join("", v)
+            : null;
+    }
+
+    [Fact]
+    public async Task DeleteAttachment_CrossTenant_IsRejected_AndFilePersists_ButOwnerCanDelete()
+    {
+        // DeleteOrderAttachmentCommandHandler compares attachment.TenantId to
+        // the request. Tenant B must not be able to delete tenant A's
+        // attachment; the owner (A) can.
+        var (a, b) = await TestDataSeeder.SeedTwoTenantsAsync(Factory, UserRole.Manager, UserRole.Manager);
+        var orderId = await TestDataSeeder.SeedOrderAsync(Factory, a.TenantId, a.UserId);
+        var clientA = await TestDataSeeder.AuthenticatedClientAsync(Factory, a);
+
+        using var form = BuildMultipart(BuildTinyPngBytes(), "test.png", "image/png");
+        var uploadResp = await clientA.PostAsync($"/api/orders/{orderId}/attachments", form);
+        uploadResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var uploadDoc = JsonDocument.Parse(await uploadResp.Content.ReadAsStringAsync());
+        var attachmentId = uploadDoc.RootElement.GetProperty("id").GetGuid();
+
+        // Tenant B tries to delete A's attachment.
+        var clientB = await TestDataSeeder.AuthenticatedClientAsync(Factory, b);
+        var crossDelete = await clientB.DeleteAsync(
+            $"/api/orders/{orderId}/attachments/{attachmentId}?tenantId={b.TenantId}");
+        crossDelete.IsSuccessStatusCode.Should().BeFalse("tenant B must not delete tenant A's attachment");
+
+        // Still present — A can still download it.
+        var stillThere = await clientA.GetAsync($"/api/orders/{orderId}/attachments/{attachmentId}/download");
+        stillThere.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Owner deletes → 204 and gone.
+        var ownDelete = await clientA.DeleteAsync(
+            $"/api/orders/{orderId}/attachments/{attachmentId}?tenantId={a.TenantId}");
+        ownDelete.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        var afterDelete = await clientA.GetAsync($"/api/orders/{orderId}/attachments/{attachmentId}/download");
+        afterDelete.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
     // ---------------------------------------------------------------------
     // Helpers — keep test bodies focused on the assertion.
     // ---------------------------------------------------------------------
+
+    /// <summary>Minimal valid-enough PDF payload (header + EOF marker).</summary>
+    private static byte[] BuildTinyPdfBytes() =>
+        System.Text.Encoding.ASCII.GetBytes("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF");
 
     private static MultipartFormDataContent BuildMultipart(byte[] bytes, string fileName, string contentType)
     {

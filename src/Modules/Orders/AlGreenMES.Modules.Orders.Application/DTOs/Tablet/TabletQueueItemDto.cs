@@ -20,4 +20,5 @@ public record TabletQueueItemDto(
     int TotalProcessCount,
     int TotalDurationMinutes,
     string? OrderNotes,
-    string? ItemNotes);
+    string? ItemNotes,
+    int AttachmentCount = 0);

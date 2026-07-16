@@ -190,6 +190,37 @@ public class BlocksPerProcessReportTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task BlocksPerProcess_duration_handles_cross_midnight_shift()
+    {
+        // Cross-midnight shift 22:00 → 06:00 (WorkingMinutesBetween ~1552 splits
+        // it into [22:00, 24:00) + [00:00, 06:00) per day). A block created at
+        // 20:00 (before the shift opens) and handled 08:00 next day (after it
+        // closes) should count only the 8 in-shift hours: 2h on day 1 (22–24)
+        // plus 6h on day 2 (00–06).
+        var t = await TestDataSeeder.SeedTenantWithUserAsync(Factory);
+        var client = await TestDataSeeder.AuthenticatedClientAsync(Factory, t);
+        await TestDataSeeder.SeedShiftAsync(
+            Factory, t.TenantId, startTime: new TimeOnly(22, 0), endTime: new TimeOnly(6, 0));
+        var processId = await TestDataSeeder.SeedProcessAsync(Factory, t.TenantId, t.UserId);
+        var categoryId = await TestDataSeeder.SeedProductCategoryAsync(Factory, t.TenantId, t.UserId);
+        var oip = await TestDataSeeder.SeedOrderItemProcessAsync(
+            Factory, t.TenantId, t.UserId, processId, categoryId, status: ProcessStatus.InProgress);
+
+        var created = new DateTime(2026, 5, 4, 20, 0, 0, DateTimeKind.Utc);
+        var handled = new DateTime(2026, 5, 5, 8, 0, 0, DateTimeKind.Utc);
+        await TestDataSeeder.SeedBlockRequestAsync(
+            Factory, t.TenantId, oip, t.UserId, RequestStatus.Resolved, created, handled);
+
+        var resp = await client.GetAsync("/api/reports/blocks-per-process");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        var row = doc.RootElement.GetProperty("processes").EnumerateArray()
+            .Single(p => p.GetProperty("processId").GetGuid() == processId);
+
+        row.GetProperty("averageDurationHours").GetDouble().Should().BeApproximately(8.0, 0.1);
+    }
+
+    [Fact]
     public async Task BlocksPerProcess_unauthenticated_returns_401()
     {
         var anon = Factory.CreateClient();

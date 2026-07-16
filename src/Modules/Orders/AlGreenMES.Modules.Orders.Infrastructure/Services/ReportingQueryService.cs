@@ -1336,7 +1336,13 @@ public class ReportingQueryService : IReportingQueryService
                 // Efektivno (separate column).
                 active = Math.Min(active, totalWorked);
                 var uncovered = Math.Max(0, totalWorked - active);
-                var efficiency = effective > 0 ? Math.Round(100.0 * active / effective, 1) : 0.0;
+                // Cap efficiency at 100% (Saša 08.07.2026): active can exceed
+                // effective for a no-break-adjusted session, but >100% isn't
+                // meaningful to show. Same cap as the per-worker summary (l.270)
+                // and the work-efficiency report (l.973); this is the per-DAY row.
+                var efficiency = effective > 0
+                    ? Math.Min(Math.Round(100.0 * active / effective, 1), 100.0)
+                    : 0.0;
 
                 // Auto-logout-applied flag (Bojan Excel v2 column M): derived
                 // from the persisted WasAutoClosed flag on the underlying

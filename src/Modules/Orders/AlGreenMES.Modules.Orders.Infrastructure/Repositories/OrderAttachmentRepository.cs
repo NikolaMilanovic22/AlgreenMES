@@ -34,6 +34,15 @@ public class OrderAttachmentRepository : IOrderAttachmentRepository
         => await _dbContext.OrderAttachments
             .CountAsync(a => a.OrderId == orderId && a.OrderItemId == null, cancellationToken);
 
+    public async Task<IReadOnlyList<OrderAttachmentRef>> GetRefsByOrderIdsAsync(IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken = default)
+    {
+        if (orderIds.Count == 0) return [];
+        return await _dbContext.OrderAttachments
+            .Where(a => orderIds.Contains(a.OrderId))
+            .Select(a => new OrderAttachmentRef(a.OrderId, a.OrderItemId))
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<int> GetCountByOrderItemIdAsync(Guid orderItemId, CancellationToken cancellationToken = default)
         => await _dbContext.OrderAttachments
             .CountAsync(a => a.OrderItemId == orderItemId, cancellationToken);

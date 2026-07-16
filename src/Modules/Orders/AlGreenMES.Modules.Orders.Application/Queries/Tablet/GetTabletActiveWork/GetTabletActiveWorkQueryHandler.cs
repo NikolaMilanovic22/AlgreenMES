@@ -15,19 +15,22 @@ public class GetTabletActiveWorkQueryHandler : IRequestHandler<GetTabletActiveWo
     private readonly ISpecialRequestTypeRepository _specialRequestTypeRepository;
     private readonly IUserRepository _userRepository;
     private readonly IProcessRepository _processRepository;
+    private readonly IOrderAttachmentRepository _attachmentRepository;
 
     public GetTabletActiveWorkQueryHandler(
         IOrderRepository orderRepository,
         IProductCategoryRepository categoryRepository,
         ISpecialRequestTypeRepository specialRequestTypeRepository,
         IUserRepository userRepository,
-        IProcessRepository processRepository)
+        IProcessRepository processRepository,
+        IOrderAttachmentRepository attachmentRepository)
     {
         _orderRepository = orderRepository;
         _categoryRepository = categoryRepository;
         _specialRequestTypeRepository = specialRequestTypeRepository;
         _userRepository = userRepository;
         _processRepository = processRepository;
+        _attachmentRepository = attachmentRepository;
     }
 
     public async Task<IReadOnlyList<ProcessGroupDto<TabletActiveWorkDto>>> Handle(GetTabletActiveWorkQuery request, CancellationToken cancellationToken)
@@ -50,6 +53,11 @@ public class GetTabletActiveWorkQueryHandler : IRequestHandler<GetTabletActiveWo
         var categoryIds = orders.SelectMany(o => o.Items).Select(i => i.ProductCategoryId).Distinct().ToList();
         var categoryLookup = (await _categoryRepository.GetByIdsWithDetailsAsync(categoryIds, cancellationToken))
             .ToDictionary(c => c.Id);
+
+        // Batch-load attachment counts once (same N+1 avoidance as the queue).
+        var attachmentCounts = AttachmentCountLookup.Build(
+            await _attachmentRepository.GetRefsByOrderIdsAsync(
+                orders.Select(o => o.Id).ToList(), cancellationToken));
 
         var result = new List<ProcessGroupDto<TabletActiveWorkDto>>();
 
@@ -127,7 +135,8 @@ public class GetTabletActiveWorkQueryHandler : IRequestHandler<GetTabletActiveWo
                             TotalDurationMinutes = totalDuration,
                             IsTimerRunning = isTimerRunning,
                             CurrentLogStartedAt = currentLogStartedAt,
-                            SubProcesses = subDtos
+                            SubProcesses = subDtos,
+                            AttachmentCount = attachmentCounts.CountFor(order.Id, item.Id)
                         };
                         items.Add(dto);
                     }

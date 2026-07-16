@@ -99,13 +99,13 @@ public class OrderItemSubProcess : TenantEntity
         UpdatedAt = DateTime.UtcNow;
     }
 
-    public OrderItemSubProcessLog StartLog(Guid userId)
+    public OrderItemSubProcessLog StartLog(Guid userId, DateTime? occurredAt = null)
     {
         var openLog = _logs.FirstOrDefault(l => l.EndTime == null);
         if (openLog != null)
             throw new DomainException("LOG_ALREADY_OPEN", "There is already an open log entry for this sub-process.");
 
-        var log = OrderItemSubProcessLog.Start(TenantIdRequired, Id, userId);
+        var log = OrderItemSubProcessLog.Start(TenantIdRequired, Id, userId, occurredAt);
         _logs.Add(log);
         PausedOnLogoutAt = null; // started — no longer eligible for auto-resume
         UpdatedAt = DateTime.UtcNow;

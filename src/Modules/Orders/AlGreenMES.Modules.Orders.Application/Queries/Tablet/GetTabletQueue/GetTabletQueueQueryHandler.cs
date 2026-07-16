@@ -15,19 +15,22 @@ public class GetTabletQueueQueryHandler : IRequestHandler<GetTabletQueueQuery, I
     private readonly ISpecialRequestTypeRepository _specialRequestTypeRepository;
     private readonly IUserRepository _userRepository;
     private readonly IProcessRepository _processRepository;
+    private readonly IOrderAttachmentRepository _attachmentRepository;
 
     public GetTabletQueueQueryHandler(
         IOrderRepository orderRepository,
         IProductCategoryRepository categoryRepository,
         ISpecialRequestTypeRepository specialRequestTypeRepository,
         IUserRepository userRepository,
-        IProcessRepository processRepository)
+        IProcessRepository processRepository,
+        IOrderAttachmentRepository attachmentRepository)
     {
         _orderRepository = orderRepository;
         _categoryRepository = categoryRepository;
         _specialRequestTypeRepository = specialRequestTypeRepository;
         _userRepository = userRepository;
         _processRepository = processRepository;
+        _attachmentRepository = attachmentRepository;
     }
 
     public async Task<IReadOnlyList<ProcessGroupDto<TabletQueueItemDto>>> Handle(GetTabletQueueQuery request, CancellationToken cancellationToken)
@@ -50,6 +53,12 @@ public class GetTabletQueueQueryHandler : IRequestHandler<GetTabletQueueQuery, I
         var categoryIds = orders.SelectMany(o => o.Items).Select(i => i.ProductCategoryId).Distinct().ToList();
         var categoryLookup = (await _categoryRepository.GetByIdsWithDetailsAsync(categoryIds, cancellationToken))
             .ToDictionary(c => c.Id);
+
+        // Batch-load attachment counts once (instead of one /attachments call per
+        // order card on the FE — the /queue N+1 Sentry flagged).
+        var attachmentCounts = AttachmentCountLookup.Build(
+            await _attachmentRepository.GetRefsByOrderIdsAsync(
+                orders.Select(o => o.Id).ToList(), cancellationToken));
 
         var result = new List<ProcessGroupDto<TabletQueueItemDto>>();
 
@@ -119,7 +128,8 @@ public class GetTabletQueueQueryHandler : IRequestHandler<GetTabletQueueQuery, I
                             SpecialRequestNames = specialRequestNames,
                             CompletedProcessCount = completedCount,
                             TotalProcessCount = totalCount,
-                            TotalDurationMinutes = duration
+                            TotalDurationMinutes = duration,
+                            AttachmentCount = attachmentCounts.CountFor(order.Id, item.Id)
                         };
                         items.Add(dto);
                     }
